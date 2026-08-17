@@ -1,8 +1,19 @@
-"""presentation-narration — write the script, under a duration budget.
+"""presentation-narration — turn a script into timed scenes.
 
-Duration control happens here, not after TTS: each page gets a character budget
-derived from the target total duration, and the script is written to fit it.
-Fixing length afterwards would mean re-voicing everything.
+This service does not write the script; whoever calls it does. What lives here
+is the part that has to be arithmetic rather than judgement:
+
+* **The duration budget.** Each page gets a share of the target length, weighted
+  by page type and emphasis, and that share becomes a character budget the
+  caller writes to. Deciding length *after* TTS would mean re-voicing everything,
+  so the budget has to exist before a word is written — which is why it is
+  published to the caller (``narration_guide``) rather than kept internal.
+* **Applying what comes back.** Splitting a page's script into sentence-level
+  segments, binding those to page elements, and estimating each scene's duration.
+
+``apply`` takes the caller's text; ``run`` falls back to a placeholder script so
+the pipeline stays runnable end to end without one (useful for testing the
+render path, not for a video anyone would watch).
 """
 
 from __future__ import annotations
@@ -11,11 +22,11 @@ import re
 
 from pydantic import BaseModel
 
+from ..core import telemetry
 from ..core.ids import scene_id
 from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisual, VisualType
-from ..tools.llm import model_schema
 from ..tools.tts import estimate_duration
-from .base import Skill, load_prompt
+from .base import Skill
 
 BATCH_SIZE = 4
 
@@ -69,79 +80,92 @@ class NarrationSkill(Skill):
     description = "生成适合目标受众和时长的讲稿"
 
     def run(self) -> None:
-        document = self.project.document
-        intent = self.project.intent
-        pages = [p for p in document.ordered_pages() if p.index not in intent.skip_pages]
+        """Build scenes from a placeholder script — the no-caller-input path."""
+        pages = self._pages()
         if not pages:
-            self.log.warning("没有可讲解的页面")
             return
+        telemetry.record_degradation(
+            "讲稿", "调用方未提供讲稿，使用占位文本；成片可渲染但内容无意义"
+        )
+        self._build_scenes(pages, self._write_heuristically(pages, self._allocate_budget(pages)))
+        self.log.warning("使用占位讲稿：%d 个场景", len(self.project.scenes))
+
+    def apply(self, narrations: dict[int, str]) -> list[int]:
+        """Adopt caller-written narration, keyed by page index.
+
+        Returns the pages that had no text supplied — they fall back to the
+        placeholder so a partial script still renders, and the caller can see
+        exactly which pages it missed rather than discovering it in the video.
+        """
+        pages = self._pages()
+        if not pages:
+            return []
 
         budgets = self._allocate_budget(pages)
-        drafts = self.try_llm(
-            lambda: self._write_with_llm(pages, budgets),
-            lambda: self._write_heuristically(pages, budgets),
-            what="讲稿生成",
-        )
+        drafts: dict[int, PageNarration] = {}
+        missing: list[int] = []
+        for page in pages:
+            text = (narrations.get(page.index) or "").strip()
+            if text:
+                drafts[page.index] = PageNarration(
+                    index=page.index, narration=text, segments=[]
+                )
+            else:
+                missing.append(page.index)
+                drafts.update(self._write_heuristically([page], budgets))
+
+        if missing:
+            telemetry.record_degradation("讲稿", f"第 {missing} 页没有讲稿，使用占位文本")
+            self.log.warning("这些页面没有讲稿，已用占位文本：%s", missing)
+
         self._build_scenes(pages, drafts)
         self.log.info(
-            "讲稿生成完成：%d 个场景，预计 %.1f 秒",
+            "讲稿已应用：%d 个场景，预计 %.1f 秒",
             len(self.project.scenes),
             self.project.total_duration(),
         )
+        return missing
 
-    def rewrite_scene(self, scene: Scene, instruction: str, target_seconds: float | None) -> None:
-        """Rewrite one scene's script in place — the chat-edit entry point.
+    def guide(self) -> list[dict]:
+        """Per-page writing budget, for the caller to write against.
+
+        Without this the caller is guessing at length, and a script that misses
+        the requested duration cannot be fixed after the audio exists.
+        """
+        pages = self._pages()
+        budgets = self._allocate_budget(pages)
+        return [
+            {
+                "page": page.index,
+                "title": page.title,
+                "page_type": page.page_type.value,
+                "target_seconds": round(budgets[page.index], 1),
+                "target_chars": self._char_budget(budgets[page.index]),
+            }
+            for page in pages
+        ]
+
+    def _pages(self) -> list[DocumentPage]:
+        skip = set(self.project.intent.skip_pages)
+        pages = [p for p in self.project.document.ordered_pages() if p.index not in skip]
+        if not pages:
+            self.log.warning("没有可讲解的页面")
+        return pages
+
+    def rewrite_scene(self, scene: Scene, narration: str) -> None:
+        """Replace one scene's script — the incremental-edit entry point.
 
         Only this scene changes, which is what keeps a "page 7 is too long" edit
         from re-voicing and re-rendering the whole video (方案 §9).
         """
-        page = self.project.document.page(scene.source_page) if scene.source_page else None
-        if page is None:
-            self.log.warning("场景 %s 没有对应页面，跳过改写", scene.scene_id)
+        text = narration.strip()
+        if not text:
+            self.log.warning("场景 %s 的新讲稿为空，跳过", scene.scene_id)
             return
+        scene.narration = text
+        scene.segments = self._split_into_segments(text, scene.scene_id)
+        scene.duration = estimate_duration(text, self.ctx.settings.tts_speech_rate)
 
-        seconds = target_seconds or scene.duration or MIN_SCENE_SECONDS
-        seconds = max(MIN_SCENE_SECONDS, min(MAX_SCENE_SECONDS, seconds))
-        budgets = {page.index: seconds}
-
-        def with_llm() -> dict[int, PageNarration]:
-            return self._write_with_llm_single(page, budgets, instruction)
-
-        drafts = self.try_llm(
-            with_llm,
-            lambda: self._write_heuristically([page], budgets),
-            what=f"改写讲稿（{scene.scene_id}）",
-        )
-        draft = drafts.get(page.index)
-        if draft is None:
-            return
-
-        valid_ids = {e.id for e in page.elements}
-        scene.narration = draft.narration.strip()
-        scene.segments = [
-            NarrationSegment(
-                id=f"{scene.scene_id}_s{seq:02d}",
-                text=seg.text.strip(),
-                element_refs=[ref for ref in seg.element_refs if ref in valid_ids],
-                emphasis=seg.emphasis,
-            )
-            for seq, seg in enumerate(draft.segments, start=1)
-            if seg.text.strip()
-        ] or self._split_into_segments(scene.narration, scene.scene_id)
-        scene.duration = estimate_duration(scene.narration, self.ctx.settings.tts_speech_rate)
-
-    def _write_with_llm_single(
-        self, page: DocumentPage, budgets: dict[int, float], instruction: str
-    ) -> dict[int, PageNarration]:
-        prompt = self._render_prompt([page], budgets, previous_tail="")
-        prompt += f"\n\n用户对这一页的修改要求：{instruction}"
-        raw = self.llm.complete_json(
-            prompt, schema=model_schema(NarrationResult), system=load_prompt("narration")
-        )
-        result = NarrationResult.model_validate(raw)
-        return {p.index: p for p in result.pages}
-
-    # -- duration budget ------------------------------------------------
     def _allocate_budget(self, pages: list[DocumentPage]) -> dict[int, float]:
         intent = self.project.intent
         weights: dict[int, float] = {}
@@ -167,68 +191,6 @@ class NarrationSkill(Skill):
         return int(seconds * 4.6)
 
     # -- LLM path -------------------------------------------------------
-    def _write_with_llm(
-        self, pages: list[DocumentPage], budgets: dict[int, float]
-    ) -> dict[int, PageNarration]:
-        schema = model_schema(NarrationResult)
-        system = load_prompt("narration")
-        drafts: dict[int, PageNarration] = {}
-        previous_tail = ""
-
-        for start in range(0, len(pages), BATCH_SIZE):
-            batch = pages[start : start + BATCH_SIZE]
-            prompt = self._render_prompt(batch, budgets, previous_tail)
-            raw = self.llm.complete_json(prompt, schema=schema, system=system)
-            result = NarrationResult.model_validate(raw)
-            for page_narration in result.pages:
-                drafts[page_narration.index] = page_narration
-            if result.pages:
-                previous_tail = result.pages[-1].narration[-120:]
-        return drafts
-
-    def _render_prompt(
-        self, batch: list[DocumentPage], budgets: dict[int, float], previous_tail: str
-    ) -> str:
-        document = self.project.document
-        intent = self.project.intent
-        lines = [
-            f"文档主题：{document.topic or document.title}",
-            f"文档摘要：{document.summary}",
-            f"关键概念：{'、'.join(document.key_concepts) or '（无）'}",
-            "",
-            f"目标观众：{intent.audience}",
-            f"风格：{intent.style}｜语气：{intent.tone}",
-            f"全片目标时长：{intent.duration} 秒",
-        ]
-        if intent.instructions:
-            lines.append(f"用户额外要求：{intent.instructions}")
-        if previous_tail:
-            lines.append(f"\n上一页讲稿结尾（用于自然衔接）：{previous_tail}")
-
-        lines.append("\n以下是本批次要写讲稿的页面：")
-        for page in batch:
-            seconds = budgets[page.index]
-            lines.append(f"\n## 第 {page.index} 页（{page.page_type}）")
-            lines.append(f"标题：{page.title}")
-            if page.summary:
-                lines.append(f"页面要点：{page.summary}")
-            if page.key_points:
-                lines.append("关键点：" + "；".join(page.key_points))
-            if page.speaker_notes:
-                lines.append(f"演讲者备注：{page.speaker_notes}")
-            lines.append(
-                f"字数预算：约 {self._char_budget(seconds)} 字（对应 {seconds:.0f} 秒）"
-            )
-            lines.append("可绑定的元素：")
-            for element in sorted(page.elements, key=lambda e: -e.importance)[:12]:
-                text = element.text.replace("\n", " ")[:80]
-                lines.append(
-                    f"- [{element.id}] ({element.kind}, "
-                    f"重要性 {element.importance:.1f}) {text}"
-                )
-        return "\n".join(lines)
-
-    # -- heuristic path -------------------------------------------------
     def _write_heuristically(
         self, pages: list[DocumentPage], budgets: dict[int, float]
     ) -> dict[int, PageNarration]:

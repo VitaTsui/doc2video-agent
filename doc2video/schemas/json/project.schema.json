@@ -371,70 +371,6 @@
       "title": "HistoryEntry",
       "type": "object"
     },
-    "LLMCall": {
-      "description": "One model call, attributed to the stage and skill that made it.",
-      "properties": {
-        "stage": {
-          "default": "",
-          "title": "Stage",
-          "type": "string"
-        },
-        "skill": {
-          "default": "",
-          "title": "Skill",
-          "type": "string"
-        },
-        "provider": {
-          "default": "",
-          "title": "Provider",
-          "type": "string"
-        },
-        "model": {
-          "default": "",
-          "title": "Model",
-          "type": "string"
-        },
-        "input_tokens": {
-          "default": 0,
-          "title": "Input Tokens",
-          "type": "integer"
-        },
-        "output_tokens": {
-          "default": 0,
-          "title": "Output Tokens",
-          "type": "integer"
-        },
-        "cache_read_tokens": {
-          "default": 0,
-          "title": "Cache Read Tokens",
-          "type": "integer"
-        },
-        "cache_write_tokens": {
-          "default": 0,
-          "title": "Cache Write Tokens",
-          "type": "integer"
-        },
-        "cost_usd": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Cost Usd"
-        },
-        "duration_s": {
-          "default": 0.0,
-          "title": "Duration S",
-          "type": "number"
-        }
-      },
-      "title": "LLMCall",
-      "type": "object"
-    },
     "NarrationSegment": {
       "description": "A sentence-sized chunk of narration, bound to the elements it talks about.\n\nThe binding is what makes the director deterministic: the model decides\n*what* is being talked about, the timing comes from TTS timestamps.",
       "properties": {
@@ -695,13 +631,6 @@
             "$ref": "#/$defs/StageRun"
           },
           "title": "Stages",
-          "type": "array"
-        },
-        "llm_calls": {
-          "items": {
-            "$ref": "#/$defs/LLMCall"
-          },
-          "title": "Llm Calls",
           "type": "array"
         },
         "degradations": {

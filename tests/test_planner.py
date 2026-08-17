@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from doc2video.agent.planner import Planner, Stage, parse_edit_rules, parse_intent_rules
 from doc2video.schemas import Scene, Source, SourceType, VideoIntent, VideoProject
-from doc2video.tools.llm import MockLLM
 
 
 def _project() -> VideoProject:
@@ -61,7 +60,7 @@ def test_parse_edit_detects_revoice_and_redirect():
 
 
 def test_execution_plan_for_scene_edit_is_narrow():
-    planner = Planner(MockLLM())
+    planner = Planner()
     plan = planner.edit_plan("第7页太长了，压缩到20秒", _project())
 
     assert plan.scene_ids == ["scene_07"]
@@ -72,7 +71,7 @@ def test_execution_plan_for_scene_edit_is_narrow():
 
 
 def test_execution_plan_for_camera_only_change_skips_narration():
-    planner = Planner(MockLLM())
+    planner = Planner()
     plan = planner.edit_plan("所有关键数字都放大", _project())
 
     assert Stage.NARRATE not in plan.stages

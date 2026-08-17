@@ -45,6 +45,10 @@ EXPOSE 8400
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
     CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8400/health')"
 
+# Binds 0.0.0.0, so D2V_API_TOKEN is required — `serve` refuses to come up
+# without it rather than exposing uploads and every project to the network.
+# MCP (Streamable HTTP) is served at /mcp on the same port; behind a domain set
+# D2V_MCP_ALLOWED_HOSTS or the SDK's host check answers 421.
 CMD ["doc2video", "serve", "--host", "0.0.0.0", "--port", "8400"]
 
 # ---------------------------------------------------------------------------

@@ -17,18 +17,6 @@ class Settings(BaseSettings):
         env_file=".env", env_prefix="D2V_", extra="ignore", case_sensitive=False
     )
 
-    # --- LLM / VLM ---
-    # auto: API key first, then the local Claude Code CLI, then heuristics.
-    # Also accepts "anthropic" | "claude_code" | "mock" to pin one path.
-    llm_provider: str = "auto"
-    llm_model: str = "claude-opus-5"
-    llm_effort: str = "high"
-    llm_max_tokens: int = 16000
-    # claude_code provider only: an explicit binary wins over PATH, and a whole
-    # deck's narration in one call can legitimately take minutes.
-    claude_cli_path: str = ""
-    claude_cli_timeout: int = 600
-
     # --- TTS ---
     tts_provider: str = "auto"
     tts_voice: str = ""
@@ -52,7 +40,7 @@ class Settings(BaseSettings):
     storage_dir: Path = Path("./storage")
 
     # --- Server ---
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8400
     log_level: str = "INFO"
 

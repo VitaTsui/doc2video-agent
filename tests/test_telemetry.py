@@ -1,4 +1,4 @@
-"""Run telemetry: attribution, cost, and the aggregates M4 reports from it."""
+"""Run telemetry: stage timings, degradations, and the cross-run aggregates."""
 
 from __future__ import annotations
 
@@ -6,50 +6,26 @@ from pathlib import Path
 
 from doc2video.core import telemetry
 from doc2video.core.config import Settings
-from doc2video.core.pricing import cost_usd
-from doc2video.schemas.telemetry import LLMCall, QualityReport, RunRecord
+from doc2video.schemas.telemetry import QualityReport, RunRecord
 from doc2video.storage.run_log import RunLog, summarize
 
-
-def _usage(**overrides) -> telemetry.LLMUsage:
-    base = {
-        "provider": "anthropic_api",
-        "model": "claude-opus-5",
-        "input_tokens": 1000,
-        "output_tokens": 500,
-    }
-    base.update(overrides)
-    return telemetry.LLMUsage(**base)
+# -- stages ---------------------------------------------------------------
 
 
-# -- attribution ----------------------------------------------------------
-
-
-def test_calls_are_attributed_to_the_stage_and_skill_that_made_them():
-    with telemetry.run("proj_1") as recorder:
-        with recorder.stage_scope("narrate"), telemetry.skill_scope("presentation-narration"):
-            telemetry.record_llm(_usage())
-        record = recorder.finish(status="succeeded")
-
-    assert record.llm_calls[0].stage == "narrate"
-    assert record.llm_calls[0].skill == "presentation-narration"
-
-
-def test_scopes_restore_the_previous_attribution():
+def test_nested_stages_restore_the_outer_one():
     with telemetry.run("proj_1") as recorder:
         with recorder.stage_scope("render"):
             with recorder.stage_scope("review"):
                 pass
-            telemetry.record_llm(_usage())
+            telemetry.record_degradation("字幕", "drawtext 缺失")
         record = recorder.finish(status="succeeded")
 
-    assert record.llm_calls[0].stage == "render"
+    assert [s.stage for s in record.stages] == ["review", "render"]
 
 
 def test_recording_outside_a_run_is_a_no_op():
     """The CLI and tests call skills directly; that must not blow up."""
-    telemetry.record_llm(_usage())
-    telemetry.record_degradation("讲稿生成", "LLM 不可用")
+    telemetry.record_degradation("讲稿", "调用方未提供")
 
     assert telemetry.current() is None
 
@@ -65,54 +41,6 @@ def test_a_failing_stage_is_recorded_as_failed_and_still_reraises():
 
     assert record.stages[0].status == "failed"
     assert "ffmpeg" in record.stages[0].detail
-
-
-# -- cost -----------------------------------------------------------------
-
-
-def test_cost_comes_from_the_price_table_when_the_provider_gives_none():
-    with telemetry.run("proj_1") as recorder:
-        telemetry.record_llm(_usage(input_tokens=1_000_000, output_tokens=0))
-        record = recorder.finish(status="succeeded")
-
-    assert record.llm_calls[0].cost_usd == 5.0
-
-
-def test_a_provider_reported_cost_wins():
-    """The CLI prices its own call, including any model it swapped in."""
-    with telemetry.run("proj_1") as recorder:
-        telemetry.record_llm(_usage(provider="claude_code", cost_usd=0.42))
-        record = recorder.finish(status="succeeded")
-
-    assert record.llm_calls[0].cost_usd == 0.42
-
-
-def test_an_unpriced_model_reports_unknown_rather_than_zero():
-    with telemetry.run("proj_1") as recorder:
-        telemetry.record_llm(_usage(model="some-local-model"))
-        record = recorder.finish(status="succeeded")
-
-    assert record.llm_calls[0].cost_usd is None
-    assert record.cost_usd() is None  # not 0.0 — the run's cost is unknown
-
-
-def test_cache_reads_are_cheaper_than_fresh_input():
-    fresh = cost_usd("claude-opus-5", input_tokens=1_000_000)
-    cached = cost_usd("claude-opus-5", cache_read_tokens=1_000_000)
-    written = cost_usd("claude-opus-5", cache_write_tokens=1_000_000)
-
-    assert cached < fresh < written
-
-
-def test_cost_splits_by_stage():
-    with telemetry.run("proj_1") as recorder:
-        with recorder.stage_scope("narrate"):
-            telemetry.record_llm(_usage(input_tokens=1_000_000, output_tokens=0))
-        with recorder.stage_scope("review"):
-            telemetry.record_llm(_usage(input_tokens=1_000_000, output_tokens=0))
-        record = recorder.finish(status="succeeded")
-
-    assert record.cost_by_stage() == {"narrate": 5.0, "review": 5.0}
 
 
 # -- degradations ---------------------------------------------------------
@@ -191,11 +119,3 @@ def test_summary_separates_the_rollout_arms(tmp_path: Path):
 
     assert summary["flags"]["renderer_remotion"]["on"]["quality_median"] == 90.0
     assert summary["flags"]["renderer_remotion"]["off"]["quality_median"] == 70.0
-
-
-def test_the_provider_that_answered_is_recorded_separately_from_the_arm(tmp_path: Path):
-    """With no API key both arms end up on the CLI — the flag alone would lie."""
-    records = [_record(tmp_path, flags={"llm_prefer_claude_code": False},
-                       llm_calls=[LLMCall(provider="claude_code", model="claude-opus-5")])]
-
-    assert summarize(records)["providers"] == {"claude_code": 1}

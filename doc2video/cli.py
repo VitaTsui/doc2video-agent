@@ -17,15 +17,8 @@ from .core.errors import Doc2VideoError
 from .core.flags import report as flag_report
 from .core.logging import setup_logging
 from .storage.run_log import RunLog, summarize
-from .tools.llm import get_llm
 from .tools.renderer import renderer_status
 from .tools.tts import TTSTool
-
-LLM_SOURCE_LABEL = {
-    "anthropic_api": "API Key",
-    "claude_code": "Claude Code CLI",
-    "mock": "—",
-}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -86,12 +79,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def cmd_doctor(_args) -> int:
     settings = get_settings()
-    llm = get_llm(settings)
 
     print("== 能力体检 ==")
-    availability = "可用" if llm.available else "不可用（将使用启发式降级）"
-    source = LLM_SOURCE_LABEL.get(llm.source, llm.source)
-    print(f"LLM        : {availability}｜模型 {llm.model}｜来源 {source}")
     print(f"TTS        : {TTSTool(settings).provider_name}")
 
     print("\n渲染器：")
@@ -144,10 +133,8 @@ def cmd_show(args) -> int:
         dimensions = "｜".join(f"{d.name} {d.score:.0f}" for d in project.quality.dimensions)
         print(f"质量：{project.quality.score:.1f} 分（{dimensions}）")
     if project.telemetry:
-        cost = project.telemetry.cost_usd()
         print(
             f"上次运行：{project.telemetry.duration_s:.0f} 秒｜"
-            f"{f'${cost:.4f}' if cost is not None else '成本未知'}｜"
             f"降级 {len(project.telemetry.degradations)} 处"
         )
     print("\n场景：")
@@ -188,9 +175,6 @@ def cmd_metrics(args) -> int:
         return 0
 
     duration, quality = summary["duration_s"], summary["quality"]
-    cost = summary["cost_usd"]
-    median_cost = cost["per_run_median"]
-    priced = f"（{cost['priced_runs']} 次可定价）" if cost["priced_runs"] else "（无可定价记录）"
 
     print(f"== 运行统计（最近 {summary['runs']} 次）==")
     print(f"成功／失败：{summary['succeeded']} / {summary['failed']}")
@@ -199,11 +183,6 @@ def cmd_metrics(args) -> int:
     # Quality shows the low tail, not p95 — the bad end of a score is the low one.
     if quality["count"]:
         print(f"质量分　　：中位数 {quality['median']}｜最差 5% {quality['p5']}")
-    print(
-        f"成本　　　：合计 ${cost['total']:.4f}｜单次中位数 "
-        f"{f'${median_cost:.4f}' if median_cost is not None else '—'}{priced}"
-    )
-    print(f"token　　 ：{summary['tokens']:,}")
 
     print("\n各阶段耗时（中位数 / p95 秒）：")
     for name, stats in summary["stages"].items():
@@ -215,11 +194,7 @@ def cmd_metrics(args) -> int:
         for what, count in summary["degradations"].items():
             print(f"  {count:>4} × {what}")
 
-    if summary["providers"]:
-        calls = "｜".join(f"{name} {count}" for name, count in summary["providers"].items())
-        print(f"\n实际应答的 provider：{calls}")
-
-    print("\n放量对照（记录的是分支，不是实际 provider）：")
+    print("\n放量对照：")
     # Historical records keep the flag names they were written with, so a flag
     # that was renamed or retired still shows up here — report it as retired
     # rather than crashing on a name the current build no longer knows.
@@ -230,11 +205,9 @@ def cmd_metrics(args) -> int:
         print(f"  {name}（{share}）")
         for arm, stats in sorted(arms.items()):
             quality = stats["quality_median"]
-            cost_median = stats["cost_usd_median"]
             print(
                 f"    {arm:3s} 运行 {stats['runs']:>3}｜质量 "
-                f"{quality if quality is not None else '—'}｜成本 "
-                f"{f'${cost_median:.4f}' if cost_median is not None else '—'}"
+                f"{quality if quality is not None else '—'}"
                 f"｜耗时 {stats['duration_s_median']}s"
             )
     return 0
@@ -244,9 +217,10 @@ def cmd_serve(args) -> int:
     import uvicorn
 
     settings = get_settings()
+    host = args.host or settings.host
     uvicorn.run(
         "doc2video.api.app:app",
-        host=args.host or settings.host,
+        host=host,
         port=args.port or settings.port,
         reload=args.reload,
     )

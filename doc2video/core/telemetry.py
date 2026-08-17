@@ -1,17 +1,13 @@
 """Collects what a run did, while it does it.
 
 The pipeline already reports *progress* (which stage is running) — M4 adds the
-things you only learn afterwards: how long each stage took, what every model
-call cost and which skill made it, which steps silently degraded, and which
-rollout arm the run took.
+things you only learn afterwards: how long each stage took, which steps
+silently degraded, and which rollout arm the run took.
 
-Attribution travels in a ContextVar rather than through every signature. A
-model call happens deep inside a skill, three layers below the executor that
-knows the stage name, and the LLM tool is deliberately ignorant of both — the
-alternative was threading a recorder through the whole tool interface, which
-would put an observability concern into the contract skills depend on. Jobs run
-one per thread, and each thread gets its own ContextVar copy, so concurrent
-runs cannot cross-attribute.
+The recorder lives in a ContextVar so a stage deep in the pipeline can report a
+degradation without every function in between carrying a recorder argument.
+Jobs run one per thread, and each thread gets its own copy, so concurrent runs
+cannot cross-attribute.
 """
 
 from __future__ import annotations
@@ -21,33 +17,13 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
 
-from ..schemas.telemetry import Degradation, LLMCall, RunRecord, StageRun
+from ..schemas.telemetry import Degradation, RunRecord, StageRun
 from .logging import get_logger
-from .pricing import cost_usd
 
 log = get_logger(__name__)
 
 _current: ContextVar[RunTelemetry | None] = ContextVar("doc2video_run_telemetry", default=None)
-
-
-@dataclass
-class LLMUsage:
-    """What a provider reports after one call.
-
-    ``cost_usd`` is optional because providers differ: the Claude Code CLI
-    reports its own figure, while the API path leaves it to the price table.
-    """
-
-    provider: str
-    model: str
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
-    duration_s: float = 0.0
-    cost_usd: float | None = None
 
 
 class RunTelemetry:
@@ -60,7 +36,6 @@ class RunTelemetry:
             flags=dict(flags or {}),
         )
         self.stage = ""
-        self.skill = ""
         self._started = time.monotonic()
 
     # -- scopes ----------------------------------------------------------
@@ -86,40 +61,7 @@ class RunTelemetry:
             )
             self.stage = previous
 
-    @contextmanager
-    def skill_scope(self, skill: str) -> Iterator[None]:
-        previous, self.skill = self.skill, skill
-        try:
-            yield
-        finally:
-            self.skill = previous
-
     # -- events ----------------------------------------------------------
-    def record_llm(self, usage: LLMUsage) -> None:
-        cost = usage.cost_usd
-        if cost is None:
-            cost = cost_usd(
-                usage.model,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                cache_read_tokens=usage.cache_read_tokens,
-                cache_write_tokens=usage.cache_write_tokens,
-            )
-        self.record.llm_calls.append(
-            LLMCall(
-                stage=self.stage,
-                skill=self.skill,
-                provider=usage.provider,
-                model=usage.model,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                cache_read_tokens=usage.cache_read_tokens,
-                cache_write_tokens=usage.cache_write_tokens,
-                cost_usd=cost,
-                duration_s=usage.duration_s,
-            )
-        )
-
     def record_degradation(self, what: str, reason: str) -> None:
         self.record.degradations.append(Degradation(what=what, reason=reason[:200]))
 
@@ -148,24 +90,9 @@ def current() -> RunTelemetry | None:
     return _current.get()
 
 
-def record_llm(usage: LLMUsage) -> None:
-    """Called by LLM providers. A no-op outside a run — never a failure."""
-    telemetry = _current.get()
-    if telemetry is not None:
-        telemetry.record_llm(usage)
-
-
 def record_degradation(what: str, reason: str) -> None:
     telemetry = _current.get()
     if telemetry is not None:
         telemetry.record_degradation(what, reason)
 
 
-@contextmanager
-def skill_scope(skill: str) -> Iterator[None]:
-    telemetry = _current.get()
-    if telemetry is None:
-        yield
-        return
-    with telemetry.skill_scope(skill):
-        yield

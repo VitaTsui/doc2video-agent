@@ -26,7 +26,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Doc2Video Agent",
         description=DESCRIPTION,
-        version="0.2.0",
+        version="0.3.0",
     )
     app.add_middleware(
         CORSMiddleware,

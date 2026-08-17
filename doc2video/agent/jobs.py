@@ -43,6 +43,10 @@ class JobRequest:
     message: str
     project_id: str | None = None
     files: list[Path] = field(default_factory=list)
+    # The caller's script. By page index for a whole run, by scene id for a
+    # targeted revision — this service writes neither.
+    narrations: dict[int, str] = field(default_factory=dict)
+    scene_narrations: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -129,6 +133,8 @@ class JobManager:
                 project_id=job.request.project_id,
                 files=job.request.files,
                 progress=progress,
+                narrations=job.request.narrations,
+                scene_narrations=job.request.scene_narrations,
             )
             job.result = result
             job.status = "succeeded"

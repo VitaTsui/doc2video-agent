@@ -139,20 +139,24 @@ class Executor:
         DocumentSkill(self.ctx).run()
 
     def _stage_narrate(self, plan: ExecutionPlan) -> None:
+        """Adopt the caller's script, or fall back to a placeholder.
+
+        The script is content, and content is the caller's job — the plan
+        carries whatever it supplied.
+        """
         skill = NarrationSkill(self.ctx)
-        if not plan.scene_ids:
-            skill.run()
+        if plan.scene_ids:
+            # Targeted edit: replace only the named scenes.
+            for scene_id in plan.scene_ids:
+                scene = self.project.scene(scene_id)
+                text = plan.scene_narrations.get(scene_id)
+                if scene is not None and text:
+                    skill.rewrite_scene(scene, text)
             return
-        # Targeted edit: rewrite only the named scenes.
-        for scene_id in plan.scene_ids:
-            scene = self.project.scene(scene_id)
-            if scene is None:
-                continue
-            skill.rewrite_scene(
-                scene,
-                plan.scene_instructions.get(scene_id, ""),
-                plan.scene_durations.get(scene_id),
-            )
+        if plan.narrations:
+            skill.apply(plan.narrations)
+        else:
+            skill.run()
 
     def _stage_voice(self, plan: ExecutionPlan) -> None:
         VoiceSkill(self.ctx).run(force=plan.force_voice)
