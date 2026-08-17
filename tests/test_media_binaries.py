@@ -49,7 +49,8 @@ def test_missing_configured_path_falls_through(monkeypatch: pytest.MonkeyPatch, 
 
 
 def test_bundled_binary_is_used_when_path_has_none(monkeypatch: pytest.MonkeyPatch):
-    pytest.importorskip("imageio_ffmpeg")
+    if media_binaries._vendored("ffmpeg") is None:
+        pytest.skip("本机没有装任何内置 ffmpeg wheel")
     # Empty PATH: the only remaining source is the vendored wheel.
     monkeypatch.setenv("PATH", "")
     monkeypatch.delenv("D2V_FFMPEG_PATH", raising=False)
@@ -59,6 +60,53 @@ def test_bundled_binary_is_used_when_path_has_none(monkeypatch: pytest.MonkeyPat
     binary = media_binaries.ffmpeg()
     assert binary.source == "bundled"
     assert Path(binary.path).exists()
+
+
+def test_ffprobe_can_be_vendored_as_well(monkeypatch: pytest.MonkeyPatch):
+    """The reason for adding ffmpeg-binaries: imageio-ffmpeg has no ffprobe."""
+    if media_binaries._from_ffmpeg_binaries("ffprobe") is None:
+        pytest.skip("本机没有装 ffmpeg-binaries")
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.delenv("D2V_FFPROBE_PATH", raising=False)
+    media_binaries.reset_cache()
+    get_settings.cache_clear()
+
+    binary = media_binaries.ffprobe()
+    assert binary.source == "bundled"
+    assert Path(binary.path).exists()
+
+
+def test_the_wheel_carrying_ffprobe_wins():
+    """Both wheels can be installed; only one of them has ffprobe and drawtext."""
+    preferred = media_binaries._from_ffmpeg_binaries("ffmpeg")
+    if preferred is None or media_binaries._from_imageio("ffmpeg") is None:
+        pytest.skip("需要同时装了两个 wheel 才能验证优先级")
+
+    assert media_binaries._vendored("ffmpeg") == preferred
+
+
+def test_console_script_shim_is_not_a_system_install(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """ffmpeg-binaries drops a Python launcher named `ffmpeg` beside python.
+
+    Taking it for a system install would mislabel the source and put an
+    interpreter start-up in front of every ffmpeg call a render makes.
+    """
+    scripts = tmp_path / "bin"
+    scripts.mkdir()
+    shim = scripts / "ffmpeg"
+    shim.write_text("#!/usr/bin/env python\nfrom ffmpeg.executable import _run\n")
+    shim.chmod(0o755)
+    monkeypatch.setattr(media_binaries.sys, "executable", str(scripts / "python3"))
+    monkeypatch.setenv("PATH", str(scripts))
+    monkeypatch.delenv("D2V_FFMPEG_PATH", raising=False)
+    media_binaries.reset_cache()
+    get_settings.cache_clear()
+
+    binary = media_binaries.ffmpeg()
+    assert binary.path != str(shim)
+    assert binary.source != "system"
 
 
 def test_probe_duration_matches_wav_header(tmp_path: Path):
@@ -75,6 +123,15 @@ def test_probe_duration_matches_wav_header(tmp_path: Path):
     if not media_binaries.ffmpeg().available and not media_binaries.ffprobe().available:
         pytest.skip("本机没有可用的 ffmpeg / ffprobe")
     assert media_binaries.probe_duration(path) == pytest.approx(2.0, abs=0.05)
+
+
+def test_filter_report_answers_for_this_build():
+    """Having ffmpeg is not the same as having drawtext."""
+    from doc2video.core.config import filter_report
+
+    report = filter_report()
+    assert set(report) == {"drawtext"}
+    assert isinstance(report["drawtext"]["available"], bool)
 
 
 def test_dependency_report_names_the_source():

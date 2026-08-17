@@ -4,15 +4,22 @@ Business logic never talks to a vendor SDK directly — skills depend on this
 interface only, which is what lets the document/narration/director skills stay
 model-agnostic (方案 §6).
 
-When no API key is configured the tool reports ``available = False`` and every
-skill falls back to its deterministic heuristic path, so the whole pipeline
-still runs end to end without network access.
+Two providers can serve that interface: the Messages API (``AnthropicLLM``,
+needs a key) and the locally installed Claude Code CLI (``ClaudeCodeLLM``,
+needs no key). With no usable provider the tool reports ``available = False``
+and every skill falls back to its deterministic heuristic path, so the whole
+pipeline still runs end to end without network access.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import re
+import shutil
+import subprocess
+import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +39,10 @@ class LLMTool:
 
     available: bool = False
     model: str = ""
+    # Which backend answered — reported by `doctor` and /health/capabilities,
+    # since "Claude via an API key" and "Claude via the local CLI" have very
+    # different cost and latency profiles.
+    source: str = "mock"
 
     def complete_json(
         self,
@@ -48,17 +59,21 @@ class LLMTool:
         raise NotImplementedError
 
 
+NO_LLM_HINT = "请设置 ANTHROPIC_API_KEY，或安装并登录 Claude Code CLI"
+
+
 class MockLLM(LLMTool):
     """No-op provider. Present so the pipeline has a uniform tool to hold."""
 
     available = False
     model = "mock"
+    source = "mock"
 
     def complete_json(self, prompt: str, **kwargs) -> dict[str, Any]:  # noqa: ARG002
-        raise ToolFailed("未配置 LLM，无法进行语义理解；请设置 ANTHROPIC_API_KEY")
+        raise ToolFailed(f"未配置 LLM，无法进行语义理解；{NO_LLM_HINT}")
 
     def complete_text(self, prompt: str, **kwargs) -> str:  # noqa: ARG002
-        raise ToolFailed("未配置 LLM，无法生成文本；请设置 ANTHROPIC_API_KEY")
+        raise ToolFailed(f"未配置 LLM，无法生成文本；{NO_LLM_HINT}")
 
 
 class AnthropicLLM(LLMTool):
@@ -70,6 +85,7 @@ class AnthropicLLM(LLMTool):
     """
 
     available = True
+    source = "anthropic_api"
 
     def __init__(self, settings: Settings) -> None:
         import anthropic
@@ -205,6 +221,211 @@ class AnthropicLLM(LLMTool):
         raise ToolFailed("模型响应中没有文本内容")
 
 
+class ClaudeCodeLLM(LLMTool):
+    """Claude Code CLI-backed implementation — the no-API-key path.
+
+    Runs the locally installed ``claude`` binary headlessly
+    (``claude -p --output-format json``), so a machine where Claude Code is
+    already signed in needs no ``ANTHROPIC_API_KEY``. Skills cannot tell the
+    difference; three things do differ, all absorbed here:
+
+    * **No structured outputs.** The schema is written into the prompt and the
+      reply is parsed defensively, with one corrective retry — the API's
+      ``json_schema`` guarantee does not exist over the CLI.
+    * **No image blocks.** Page renders are read off disk by the CLI's own
+      ``Read`` tool, the only tool this provider ever allows.
+    * **Fixed per-call overhead.** Every invocation carries the CLI's system
+      prompt and built-in tool definitions (~20k input tokens, mostly served
+      from the prompt cache on consecutive calls). This is the convenient
+      path, not the cheap one — prefer an API key for bulk runs.
+    """
+
+    available = True
+    source = "claude_code"
+
+    # Replaces Claude Code's own coding-agent framing when a skill passes no
+    # system prompt of its own.
+    DEFAULT_SYSTEM = "你是一个严格按要求输出的内容生成助手。"
+
+    def __init__(self, settings: Settings) -> None:
+        self._binary = _resolve_claude_cli(settings)
+        if not self._binary:
+            raise RuntimeError("未找到 claude 可执行文件（Claude Code CLI 未安装）")
+        # A binary on PATH that cannot even print its version is worse than no
+        # binary at all: fail here so get_llm() can fall through to the next
+        # provider instead of failing once per skill.
+        try:
+            probe = subprocess.run(
+                [self._binary, "--version"], capture_output=True, text=True, timeout=15
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"Claude Code CLI 无法执行：{exc}") from exc
+        if probe.returncode != 0:
+            raise RuntimeError("Claude Code CLI 无法执行（--version 返回非零）")
+
+        self.model = settings.llm_model
+        self._timeout = settings.claude_cli_timeout
+        self._version = probe.stdout.strip()
+
+    # -- public API ----------------------------------------------------
+    def complete_json(
+        self,
+        prompt: str,
+        *,
+        schema: dict,
+        system: str = "",
+        images: list[Path] | None = None,
+        max_tokens: int | None = None,  # noqa: ARG002 - the CLI has no output cap
+    ) -> dict[str, Any]:
+        paths = [path for path in (images or []) if path.exists()]
+        request = _json_request(prompt, schema, paths)
+        text = self._invoke(request, system=system, images=paths)
+        try:
+            return _parse_json_reply(text)
+        except ToolFailed:
+            log.debug("Claude Code CLI 首次返回的不是合法 JSON，重试一次")
+            corrected = f"{request}\n\n上一次回复不是合法 JSON。只输出 JSON 对象本身。"
+            return _parse_json_reply(self._invoke(corrected, system=system, images=paths))
+
+    def complete_text(self, prompt: str, *, system: str = "", max_tokens: int = 2000) -> str:  # noqa: ARG002
+        return self._invoke(prompt, system=system, images=[])
+
+    # -- internals -----------------------------------------------------
+    def _command(self, *, system: str, images: list[Path]) -> list[str]:
+        # The prompt itself goes over stdin, not argv: a whole deck's narration
+        # can run to hundreds of KB, and argv is capped (1MB on macOS) — plus
+        # argv is world-readable in `ps`.
+        command = [
+            self._binary,
+            "-p",
+            "--output-format", "json",
+            "--model", self.model,
+            "--system-prompt", system or self.DEFAULT_SYSTEM,
+            # Drop the working-directory / git preamble: this is a one-shot
+            # generation call, not a session in a repository.
+            "--exclude-dynamic-system-prompt-sections",
+            # Ignore whatever MCP servers the user has configured. None of them
+            # belong in a narration call, and their schemas are billed on every
+            # single request.
+            "--strict-mcp-config",
+            "--no-session-persistence",
+            # Renders are the only reason to touch the filesystem at all.
+            "--allowedTools", "Read" if images else "",
+        ]
+        for directory in sorted({str(path.resolve().parent) for path in images}):
+            command += ["--add-dir", directory]
+        return command
+
+    def _invoke(self, prompt: str, *, system: str, images: list[Path]) -> str:
+        try:
+            result = subprocess.run(
+                self._command(system=system, images=images),
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
+                # A neutral directory: a cwd inside a repository would pull that
+                # repository's CLAUDE.md into every narration prompt.
+                cwd=_cli_workdir(),
+            )
+        except FileNotFoundError as exc:
+            self.available = False
+            raise ToolFailed(
+                "Claude Code CLI 已消失，后续步骤将使用启发式降级",
+                detail={"reason": str(exc)[:200]},
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ToolFailed(
+                f"Claude Code CLI 超时（{self._timeout}s）",
+                detail={"timeout": self._timeout},
+            ) from exc
+
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            # Not a per-request failure: the CLI itself could not run (not
+            # logged in, bad flag, crashed). Stop paying for it once per skill.
+            self.available = False
+            raise ToolFailed(
+                "Claude Code CLI 没有返回可解析的输出，后续步骤将使用启发式降级",
+                detail={"returncode": result.returncode, "stderr": result.stderr[-400:]},
+            ) from exc
+
+        if payload.get("is_error") or payload.get("subtype") != "success":
+            raise ToolFailed(
+                "Claude Code CLI 调用失败",
+                detail={
+                    "subtype": payload.get("subtype"),
+                    "snippet": str(payload.get("result"))[:400],
+                },
+            )
+
+        text = str(payload.get("result") or "")
+        if not text.strip():
+            raise ToolFailed("Claude Code CLI 返回了空结果")
+        return text
+
+
+@lru_cache(maxsize=1)
+def _cli_workdir() -> str:
+    """An empty scratch directory to run the CLI in.
+
+    Only the project-level CLAUDE.md is avoided this way; a user-level one in
+    ``~/.claude`` still applies, which is a reason to prefer the API provider
+    when narration wording has to be reproducible across machines.
+    """
+    directory = Path(tempfile.gettempdir()) / "doc2video-claude-cli"
+    directory.mkdir(parents=True, exist_ok=True)
+    return str(directory)
+
+
+def _resolve_claude_cli(settings: Settings) -> str | None:
+    """Configured path wins over PATH, matching how media binaries resolve."""
+    configured = settings.claude_cli_path
+    if configured and Path(configured).exists():
+        return configured
+    return shutil.which("claude")
+
+
+def _json_request(prompt: str, schema: dict, images: list[Path]) -> str:
+    parts = [prompt]
+    if images:
+        listing = "\n".join(f"- {path.resolve()}" for path in images)
+        parts.append(f"先用 Read 工具逐个读取下面这些页面渲染图，再作答：\n{listing}")
+    parts.append(
+        "只输出一个 JSON 对象，且必须匹配下面的 JSON Schema。"
+        "不要使用 markdown 代码围栏，不要输出任何解释文字。\n"
+        f"{json.dumps(schema, ensure_ascii=False)}"
+    )
+    return "\n\n".join(parts)
+
+
+_FENCE_RE = re.compile(r"\A```[a-zA-Z]*\s*|\s*```\Z")
+
+
+def _parse_json_reply(text: str) -> dict[str, Any]:
+    """Recover a JSON object from a reply that has no format guarantee."""
+    candidate = _FENCE_RE.sub("", text.strip())
+    for attempt in (candidate, _outermost_object(candidate)):
+        if attempt is None:
+            continue
+        try:
+            parsed = json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    raise ToolFailed(
+        "Claude Code CLI 返回的结构化结果不是合法 JSON 对象", detail={"snippet": text[:400]}
+    )
+
+
+def _outermost_object(text: str) -> str | None:
+    """The ``{...}`` span, for replies that wrap the object in prose."""
+    start, end = text.find("{"), text.rfind("}")
+    return text[start : end + 1] if start != -1 and end > start else None
+
+
 def _has_credentials(client) -> bool:
     """Check up front whether a credential exists at all.
 
@@ -232,16 +453,36 @@ def _media_type(path: Path) -> str:
     }.get(path.suffix.lower(), "image/png")
 
 
+PROVIDERS: dict[str, type[LLMTool]] = {
+    "anthropic": AnthropicLLM,
+    "claude_code": ClaudeCodeLLM,
+}
+
+# What ``auto`` tries, in order: an API key is cheaper and gives real
+# structured outputs, so the CLI is the fallback rather than the default.
+AUTO_ORDER = ("anthropic", "claude_code")
+
+
 def get_llm(settings: Settings | None = None) -> LLMTool:
     """Build the configured LLM tool, degrading to MockLLM when unusable."""
     settings = settings or get_settings()
-    if settings.llm_provider == "mock":
+    provider = settings.llm_provider.strip().lower()
+    if provider == "mock":
         return MockLLM()
-    try:
-        return AnthropicLLM(settings)
-    except Exception as exc:  # missing key, missing package, bad config
-        log.warning("LLM 不可用（%s），本次运行使用启发式规则降级处理", exc)
-        return MockLLM()
+
+    reasons: list[str] = []
+    for name in AUTO_ORDER if provider == "auto" else (provider,):
+        factory = PROVIDERS.get(name)
+        if factory is None:
+            reasons.append(f"{name}：未知的 provider")
+            continue
+        try:
+            return factory(settings)
+        except Exception as exc:  # missing key, missing binary, bad config
+            reasons.append(f"{name}：{exc}")
+
+    log.warning("LLM 不可用（%s），本次运行使用启发式规则降级处理", "；".join(reasons))
+    return MockLLM()
 
 
 # --------------------------------------------------------------------------

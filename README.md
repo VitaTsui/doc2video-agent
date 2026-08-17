@@ -34,7 +34,7 @@ Agent：理解需求 → 分析文档 → 生成讲稿 → 配音 → 导演 →
 | 分类 | 选型 |
 | --- | --- |
 | Agent 后端 | Python 3.11+、FastAPI、Pydantic v2 |
-| LLM / VLM | Anthropic Claude（结构化 JSON 输出、自适应思考） |
+| LLM / VLM | Anthropic Claude：API Key（结构化 JSON 输出、自适应思考），或本机 Claude Code CLI（免 Key） |
 | PDF 解析 | PyMuPDF（文本块 / 图片 / bbox / 高清页面渲染） |
 | PPT 解析 | python-pptx + OOXML；幻灯片渲染三档：LibreOffice / Chromium / 内置栅格化器 |
 | TTS | 可插拔 provider（内置 macOS `say`、静音兜底） |
@@ -49,7 +49,7 @@ Agent：理解需求 → 分析文档 → 生成讲稿 → 配音 → 导演 →
 uv venv --python 3.12
 uv pip install -e ".[bundled,dev]"
 
-# 2. 配置（可选：不配 Key 也能跑，讲稿会退化为启发式规则）
+# 2. 配置（可选：本机装了 Claude Code 就不必配 Key，见「不配 API Key 也能用真模型」）
 cp .env.example .env
 
 # 3. 体检：看看当前机器有哪些能力
@@ -71,35 +71,73 @@ uv run doc2video serve       # http://127.0.0.1:8400/docs
 cd renderer && pnpm install
 ```
 
+## 不配 API Key 也能用真模型
+
+装了 [Claude Code](https://claude.com/claude-code) 并已登录的机器，可以直接把本机的
+`claude` 当成模型后端，不需要 `ANTHROPIC_API_KEY`：
+
+```bash
+D2V_LLM_PROVIDER=auto   # 默认值：先 API Key，没有就用 Claude Code CLI，都没有才走启发式
+uv run doc2video doctor
+# LLM        : 可用｜模型 claude-opus-5｜来源 Claude Code CLI
+```
+
+实现上是 headless 调用（`claude -p --output-format json`），Skill 层完全无感。
+三处与 API 路径的差别，都在 provider 内部消化掉了：
+
+| 差别 | 处理方式 |
+| --- | --- |
+| 没有 structured outputs | JSON Schema 写进提示词，回复按「去围栏 → 取最外层 `{}`」解析，失败纠正重试一次 |
+| 不能直接传图片 | 页面渲染图交给 CLI 自带的 `Read` 工具读盘，并用 `--add-dir` 授权该目录；`Read` 是唯一放行的工具 |
+| 每次调用有固定开销 | 约 20k input tokens 的 CLI 系统提示与工具定义，连续调用大部分走缓存命中 |
+
+同时会用 `--strict-mcp-config` 屏蔽本机 MCP 服务、`--exclude-dynamic-system-prompt-sections`
+去掉工作目录/git 前言，并在一个空临时目录里运行——否则你仓库里的 CLAUDE.md
+会跟着进每一次讲稿生成。
+
+> 适合本机试跑和没有 Key 的环境。批量出片仍建议用 API Key：更便宜，且 JSON 输出有 schema 保证。
+
 ## 依赖内置
 
 系统级依赖里，**ffmpeg 已经内置，LibreOffice 不能内置**——两者性质不同。
 
-### ffmpeg：已内置
+### ffmpeg / ffprobe：都已内置
 
-`pip install '.[bundled]'` 会通过 `imageio-ffmpeg` 把一份静态 ffmpeg 装进虚拟环境
-（macOS arm64 约 47MB，ffmpeg 7.1）。查找顺序：
+`pip install '.[bundled]'` 会把静态 ffmpeg **和 ffprobe** 一起装进虚拟环境。查找顺序：
 
 ```
 D2V_FFMPEG_PATH 指定 → 系统 PATH → 环境内置的 wheel
 ```
 
-`doc2video doctor` 会显示实际用的是哪一份：
+`doc2video doctor` 会显示实际用的是哪一份，以及这份构建有没有字幕滤镜：
 
 ```
 ✓ ffmpeg   [内置] 编码、拼接、混音、封装；也是纯 ffmpeg 渲染器的依赖
-✗ ffprobe  [缺失] 音频时长探测（缺失时改用 ffmpeg 解析，不影响结果）
+✓ ffprobe  [内置] 音频时长探测（缺失时改用 ffmpeg 解析，不影响结果）
+
+滤镜：
+✓ drawtext 烧录字幕（缺失时只跳过字幕，渲染照常完成）
 ```
 
-三个已知代价，都已在代码里处理：
+内置的 wheel 按平台选，任何一个平台上只会装其中一个：
 
-- **wheel 里没有 ffprobe**。时长探测改为 WAV 头 → ffprobe → 解析 ffmpeg 输出三级回退，结果一致。
-- **不同平台的构建功能不同**。内置的 Linux 构建**没有 `drawtext` 滤镜**（macOS 那份有），
-  意味着烧不了字幕。渲染前会探测滤镜是否存在，缺失时只跳过字幕并告警，不会让整个渲染失败；
-  容器镜像里额外装了系统 ffmpeg（PATH 优先），字幕正常。
-- **该二进制是 GPL 构建**（`--enable-gpl --enable-libx264`）。自用、内部部署没问题；
+| 平台 | wheel | 带什么 |
+| --- | --- | --- |
+| macOS / Linux x86_64 / Windows x64 | `ffmpeg-binaries`（ffmpeg 6.0） | ffmpeg + **ffprobe**，且各平台构建都有 `drawtext` |
+| Linux arm64 | `imageio-ffmpeg`（ffmpeg 7.1） | 只有 ffmpeg，且该构建**没有 `drawtext`** |
+
+两个已知代价，都已在代码里处理：
+
+- **不同平台的构建功能不同**。Linux arm64 那一档烧不了字幕。渲染前会用
+  `media_binaries.has_filter()` 探测，缺失时只跳过字幕并告警，不会让整个渲染失败；
+  容器镜像里额外装了系统 ffmpeg（PATH 优先），字幕正常。时长探测同样是
+  WAV 头 → ffprobe → 解析 ffmpeg 输出三级回退，缺谁都得出一样的结果。
+- **两份二进制都是 GPL 构建**（`--enable-gpl --enable-libx264`）。自用、内部部署没问题；
   要随闭源商业产品分发时，需换成 LGPL 构建（`--disable-gpl`，用 openh264 或系统编码器）
   或改为让用户自行安装。这是法务问题，不是技术问题。
+
+> `ffmpeg-binaries` 还会往环境的 `bin/` 里装一个同名的 Python 启动脚本。它会遮住
+> PATH 上的真二进制，所以 PATH 查找会跳过解释器所在目录，直接用 wheel 里的原始二进制。
 
 ### LibreOffice：内置不了，但大部分场景已经不需要它
 
@@ -251,11 +289,13 @@ doc2video-agent/
 
 | 缺失 | 影响 | 降级行为 |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | 讲稿质量 | 全部 Skill 走启发式规则，工程结构完整 |
+| `ANTHROPIC_API_KEY` | 无（装了 Claude Code 时） | 自动改用本机 `claude` CLI，模型能力不变 |
+| API Key **和** Claude Code 都没有 | 讲稿质量 | 全部 Skill 走启发式规则，工程结构完整 |
 | LibreOffice (`soffice`) | PPT 幻灯片保真度 | 降级到 Chromium 渲染（保留主题色/字体/填充）；两者都缺才用内置栅格化器 |
 | Node / Remotion | 镜头表现力 | 自动回退到 FFmpeg 渲染器 |
 | `say`（非 macOS） | 真实语音 | 生成等时长静音轨，时间轴与字幕仍然正确 |
-| `ffprobe` | 无 | 改用 WAV 头 / ffmpeg 输出解析时长 |
+| `ffprobe`（Linux arm64） | 无 | 改用 WAV 头 / ffmpeg 输出解析时长 |
+| `drawtext` 滤镜（Linux arm64） | 无字幕 | 只跳过字幕并告警，其余画面照常渲染 |
 | `ffmpeg` 且未装 `[bundled]` | 无法产出成片 | 前面所有阶段照常完成并落盘，渲染阶段明确报缺失 |
 
 用 `doc2video doctor` 可以一次看清当前机器处在哪一档。

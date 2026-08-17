@@ -1,6 +1,6 @@
 [project]
 name = "doc2video-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "PDF / PPT intelligent explainer-video agent: document -> narration -> TTS -> director -> deterministic render -> MP4"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,11 +21,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Vendors a static ffmpeg binary into the Python environment, so producing an
-# MP4 needs no system install. NOTE: that build is GPL-licensed — see README
-# 「依赖内置」 before shipping it inside a closed-source product.
+# Vendors static media binaries into the Python environment, so producing an
+# MP4 needs no system install. NOTE: both builds are GPL-licensed — see README
+# 「依赖内置」 before shipping one inside a closed-source product.
+#
+# Exactly one of these installs on any given platform. ffmpeg-binaries is the
+# better wheel — it carries ffprobe as well, and its build has drawtext
+# (burned-in subtitles) on Linux too — but it publishes no Linux/arm64 wheel,
+# which is the gap imageio-ffmpeg fills.
 bundled = [
-    "imageio-ffmpeg>=0.6",
+    "ffmpeg-binaries>=1.1; platform_system == 'Darwin' or (platform_system == 'Linux' and platform_machine == 'x86_64') or (platform_system == 'Windows' and platform_machine == 'AMD64')",
+    "imageio-ffmpeg>=0.6; platform_system == 'Linux' and platform_machine != 'x86_64'",
 ]
 dev = [
     "pytest>=8.3",

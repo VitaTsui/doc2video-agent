@@ -162,7 +162,10 @@ class FFmpegAdapter(RendererAdapter):
         for cue in plan.subtitles:
             text = _escape_drawtext(cue.text)
             filters.append(
-                f"drawtext=fontfile='{font}':text='{text}'"
+                # expansion=none: without it drawtext reads `%{...}` as a
+                # template, and a bare `%` — every "增长 40%" in a narration —
+                # makes it drop the whole cue with only a "Stray %" warning.
+                f"drawtext=fontfile='{font}':expansion=none:text='{text}'"
                 f":fontcolor={SUBTITLE_COLOR}:fontsize={font_size}"
                 f":box=1:boxcolor={SUBTITLE_BOX_COLOR}:boxborderw=16"
                 f":x=(w-text_w)/2:y={y}"
@@ -179,6 +182,11 @@ def _find_font() -> str | None:
 
 
 def _escape_drawtext(text: str) -> str:
-    """drawtext treats ``:``/``'``/``\\``/``%`` as syntax — neutralize them."""
-    out = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
-    return out.replace("%", "\\%").replace("\n", " ")
+    """Neutralize what the *filtergraph* parser treats as syntax.
+
+    ``%`` is deliberately left alone: the filter sets ``expansion=none``, so a
+    percent sign is literal text, and escaping it to ``\\%`` is what made
+    drawtext discard the cue instead.
+    """
+    out = text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:")
+    return out.replace("\n", " ")
