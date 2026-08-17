@@ -32,6 +32,11 @@ MIN_KEEP_DURATION = 0.6
 RESET_DURATION = 1.0
 # A target covering more of the page than this is not worth zooming into.
 MAX_ZOOM_COVERAGE = 0.35
+# A pointer is a quick "look here" beat: it suits a passing mention of a small,
+# precise target. Dwelling on something calls for a highlight or a zoom instead.
+MAX_POINTER_COVERAGE = 0.10
+MAX_POINTER_SPAN = 2.6
+POINTER_DURATION = 1.4
 # Let the viewer hear the sentence start before the camera moves.
 AUDIO_LEAD = 0.3
 ZOOM_KINDS = {ElementKind.NUMBER, ElementKind.CHART, ElementKind.TABLE, ElementKind.IMAGE}
@@ -127,11 +132,7 @@ class DirectorSkill(Skill):
             if element is None:
                 continue
             score = element.importance + (0.5 if segment.emphasis else 0.0)
-            action_type = (
-                ActionType.ZOOM
-                if segment.emphasis or element.kind in ZOOM_KINDS
-                else ActionType.HIGHLIGHT
-            )
+            action_type = self._pick_action(segment, element, page)
             choice = ActionChoice(segment_id=segment.id, type=action_type, target=target_id)
             scored.append((score, choice))
 
@@ -156,6 +157,22 @@ class DirectorSkill(Skill):
                 ActionChoice(segment_id=scene.segments[-1].id, type=ActionType.RESET, target="")
             )
         return chosen
+
+    @staticmethod
+    def _pick_action(segment: NarrationSegment, element, page: DocumentPage) -> ActionType:
+        """Match the gesture to what the sentence is doing.
+
+        Emphasis and data-bearing elements earn a zoom; a brief mention of a
+        small element earns a pointer; anything else gets an outline. Without
+        the pointer branch the director had only two gestures, so quick
+        name-checks came out looking like the same emphasis as a key figure.
+        """
+        if segment.emphasis or element.kind in ZOOM_KINDS:
+            return ActionType.ZOOM
+        span = max(segment.end - segment.start, 0.0)
+        if span and span <= MAX_POINTER_SPAN and _coverage(element, page) <= MAX_POINTER_COVERAGE:
+            return ActionType.POINTER
+        return ActionType.HIGHLIGHT
 
     def _resolve_target(self, segment: NarrationSegment, page: DocumentPage) -> str | None:
         for ref in segment.element_refs:
@@ -182,12 +199,15 @@ class DirectorSkill(Skill):
         singles out nothing — an outline communicates the same thing without
         throwing away context.
         """
-        if choice.type is not ActionType.ZOOM or not choice.target:
+        if choice.type not in (ActionType.ZOOM, ActionType.POINTER) or not choice.target:
             return choice.type
         element = page.element(choice.target)
         if element is None or not page.width or not page.height:
             return choice.type
-        coverage = (element.bbox.w * element.bbox.h) / (page.width * page.height)
+        coverage = _coverage(element, page)
+        if choice.type is ActionType.POINTER:
+            # Pointing at a box that fills the page indicates nothing.
+            return ActionType.HIGHLIGHT if coverage > MAX_POINTER_COVERAGE else ActionType.POINTER
         return ActionType.HIGHLIGHT if coverage > MAX_ZOOM_COVERAGE else ActionType.ZOOM
 
     # -- turning choices into timed actions -------------------------------
@@ -221,7 +241,10 @@ class DirectorSkill(Skill):
                 if choice.target and choice.target == last_target:
                     continue
                 span = max(segment.end - segment.start, 0.0)
-                duration = max(MIN_ACTION_DURATION, min(MAX_ACTION_DURATION, span - 0.2))
+                if choice.type is ActionType.POINTER:
+                    duration = min(POINTER_DURATION, max(MIN_KEEP_DURATION, span - 0.2))
+                else:
+                    duration = max(MIN_ACTION_DURATION, min(MAX_ACTION_DURATION, span - 0.2))
                 at = max(0.0, segment.start + AUDIO_LEAD)
 
             # An action must fit inside its own scene, and be long enough to read.
@@ -251,3 +274,10 @@ class DirectorSkill(Skill):
 
         actions.sort(key=lambda a: a.at)
         return actions
+
+
+def _coverage(element, page: DocumentPage) -> float:
+    """Share of the page area a element occupies, 0..1."""
+    if not page.width or not page.height:
+        return 1.0
+    return (element.bbox.w * element.bbox.h) / (page.width * page.height)
