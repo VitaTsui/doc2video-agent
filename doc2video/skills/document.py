@@ -6,6 +6,9 @@ summaries, key points, narrative sections and an explaining order.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from pathlib import Path
+
 from pydantic import BaseModel, Field
 
 from ..schemas import DocumentPage, ElementKind, PageType, Section
@@ -15,6 +18,12 @@ from .base import Skill, load_prompt
 # Pages per LLM call: large enough for cross-page context, small enough that one
 # bad page does not cost the whole deck.
 BATCH_SIZE = 6
+# Attaching page renders is what lets the model read a diagram or a chart, but
+# images are expensive — send them only for the batches that need them, and cap
+# how many ride along in one request.
+MAX_IMAGES_PER_BATCH = 4
+# Below this much text a page is carrying its meaning visually, not in words.
+TEXT_LIGHT_THRESHOLD = 80
 
 COVER_HINTS = ("公司", "介绍", "简介", "product", "introduction", "overview")
 AGENDA_HINTS = ("目录", "议程", "contents", "agenda", "outline")
@@ -109,8 +118,11 @@ class DocumentSkill(Skill):
 
         for start in range(0, len(pages), BATCH_SIZE):
             batch = pages[start : start + BATCH_SIZE]
-            prompt = self._render_prompt(batch, len(pages))
-            raw = self.llm.complete_json(prompt, schema=schema, system=system)
+            images = self._images_for(batch)
+            prompt = self._render_prompt(batch, len(pages), visual_pages=images.keys())
+            raw = self.llm.complete_json(
+                prompt, schema=schema, system=system, images=list(images.values())
+            )
             result = DeckUnderstanding.model_validate(raw)
             # Deck-level fields come from the first batch, which sees the cover
             # and agenda — the pages that actually describe the whole document.
@@ -140,7 +152,35 @@ class DocumentSkill(Skill):
                 if element.id in scores:
                     element.importance = max(0.0, min(1.0, scores[element.id]))
 
-    def _render_prompt(self, batch: list[DocumentPage], total_pages: int) -> str:
+    def _images_for(self, batch: list[DocumentPage]) -> dict[int, Path]:
+        """Page renders worth attaching, keyed by page index.
+
+        Text extraction fails hardest exactly where the meaning is visual — an
+        architecture diagram, a chart, a screenshot. Those pages get their
+        rendered image so the model can read the picture instead of guessing
+        from a handful of stray labels.
+        """
+        ranked = sorted(
+            ((_visual_weight(page), page) for page in batch),
+            key=lambda pair: -pair[0],
+        )
+        selected: dict[int, Path] = {}
+        for weight, page in ranked:
+            if len(selected) >= MAX_IMAGES_PER_BATCH:
+                break
+            if weight <= 0:
+                continue
+            path = self.ctx.asset_path(page.image_path)
+            if path is not None and path.exists():
+                selected[page.index] = path
+        return dict(sorted(selected.items()))
+
+    def _render_prompt(
+        self,
+        batch: list[DocumentPage],
+        total_pages: int,
+        visual_pages: Iterable[int] = (),
+    ) -> str:
         lines = [
             f"文档标题：{self.project.document.title or '（未知）'}",
             f"总页数：{total_pages}",
@@ -157,6 +197,14 @@ class DocumentSkill(Skill):
             for element in page.elements:
                 text = element.text.replace("\n", " ")[:160]
                 lines.append(f"- [{element.id}] ({element.kind}) {text}")
+        attached = list(visual_pages)
+        if attached:
+            lines.append(
+                "\n随附了这些页面的渲染图（按页码顺序）："
+                + "、".join(f"第 {index} 页" for index in attached)
+                + "。这些页面的含义主要在画面里，请以图为准判断类型、要点与元素重要性，"
+                "文字列表只作为元素 id 的对照表。"
+            )
         lines.append(
             "\n请对以上每一页给出分析结果，并给出整份文档的主题、摘要、关键概念、章节划分与讲解顺序。"
         )
@@ -238,3 +286,22 @@ class DocumentSkill(Skill):
                 sections.append(current)
             current.page_indexes.append(page.index)
         return sections
+
+
+def _visual_weight(page: DocumentPage) -> float:
+    """How much of this page's meaning is only available in the picture."""
+    weight = 0.0
+    for element in page.elements:
+        if element.kind is ElementKind.CHART:
+            weight += 2.0
+        elif element.kind is ElementKind.IMAGE:
+            weight += 1.5
+        elif element.kind is ElementKind.TABLE:
+            weight += 0.5
+    # A page with almost no text is either a diagram or a section break; both
+    # are better judged from the render than from their few words.
+    if len(page.raw_text()) < TEXT_LIGHT_THRESHOLD:
+        weight += 1.0
+    if page.page_type is PageType.ARCHITECTURE:
+        weight += 1.5
+    return weight
