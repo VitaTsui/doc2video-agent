@@ -13,6 +13,7 @@ import hashlib
 from ..core.logging import get_logger
 from ..schemas import Scene
 from ..tools.tts import TTSTool
+from ..tools.tts.base import pad_silence
 from .base import Skill, SkillContext
 
 log = get_logger(__name__)
@@ -49,16 +50,23 @@ class VoiceSkill(Skill):
                 sentences=[s.text for s in scene.segments] or [scene.narration],
             )
 
+            # Silence at both ends: the page arrives and settles before the
+            # narrator starts, and the last word lands before the next slide.
+            lead = self.ctx.settings.scene_lead_seconds
+            padded = pad_silence(result.path, lead=lead, tail=self.ctx.settings.scene_tail_seconds)
+
             scene.audio.path = self.ctx.store.relativize(self.project.project_id, result.path)
-            scene.audio.duration = result.duration
+            scene.audio.duration = padded or result.duration
             scene.audio.provider = result.provider
             scene.audio.voice = result.voice
             scene.audio.text_hash = fingerprint
-            scene.duration = result.duration
+            scene.duration = scene.audio.duration
 
+            # Timestamps come back relative to the speech; the lead silence
+            # pushes all of them later, and subtitles follow them exactly.
             for segment, timed in zip(scene.segments, result.segments, strict=False):
-                segment.start = timed.start
-                segment.end = timed.end
+                segment.start = round(timed.start + lead, 3)
+                segment.end = round(timed.end + lead, 3)
             synthesized += 1
 
         self.log.info(
@@ -75,6 +83,9 @@ class VoiceSkill(Skill):
                 self.tts.provider_name,
                 self.tts.voice,
                 f"{self.ctx.settings.tts_speech_rate:.2f}",
+                # Part of the clip, so changing either has to re-synthesise.
+                f"{self.ctx.settings.scene_lead_seconds:.2f}",
+                f"{self.ctx.settings.scene_tail_seconds:.2f}",
             ]
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]

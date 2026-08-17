@@ -6,10 +6,13 @@ import type { PlanSubtitle } from "../types";
  * Subtitles render outside the camera layer so they stay legible and fixed
  * while the page zooms. One cue at a time — overlapping cues would stack.
  */
-export const Subtitles: React.FC<{ cues: PlanSubtitle[]; time: number }> = ({
-  cues,
-  time,
-}) => {
+export const Subtitles: React.FC<{
+  cues: PlanSubtitle[];
+  time: number;
+  /** Gap below the box as a fraction of frame height, from the plan. */
+  margin: number;
+  height: number;
+}> = ({ cues, time, margin, height }) => {
   const active = cues.find((cue) => time >= cue.start && time < cue.end);
   if (!active) {
     return null;
@@ -20,7 +23,10 @@ export const Subtitles: React.FC<{ cues: PlanSubtitle[]; time: number }> = ({
       style={{
         justifyContent: "flex-end",
         alignItems: "center",
-        paddingBottom: "6%",
+        // In pixels off the frame height: a percentage here would resolve
+        // against the frame's *width*, which is how the caption used to sit
+        // 115px up on a 1080p frame while the ffmpeg renderer put it at 75.
+        paddingBottom: Math.round(height * margin),
       }}
     >
       <div

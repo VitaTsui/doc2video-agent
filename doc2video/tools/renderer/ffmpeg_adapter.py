@@ -14,7 +14,7 @@ from ...core.logging import get_logger
 from ...schemas import ActionType
 from .. import ffmpeg, media_binaries
 from ..parsers.slide_raster import FONT_CANDIDATES
-from .base import SUBTITLE_SAFE_BOTTOM, PlanAction, RendererAdapter, ScenePlan
+from .base import PlanAction, RendererAdapter, ScenePlan
 
 log = get_logger(__name__)
 
@@ -22,6 +22,7 @@ HIGHLIGHT_COLOR = "0xF2B705@0.85"
 POINTER_COLOR = "0xE2574C@0.95"
 SUBTITLE_COLOR = "white"
 SUBTITLE_BOX_COLOR = "black@0.55"
+BOX_BORDER = 16
 
 
 class FFmpegAdapter(RendererAdapter):
@@ -155,9 +156,11 @@ class FFmpegAdapter(RendererAdapter):
             log.warning("未找到可用字体，跳过烧录字幕")
             return []
         font_size = max(24, int(plan.height * 0.036))
-        # Share the safe band with the layout skill, which already trims
-        # highlights out of it — otherwise subtitles overlap their own outlines.
-        y = int(plan.height * (1 - SUBTITLE_SAFE_BOTTOM))
+        # Anchor the box to the bottom edge, not to a fixed line: the gap below
+        # it is the number shared with the Remotion adapter, so the caption
+        # lands in the same place whichever renderer produced the clip. The box
+        # extends `boxborderw` past the text, hence the extra term.
+        offset = int(plan.height * plan.subtitle_margin) + BOX_BORDER
         filters = []
         for cue in plan.subtitles:
             text = _escape_drawtext(cue.text)
@@ -167,8 +170,8 @@ class FFmpegAdapter(RendererAdapter):
                 # makes it drop the whole cue with only a "Stray %" warning.
                 f"drawtext=fontfile='{font}':expansion=none:text='{text}'"
                 f":fontcolor={SUBTITLE_COLOR}:fontsize={font_size}"
-                f":box=1:boxcolor={SUBTITLE_BOX_COLOR}:boxborderw=16"
-                f":x=(w-text_w)/2:y={y}"
+                f":box=1:boxcolor={SUBTITLE_BOX_COLOR}:boxborderw={BOX_BORDER}"
+                f":x=(w-text_w)/2:y=h-text_h-{offset}"
                 f":enable='between(t,{cue.start:.3f},{cue.end:.3f})'"
             )
         return filters

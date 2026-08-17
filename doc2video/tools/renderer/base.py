@@ -7,6 +7,8 @@ the frames (方案 §11).
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -17,6 +19,15 @@ from ...schemas import ActionType
 # every adapter draws subtitles inside this band, and the layout skill keeps
 # highlights out of it, so the two never overlap.
 SUBTITLE_SAFE_BOTTOM = 0.12
+
+# Gap between the bottom of the caption box and the bottom of the frame, as a
+# fraction of frame *height*. It travels in the plan rather than staying a
+# constant here because the adapters cannot otherwise agree on it: Remotion's
+# CSS `paddingBottom: "6%"` resolved against the frame's width, so the caption
+# drifted with the aspect ratio and ignored this file entirely. Being in the
+# plan also puts it inside the render fingerprint, so moving the caption
+# re-renders the clips instead of leaving the old position burned in.
+SUBTITLE_BOTTOM_MARGIN = 0.03
 
 
 class PlanArea(BaseModel):
@@ -60,12 +71,31 @@ class ScenePlan(BaseModel):
     audio: str | None = None
     actions: list[PlanAction] = Field(default_factory=list)
     subtitles: list[PlanSubtitle] = Field(default_factory=list)
+    subtitle_margin: float = SUBTITLE_BOTTOM_MARGIN
     transition_in: str = "fade"
     transition_duration: float = 0.4
 
     @property
     def total_frames(self) -> int:
         return max(1, int(round(self.duration * self.fps)))
+
+    def fingerprint(self) -> str:
+        """Identity of the frames this plan produces, for incremental render.
+
+        The plan is the renderer's whole input, so hashing it is the only
+        version of "has this scene changed" that cannot go stale: hashing the
+        *scene* instead misses everything added on the way here — subtitles are
+        split from the narration by the layout skill, so re-wording the split
+        rules leaves every scene looking unchanged and silently reuses clips
+        with the old captions burned in.
+
+        Media paths are hashed by filename — the same project rendered from a
+        moved storage directory is the same video.
+        """
+        payload = self.model_dump(mode="json", exclude={"image", "video", "audio"})
+        payload["media"] = [Path(p).name for p in (self.image, self.video, self.audio) if p]
+        blob = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 class RendererAdapter:

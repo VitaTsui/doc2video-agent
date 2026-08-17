@@ -49,6 +49,8 @@ export type ScenePlan = {
   audio: string | null;
   actions: PlanAction[];
   subtitles: PlanSubtitle[];
+  /** Gap below the caption box, as a fraction of frame *height*. */
+  subtitleMargin: number;
   transitionIn: string;
   transitionDuration: number;
 };
@@ -65,6 +67,7 @@ export type RawScenePlan = {
   audio: string | null;
   actions: PlanAction[];
   subtitles: PlanSubtitle[];
+  subtitle_margin: number;
   transition_in: string;
   transition_duration: number;
 };
@@ -80,6 +83,7 @@ export const normalizePlan = (raw: RawScenePlan): ScenePlan => ({
   audio: raw.audio,
   actions: raw.actions ?? [],
   subtitles: raw.subtitles ?? [],
+  subtitleMargin: raw.subtitle_margin ?? 0.03,
   transitionIn: raw.transition_in ?? "fade",
   transitionDuration: raw.transition_duration ?? 0.4,
 });

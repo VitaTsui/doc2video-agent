@@ -16,6 +16,7 @@ const DEFAULT_PLAN: RawScenePlan = {
   audio: null,
   actions: [],
   subtitles: [],
+  subtitle_margin: 0.03,
   transition_in: "fade",
   transition_duration: 0.4,
 };

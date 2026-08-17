@@ -18,6 +18,7 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
+from pptx.util import Length
 
 from ...core.logging import get_logger
 from .chart_xml import PlotGroups, RawSeries, read_plot_groups
@@ -60,6 +61,7 @@ DEFAULT_SIZES = {
     PP_PLACEHOLDER.OBJECT: 18.0,
 }
 DEFAULT_SIZE = 18.0
+DEFAULT_LINE_SPACING = 1.2
 
 ALIGN_MAP = {
     PP_ALIGN.CENTER: Align.CENTER,
@@ -392,7 +394,7 @@ class _Context:
             align=explicit_align or Align(inherited.align or "left"),
             level=level,
             bullet=bullet,
-            line_spacing=_line_spacing(paragraph),
+            line_spacing=_line_spacing(paragraph, runs),
             space_before_pt=_length_to_pt(paragraph.space_before),
             space_after_pt=_length_to_pt(paragraph.space_after),
         )
@@ -876,14 +878,29 @@ def _strip_leading_bullet(text: str) -> str:
     return text
 
 
-def _line_spacing(paragraph) -> float:
+def _line_spacing(paragraph, runs: list[Run]) -> float:
+    """PowerPoint's two line-spacing kinds, both as a CSS line-height multiple.
+
+    ``<a:spcPct>`` gives a multiple and python-pptx returns a float; ``<a:spcPts>``
+    gives an absolute height and returns a ``Length``. **Length subclasses int**,
+    so it has to be tested first — an ``isinstance(x, int)`` check passes for
+    both, and returning a Length unchanged hands the renderer raw EMU as a
+    multiple. 21pt of spacing then becomes a line-height of 266700, which pushes
+    the text millions of pixels below its own box: it renders, and every
+    paragraph using absolute spacing silently disappears.
+
+    An absolute height is divided by the paragraph's own font size, since that
+    is what a multiple is relative to.
+    """
     spacing = paragraph.line_spacing
     if spacing is None:
-        return 1.2
-    if isinstance(spacing, float | int):
-        return float(spacing)
-    # A Length means an absolute spacing; approximate it as a multiple.
-    return 1.2
+        return DEFAULT_LINE_SPACING
+    if isinstance(spacing, Length):
+        size_pt = next((r.size_pt for r in runs if r.size_pt), None) or DEFAULT_SIZE
+        # Bounded because a corrupt value should cost this paragraph's spacing,
+        # not the whole slide's layout.
+        return max(0.5, min(5.0, spacing.pt / size_pt))
+    return float(spacing)
 
 
 def _length_to_pt(value) -> float:

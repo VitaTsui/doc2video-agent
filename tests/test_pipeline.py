@@ -44,14 +44,20 @@ def test_pages_have_geometry_and_rendered_images(built_project: VideoProject, st
         assert store.resolve(built_project.project_id, page.image_path).exists()
 
 
-def test_every_scene_is_voiced_with_timestamps(built_project: VideoProject, store: ProjectStore):
+def test_every_scene_is_voiced_with_timestamps(
+    built_project: VideoProject, store: ProjectStore, settings: Settings
+):
     for scene in built_project.scenes:
         assert scene.audio.path
         assert store.resolve(built_project.project_id, scene.audio.path).exists()
         assert scene.duration == pytest.approx(scene.audio.duration, abs=0.01)
         assert scene.segments
-        assert scene.segments[0].start == 0.0
-        assert scene.segments[-1].end == pytest.approx(scene.duration, abs=0.05)
+        # Speech sits inside the clip's silence, not across it: the page has
+        # arrived before the first word and the last one lands before it goes.
+        assert scene.segments[0].start == pytest.approx(settings.scene_lead_seconds, abs=0.05)
+        assert scene.segments[-1].end == pytest.approx(
+            scene.duration - settings.scene_tail_seconds, abs=0.05
+        )
 
 
 def test_actions_target_real_elements_and_fit_their_scene(built_project: VideoProject):

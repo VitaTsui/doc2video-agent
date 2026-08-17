@@ -67,7 +67,12 @@ export const SceneComposition: React.FC<RawScenePlan> = (raw) => {
       </AbsoluteFill>
 
       {/* Subtitles sit outside the camera layer — they must not zoom. */}
-      <Subtitles cues={plan.subtitles} time={time} />
+      <Subtitles
+        cues={plan.subtitles}
+        time={time}
+        margin={plan.subtitleMargin}
+        height={plan.height}
+      />
     </AbsoluteFill>
   );
 };

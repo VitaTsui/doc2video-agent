@@ -181,19 +181,28 @@ class Executor:
         project.render.renderer = adapter.name
         project.render.status = "rendering"
 
+        # Plans for every scene, not just the ones about to be rendered: the
+        # plan is what decides whether a scene changed, so it has to exist
+        # before that question can be asked. Building one is cheap — no frames.
+        plans = {p.scene_id: p for p in MotionSkill(self.ctx).scene_plans()}
+
         # Incremental render, but only when the previous clips are comparable:
         # a different renderer would mix encodings that cannot be concatenated.
         reusable = bool(project.render.scene_clips) and previous_renderer == adapter.name
-        dirty = project.dirty_scenes() if reusable else list(project.scenes)
+        dirty = [
+            scene
+            for scene in project.scenes
+            if not reusable
+            or scene.scene_id not in plans
+            or project.render.rendered_scenes.get(scene.scene_id)
+            != plans[scene.scene_id].fingerprint()
+        ]
         if dirty:
             log.info("需要渲染 %d / %d 个场景", len(dirty), len(project.scenes))
         else:
             log.info("没有变化的场景，直接重新合成")
 
-        motion = MotionSkill(self.ctx)
-
         clips_dir = self.ctx.store.clips_dir(project.project_id)
-        plans = {p.scene_id: p for p in motion.scene_plans(dirty)}
 
         for scene in dirty:
             scene_plan = plans.get(scene.scene_id)
@@ -205,7 +214,7 @@ class Executor:
             project.render.scene_clips[scene.scene_id] = self.ctx.store.relativize(
                 project.project_id, clip_path
             )
-            project.render.rendered_scenes[scene.scene_id] = scene.content_hash()
+            project.render.rendered_scenes[scene.scene_id] = scene_plan.fingerprint()
 
         self._assemble(project.scenes)
         project.render.status = "done"
