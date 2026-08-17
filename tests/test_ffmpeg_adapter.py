@@ -7,6 +7,8 @@ this code actually goes wrong.
 
 from __future__ import annotations
 
+import pytest
+
 from doc2video.tools.renderer import ScenePlan
 from doc2video.tools.renderer.base import PlanAction, PlanArea, PlanSubtitle
 from doc2video.tools.renderer.ffmpeg_adapter import FFmpegAdapter, _escape_drawtext
@@ -79,14 +81,32 @@ def test_subtitles_are_escaped_and_time_gated():
     if not drawtext:  # no CJK-capable font on this machine
         return
     assert "enable='between(t,0.000,2.000)'" in drawtext[0]
-    assert "\\%" in drawtext[0]
     assert "\\:" in drawtext[0]
+    # A quote of our own would end the filter's text argument early.
+    assert "'quoted'" not in drawtext[0]
 
 
 def test_escape_drawtext_neutralizes_syntax_characters():
-    escaped = _escape_drawtext("a:b%c'd\\e\nf")
+    escaped = _escape_drawtext("a:b'd\\e\nf")
     assert "\\:" in escaped
-    assert "\\%" in escaped
     assert "\\\\" in escaped
     assert "'" not in escaped
     assert "\n" not in escaped
+
+
+def test_percent_survives_untouched():
+    """Escaping it as \\% makes drawtext discard the whole cue ("Stray %")."""
+    assert _escape_drawtext("增长 333%") == "增长 333%"
+
+
+def test_subtitles_disable_template_expansion(monkeypatch: pytest.MonkeyPatch):
+    """Without expansion=none, `%` and `{}` in a narration are read as syntax."""
+    monkeypatch.setattr(
+        "doc2video.tools.renderer.ffmpeg_adapter._find_font", lambda: "/tmp/font.ttc"
+    )
+    plan = _plan(subtitles=[PlanSubtitle(start=0.0, end=2.0, text="增长 333%")])
+    drawtext = [f for f in FFmpegAdapter()._build_filters(plan) if f.startswith("drawtext=")]
+
+    assert drawtext, "本机 ffmpeg 应支持 drawtext"
+    assert "expansion=none" in drawtext[0]
+    assert "333%" in drawtext[0]
