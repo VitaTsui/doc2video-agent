@@ -8,8 +8,10 @@ stage so a failed run can resume instead of starting over.
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 
+from ..core import telemetry
 from ..core.errors import Doc2VideoError, SkillFailed
 from ..core.logging import get_logger
 from ..schemas import HistoryEntry, ProjectStatus, Scene, VideoProject
@@ -30,6 +32,22 @@ from .planner import ExecutionPlan, Stage
 log = get_logger(__name__)
 
 ProgressFn = Callable[[str, str], None]
+
+
+@contextmanager
+def _timed(stage: str):
+    """Time a stage when a run is being recorded; a no-op otherwise.
+
+    Kept here rather than inside the telemetry module so the executor reads the
+    same with or without observability attached.
+    """
+    recorder = telemetry.current()
+    if recorder is None:
+        yield
+        return
+    with recorder.stage_scope(stage):
+        yield
+
 
 STAGE_STATUS = {
     Stage.PARSE: ProjectStatus.PARSING,
@@ -62,7 +80,8 @@ class Executor:
             for stage in plan.stages:
                 self.project.status = STAGE_STATUS.get(stage, self.project.status)
                 self._progress(stage.value, f"开始 {stage.value}")
-                self._run_stage(stage, plan)
+                with _timed(stage.value):
+                    self._run_stage(stage, plan)
                 self.ctx.store.save(self.project)
                 self._progress(stage.value, f"完成 {stage.value}")
             self.project.status = ProjectStatus.READY

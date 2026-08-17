@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from ..core import telemetry
 from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
 from ..schemas import VideoProject
@@ -94,13 +95,18 @@ class Skill:
         """Run an LLM-backed step, degrading to the heuristic path on failure.
 
         A model outage must not fail a whole video job — it should downgrade the
-        quality of one step and say so (方案 §20 长任务失败).
+        quality of one step and say so (方案 §20 长任务失败). Each degradation is
+        also recorded: a run that silently produced a much worse video is
+        otherwise indistinguishable from a good one in monitoring.
         """
         if not self.llm.available:
             self.log.info("%s：LLM 不可用，使用启发式规则", what)
+            telemetry.record_degradation(what, "LLM 不可用")
             return fallback()
         try:
-            return fn()
+            with telemetry.skill_scope(self.name):
+                return fn()
         except Exception as exc:  # provider errors, malformed output, timeouts
             self.log.warning("%s：LLM 调用失败（%s），降级为启发式规则", what, exc)
+            telemetry.record_degradation(what, str(exc))
             return fallback()

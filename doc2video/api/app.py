@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from ..core.config import get_settings
 from ..core.errors import Doc2VideoError
 from ..core.logging import setup_logging
-from .routes import agent, health, jobs, projects
+from .routes import agent, health, jobs, metrics, projects
 
 DESCRIPTION = """
 PDF / PPT 智能讲解视频 Agent。
@@ -26,7 +26,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Doc2Video Agent",
         description=DESCRIPTION,
-        version="0.1.0",
+        version="0.2.0",
     )
     app.add_middleware(
         CORSMiddleware,
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(agent.router)
     app.include_router(jobs.router)
     app.include_router(projects.router)
+    app.include_router(metrics.router)
 
     @app.exception_handler(Doc2VideoError)
     async def domain_error_handler(_: Request, exc: Doc2VideoError) -> JSONResponse:

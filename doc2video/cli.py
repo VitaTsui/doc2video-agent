@@ -15,6 +15,7 @@ from .agent import Doc2VideoAgent
 from .core.config import dependency_report, filter_report, get_settings
 from .core.errors import Doc2VideoError
 from .core.logging import setup_logging
+from .storage.run_log import RunLog, summarize
 from .tools.llm import get_llm
 from .tools.renderer import renderer_status
 from .tools.tts import TTSTool
@@ -50,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
 
     projects = sub.add_parser("projects", help="列出全部工程")
     projects.set_defaults(func=cmd_projects)
+
+    metrics = sub.add_parser("metrics", help="查看跨运行的耗时、成本与质量")
+    metrics.add_argument("--limit", type=int, default=500, help="参与统计的最近运行条数")
+    metrics.set_defaults(func=cmd_metrics)
 
     serve = sub.add_parser("serve", help="启动 API 服务")
     serve.add_argument("--host", default=None)
@@ -134,6 +139,16 @@ def cmd_show(args) -> int:
     print(f"标题：{project.document.title}｜主题：{project.document.topic}")
     print(f"时长：{project.total_duration():.1f} 秒（目标 {project.intent.duration} 秒）")
     print(f"成片：{project.render.output_path or '（未生成）'}")
+    if project.quality:
+        dimensions = "｜".join(f"{d.name} {d.score:.0f}" for d in project.quality.dimensions)
+        print(f"质量：{project.quality.score:.1f} 分（{dimensions}）")
+    if project.telemetry:
+        cost = project.telemetry.cost_usd()
+        print(
+            f"上次运行：{project.telemetry.duration_s:.0f} 秒｜"
+            f"{f'${cost:.4f}' if cost is not None else '成本未知'}｜"
+            f"降级 {len(project.telemetry.degradations)} 处"
+        )
     print("\n场景：")
     for scene in project.scenes:
         actions = "、".join(f"{a.type}@{a.at:.1f}s" for a in scene.actions if a.target) or "无"
@@ -159,6 +174,46 @@ def cmd_projects(_args) -> int:
             f"{item['project_id']}  {item['status']:<10} {item['duration']:6.1f}s  "
             f"{item['source']}  {item['title'][:30]}"
         )
+    return 0
+
+
+def cmd_metrics(args) -> int:
+    settings = get_settings()
+    records = RunLog(settings).recent(args.limit)
+    summary = summarize(records)
+
+    if not summary.get("runs"):
+        print("还没有运行记录。跑一次 `doc2video run` 之后再看。")
+        return 0
+
+    duration, quality = summary["duration_s"], summary["quality"]
+    cost = summary["cost_usd"]
+    median_cost = cost["per_run_median"]
+    priced = f"（{cost['priced_runs']} 次可定价）" if cost["priced_runs"] else "（无可定价记录）"
+
+    print(f"== 运行统计（最近 {summary['runs']} 次）==")
+    print(f"成功／失败：{summary['succeeded']} / {summary['failed']}")
+    if duration["count"]:
+        print(f"总耗时　　：中位数 {duration['median']}s｜p95 {duration['p95']}s")
+    # Quality shows the low tail, not p95 — the bad end of a score is the low one.
+    if quality["count"]:
+        print(f"质量分　　：中位数 {quality['median']}｜最差 5% {quality['p5']}")
+    print(
+        f"成本　　　：合计 ${cost['total']:.4f}｜单次中位数 "
+        f"{f'${median_cost:.4f}' if median_cost is not None else '—'}{priced}"
+    )
+    print(f"token　　 ：{summary['tokens']:,}")
+
+    print("\n各阶段耗时（中位数 / p95 秒）：")
+    for name, stats in summary["stages"].items():
+        failed = f"｜失败 {stats['failed']}" if stats["failed"] else ""
+        print(f"  {name:12s} {stats['median']:>8} / {stats['p95']}{failed}")
+
+    if summary["degradations"]:
+        print("\n降级次数（跑完了，但质量打折）：")
+        for what, count in summary["degradations"].items():
+            print(f"  {count:>4} × {what}")
+
     return 0
 
 

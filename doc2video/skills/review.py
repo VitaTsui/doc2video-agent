@@ -11,6 +11,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from ..schemas import ReviewFinding
+from ..schemas.telemetry import QualityDimension, QualityReport
 from ..tools.llm import model_schema
 from .base import Skill, load_prompt
 
@@ -43,9 +44,92 @@ class ReviewSkill(Skill):
             self.try_llm(self._content_review, lambda: [], what="内容质检")
         )
         self.project.review = findings
+        self.project.quality = self._score(findings)
 
         errors = sum(1 for f in findings if f.severity == "error")
-        self.log.info("质检完成：%d 条问题（其中 error %d 条）", len(findings), errors)
+        self.log.info(
+            "质检完成：%d 条问题（其中 error %d 条），质量分 %.1f",
+            len(findings),
+            errors,
+            self.project.quality.score,
+        )
+
+    # -- scoring ---------------------------------------------------------
+    def _score(self, findings: list[ReviewFinding]) -> QualityReport:
+        """Turn findings and structure into one comparable number.
+
+        Scored per dimension rather than as a flat penalty count, because the
+        failures are not interchangeable: a scene with no audio is a broken
+        video, while a long subtitle cue is a blemish. Each dimension is a
+        ratio of what went wrong to what could have, so the score does not drift
+        with deck length.
+        """
+        scenes = self.project.scenes
+        by_kind: dict[str, int] = {}
+        for finding in findings:
+            by_kind[finding.kind] = by_kind.get(finding.kind, 0) + 1
+
+        broken = by_kind.get("missing_visual", 0) + by_kind.get("missing_audio", 0)
+        dangling = by_kind.get("dangling_action", 0) + by_kind.get("action_overflow", 0)
+        dimensions = [
+            QualityDimension(
+                name="completeness",
+                score=_ratio_score(broken, len(scenes)),
+                weight=0.35,
+                detail=f"{broken} 个场景缺画面或缺配音",
+            ),
+            QualityDimension(
+                name="pacing",
+                score=self._pacing_score(by_kind),
+                weight=0.20,
+                detail=f"时长偏差与节奏问题 {by_kind.get('pacing', 0)} 条",
+            ),
+            QualityDimension(
+                name="originality",
+                score=_ratio_score(by_kind.get("read_aloud", 0), len(scenes)),
+                weight=0.20,
+                detail=f"{by_kind.get('read_aloud', 0)} 个场景讲稿接近照读页面",
+            ),
+            QualityDimension(
+                name="direction",
+                score=self._direction_score(dangling),
+                weight=0.15,
+                detail=f"{self._scenes_with_actions()}/{len(scenes)} 个场景有镜头动作",
+            ),
+            QualityDimension(
+                name="subtitles",
+                score=100.0 if not by_kind.get("subtitle") else 60.0,
+                weight=0.10,
+                detail=f"字幕问题 {by_kind.get('subtitle', 0)} 条",
+            ),
+        ]
+        total_weight = sum(d.weight for d in dimensions)
+        score = sum(d.score * d.weight for d in dimensions) / total_weight
+
+        return QualityReport(
+            score=round(score, 1),
+            dimensions=dimensions,
+            errors=sum(1 for f in findings if f.severity == "error"),
+            warnings=sum(1 for f in findings if f.severity == "warning"),
+        )
+
+    def _pacing_score(self, by_kind: dict[str, int]) -> float:
+        score = 100.0
+        if by_kind.get("duration"):
+            # Missing the requested length is the one the user asked for.
+            score -= 40.0
+        score -= 10.0 * by_kind.get("pacing", 0)
+        return max(0.0, score)
+
+    def _direction_score(self, dangling: int) -> float:
+        scenes = self.project.scenes
+        if not scenes:
+            return 0.0
+        covered = self._scenes_with_actions() / len(scenes)
+        return max(0.0, covered * 100.0 - 15.0 * dangling)
+
+    def _scenes_with_actions(self) -> int:
+        return sum(1 for scene in self.project.scenes if scene.actions)
 
     # -- deterministic ---------------------------------------------------
     def _structural_checks(self) -> list[ReviewFinding]:
@@ -189,6 +273,13 @@ class ReviewSkill(Skill):
                 )
             lines.append("")
         return "\n".join(lines)
+
+
+def _ratio_score(bad: int, total: int) -> float:
+    """100 when nothing is wrong, falling to 0 when everything is."""
+    if total <= 0:
+        return 0.0
+    return max(0.0, (1.0 - bad / total) * 100.0)
 
 
 def _overlap_ratio(narration: str, page_text: str) -> float:
