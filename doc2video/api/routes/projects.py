@@ -65,19 +65,14 @@ def get_quality(project_id: str) -> dict:
 
 @router.get("/{project_id}/telemetry")
 def get_telemetry(project_id: str) -> dict:
-    """The last run's timings, model calls and cost."""
+    """The last run's stage timings and degradations."""
     record = _load(project_id).telemetry
     if record is None:
         raise HTTPException(
             status_code=404,
             detail={"code": "telemetry_not_ready", "message": "工程尚未产生运行记录"},
         )
-    return {
-        **record.model_dump(mode="json"),
-        "cost_usd_total": record.cost_usd(),
-        "cost_by_stage": record.cost_by_stage(),
-        "total_tokens": record.total_tokens(),
-    }
+    return record.model_dump(mode="json")
 
 
 @router.get("/{project_id}/video")

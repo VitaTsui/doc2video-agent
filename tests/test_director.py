@@ -19,7 +19,6 @@ from doc2video.schemas import (
 from doc2video.skills.base import SkillContext
 from doc2video.skills.director import DirectorSkill
 from doc2video.storage import ProjectStore
-from doc2video.tools.llm import MockLLM
 
 
 def _page(elements: list[SlideElement]) -> DocumentPage:
@@ -37,7 +36,7 @@ def _run(page: DocumentPage, scene: Scene, settings: Settings, store: ProjectSto
         document=DocumentModel(pages=[page]),
         scenes=[scene],
     )
-    ctx = SkillContext.build(project, store=store, settings=settings, llm=MockLLM())
+    ctx = SkillContext.build(project, store=store, settings=settings)
     DirectorSkill(ctx).run()
     return project.scenes[0]
 

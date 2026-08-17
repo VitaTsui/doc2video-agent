@@ -2,7 +2,7 @@
 
 Two jobs (方案 §5): turn a first request into a Video Intent, and turn a
 follow-up chat message into the smallest set of stages and scenes that have to
-be redone. The LLM proposes; deterministic rules validate and bound the result.
+be redone. Rules parse the brief; nothing here calls a model.
 """
 
 from __future__ import annotations
@@ -14,8 +14,6 @@ from pydantic import BaseModel, Field
 
 from ..core.logging import get_logger
 from ..schemas import VideoIntent, VideoProject
-from ..skills.base import load_prompt
-from ..tools.llm import LLMTool, model_schema
 
 log = get_logger(__name__)
 
@@ -45,7 +43,16 @@ FULL_PIPELINE = [
 
 # A content edit invalidates everything downstream of the script, but never the
 # parse/understand stages — the document itself did not change.
-_EDIT_STAGES = [
+POST_SCRIPT_STAGES = [
+    Stage.NARRATE,
+    Stage.VOICE,
+    Stage.DIRECT,
+    Stage.MOTION,
+    Stage.RENDER,
+    Stage.REVIEW,
+]
+
+REVISION_STAGES = [
     Stage.NARRATE,
     Stage.VOICE,
     Stage.DIRECT,
@@ -76,30 +83,53 @@ class ExecutionPlan(BaseModel):
     summary: str = ""
     stages: list[Stage] = Field(default_factory=list)
     scene_ids: list[str] = Field(default_factory=list)
-    scene_instructions: dict[str, str] = Field(default_factory=dict)
+    # Caller-written script: page index -> text for a full run, scene id -> text
+    # for a targeted edit. Empty means "no script supplied" (placeholder path).
+    narrations: dict[int, str] = Field(default_factory=dict)
+    scene_narrations: dict[str, str] = Field(default_factory=dict)
+    # Seconds a scene was asked to become. Informational: nothing here writes to
+    # a length any more, but the caller needs the number to rewrite against it.
     scene_durations: dict[str, float] = Field(default_factory=dict)
     intent: VideoIntent | None = None
     force_voice: bool = False
 
 
 class Planner:
-    def __init__(self, llm: LLMTool) -> None:
-        self.llm = llm
+    """Turns a one-line brief into an intent and a stage list, by rule.
+
+    Rules, not a model: this service holds none. They read the things a brief
+    actually states — a duration, an audience, which pages matter — and leave
+    everything they cannot parse at its default rather than inventing it.
+    """
 
     # -- first run --------------------------------------------------------
     def initial_intent(self, message: str, *, page_count: int, current: VideoIntent) -> VideoIntent:
-        if self.llm.available:
-            try:
-                raw = self.llm.complete_json(
-                    self._intent_prompt(message, current, page_count),
-                    schema=model_schema(VideoIntent),
-                    system=load_prompt("intent"),
-                )
-                intent = VideoIntent.model_validate(raw)
-                return self._sanitize_intent(intent, page_count)
-            except Exception as exc:
-                log.warning("意图解析失败（%s），改用规则解析", exc)
         return self._sanitize_intent(parse_intent_rules(message, current), page_count)
+
+    def prepare_plan(self, message: str, project: VideoProject) -> ExecutionPlan:
+        """Parse and understand only — stop before anything needs a script."""
+        intent = self.initial_intent(
+            message, page_count=project.source.page_count, current=project.intent
+        )
+        return ExecutionPlan(
+            summary="解析文档，等待讲稿",
+            stages=[Stage.PARSE, Stage.UNDERSTAND],
+            intent=intent,
+        )
+
+    def render_plan(self, narrations: dict[int, str]) -> ExecutionPlan:
+        """Everything downstream of a script: adopt it, then voice and render.
+
+        A distinct plan rather than a parsed one — "here is the script, render
+        it" is a statement about what the caller supplied, not an instruction to
+        interpret, and routing it through the edit rules would leave it matching
+        nothing and skipping the narration stage entirely.
+        """
+        return ExecutionPlan(
+            summary="按调用方讲稿生成视频",
+            stages=list(POST_SCRIPT_STAGES),
+            narrations=dict(narrations),
+        )
 
     def initial_plan(self, message: str, project: VideoProject) -> ExecutionPlan:
         intent = self.initial_intent(
@@ -113,20 +143,7 @@ class Planner:
 
     # -- follow-up edits ---------------------------------------------------
     def edit_plan(self, message: str, project: VideoProject) -> ExecutionPlan:
-        plan = None
-        if self.llm.available:
-            try:
-                raw = self.llm.complete_json(
-                    self._edit_prompt(message, project),
-                    schema=model_schema(EditPlan),
-                    system=_EDIT_SYSTEM,
-                )
-                plan = EditPlan.model_validate(raw)
-            except Exception as exc:
-                log.warning("修改意图解析失败（%s），改用规则解析", exc)
-        if plan is None:
-            plan = parse_edit_rules(message, project)
-        return self._to_execution_plan(plan, project)
+        return self._to_execution_plan(parse_edit_rules(message, project), project)
 
     def _to_execution_plan(self, plan: EditPlan, project: VideoProject) -> ExecutionPlan:
         known = {s.scene_id for s in project.scenes}
@@ -139,10 +156,10 @@ class Planner:
         scene_ids: list[str] = []
 
         if plan.rewrite_all or (intent_changed and not edits):
-            stages = _EDIT_STAGES
+            stages = REVISION_STAGES
         elif edits:
             scene_ids = [e.scene_id for e in edits]
-            stages = _EDIT_STAGES
+            stages = REVISION_STAGES
         elif plan.redirect:
             stages = [Stage.DIRECT, Stage.MOTION, Stage.RENDER, Stage.REVIEW]
         elif plan.revoice:
@@ -154,37 +171,14 @@ class Planner:
             summary=plan.summary or "按用户指令修改工程",
             stages=stages,
             scene_ids=scene_ids,
-            scene_instructions={e.scene_id: e.instruction for e in edits if e.instruction},
             scene_durations={
-                e.scene_id: e.target_duration for e in edits if e.target_duration > 0
+                e.scene_id: e.target_duration for e in edits if e.target_duration
             },
             intent=intent if intent_changed else None,
             force_voice=plan.revoice,
         )
 
-    # -- prompts -----------------------------------------------------------
-    def _intent_prompt(self, message: str, current: VideoIntent, page_count: int) -> str:
-        return (
-            f"用户消息：{message}\n\n"
-            f"文档页数：{page_count}\n\n"
-            f"当前意图：{current.model_dump_json(indent=2)}"
-        )
-
-    def _edit_prompt(self, message: str, project: VideoProject) -> str:
-        lines = [
-            f"用户消息：{message}",
-            "",
-            f"当前意图：{project.intent.model_dump_json()}",
-            "",
-            "当前场景列表：",
-        ]
-        for scene in project.scenes:
-            lines.append(
-                f"- {scene.scene_id}（第 {scene.source_page} 页，{scene.duration:.0f} 秒）"
-                f" {scene.title or scene.narration[:24]}"
-            )
-        return "\n".join(lines)
-
+    # -- bounds -------------------------------------------------------------
     @staticmethod
     def _sanitize_intent(intent: VideoIntent, page_count: int) -> VideoIntent:
         intent.duration = max(15, min(7200, int(intent.duration)))
@@ -194,17 +188,6 @@ class Planner:
         return intent
 
 
-_EDIT_SYSTEM = """你在一个「文档转讲解视频」系统里，把用户的修改指令翻译成对现有工程的改动计划。
-
-规则：
-- 用户提到某一页或某个场景时，把改动放进 `scene_edits`，`instruction` 用一句话描述这一页要怎么改。
-- `target_duration` 只在用户明确要求该场景的时长时填写（单位秒），否则填 0。
-- 用户改的是全片时长、受众、风格这类全局设定时，更新 `intent`，`scene_edits` 留空。
-- `rewrite_all` 只在用户要求整体重写讲稿时为 true。
-- `revoice` 用于换音色、换语速；`redirect` 用于只改镜头（例如「所有关键数字都放大」）。
-- `intent` 必须返回完整对象：用户没提到的字段沿用当前值。
-- `summary` 一句话说明你将要做什么，会展示给用户。
-"""
 
 
 # --------------------------------------------------------------------------

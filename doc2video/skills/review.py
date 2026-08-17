@@ -12,8 +12,7 @@ from pydantic import BaseModel
 
 from ..schemas import ReviewFinding
 from ..schemas.telemetry import QualityDimension, QualityReport
-from ..tools.llm import model_schema
-from .base import Skill, load_prompt
+from .base import Skill
 
 DURATION_TOLERANCE = 0.25
 LONG_SCENE_SECONDS = 90.0
@@ -40,9 +39,6 @@ class ReviewSkill(Skill):
 
     def run(self) -> None:
         findings = self._structural_checks()
-        findings.extend(
-            self.try_llm(self._content_review, lambda: [], what="内容质检")
-        )
         self.project.review = findings
         self.project.quality = self._score(findings)
 
@@ -230,50 +226,6 @@ class ReviewSkill(Skill):
                 break
 
         return findings
-
-    # -- model-assisted ---------------------------------------------------
-    def _content_review(self) -> list[ReviewFinding]:
-        raw = self.llm.complete_json(
-            self._render_prompt(), schema=model_schema(ReviewResult), system=load_prompt("review")
-        )
-        result = ReviewResult.model_validate(raw)
-        known = {s.scene_id for s in self.project.scenes}
-        return [
-            ReviewFinding(
-                severity=f.severity if f.severity in ("error", "warning", "info") else "warning",
-                kind=f.kind or "content",
-                scene_id=f.scene_id if f.scene_id in known else None,
-                message=f.message,
-            )
-            for f in result.findings
-            if f.message.strip()
-        ]
-
-    def _render_prompt(self) -> str:
-        intent = self.project.intent
-        lines = [
-            f"目标时长：{intent.duration} 秒｜实际：{self.project.total_duration():.0f} 秒",
-            f"目标观众：{intent.audience}｜风格：{intent.style}",
-            "",
-        ]
-        for scene in self.project.scenes:
-            page = self.project.document.page(scene.source_page) if scene.source_page else None
-            lines.append(
-                f"## {scene.scene_id}（第 {scene.source_page} 页，{scene.duration:.0f} 秒）"
-            )
-            lines.append(f"讲稿：{scene.narration}")
-            if page is not None:
-                lines.append(f"页面文字：{page.raw_text()[:400]}")
-            if scene.actions:
-                lines.append(
-                    "动作："
-                    + "；".join(
-                        f"{a.at:.1f}s {a.type}->{a.target or '整页'}" for a in scene.actions
-                    )
-                )
-            lines.append("")
-        return "\n".join(lines)
-
 
 def _ratio_score(bad: int, total: int) -> float:
     """100 when nothing is wrong, falling to 0 when everything is."""

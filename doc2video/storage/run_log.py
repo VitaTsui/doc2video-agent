@@ -3,7 +3,7 @@
 A run record lives in two places on purpose. The project keeps its *latest*
 one, because that is what "how did this video turn out" means. The ledger keeps
 *all* of them, because every question M4 was built to answer — is this stage
-getting slower, what does a video cost, is the new renderer arm scoring worse —
+getting slower, is the new renderer arm scoring worse —
 is a question about many runs, and the project files cannot answer it without
 walking the whole store.
 
@@ -75,7 +75,6 @@ def summarize(records: list[RunRecord]) -> dict[str, object]:
         return {"runs": 0}
 
     succeeded = [r for r in records if r.status == "succeeded"]
-    costs = [c for c in (r.cost_usd() for r in succeeded) if c is not None]
     qualities = [r.quality.score for r in succeeded if r.quality is not None]
 
     return {
@@ -83,22 +82,12 @@ def summarize(records: list[RunRecord]) -> dict[str, object]:
         "succeeded": len(succeeded),
         "failed": sum(1 for r in records if r.status == "failed"),
         "duration_s": _distribution([r.duration_s for r in succeeded]),
-        "cost_usd": {
-            "total": round(sum(costs), 4),
-            "per_run_median": round(median(costs), 4) if costs else None,
-            "priced_runs": len(costs),
-        },
-        "tokens": sum(r.total_tokens() for r in records),
         # Quality reports its *worst* tail, not p95: for duration the bad tail
         # is the slow end, for a score it is the low end. A p95 quality figure
         # would report the best runs and read as reassurance.
         "quality": _quality_distribution(qualities),
         "stages": _stage_summary(records),
         "degradations": _degradation_counts(records),
-        # Which provider actually answered, which is not the same question as
-        # which rollout arm the run took: with no API key configured, both arms
-        # of the provider flag end up on the CLI.
-        "providers": _provider_counts(records),
         "flags": _flag_summary(succeeded),
     }
 
@@ -152,14 +141,6 @@ def _degradation_counts(records: list[RunRecord]) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda item: -item[1]))
 
 
-def _provider_counts(records: list[RunRecord]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for record in records:
-        for call in record.llm_calls:
-            counts[call.provider] = counts.get(call.provider, 0) + 1
-    return dict(sorted(counts.items(), key=lambda item: -item[1]))
-
-
 def _flag_summary(records: list[RunRecord]) -> dict[str, dict[str, dict[str, object]]]:
     """Cost and quality per rollout arm — the point of recording flags at all."""
     arms: dict[str, dict[bool, list[RunRecord]]] = {}
@@ -171,11 +152,9 @@ def _flag_summary(records: list[RunRecord]) -> dict[str, dict[str, dict[str, obj
     for name, by_value in arms.items():
         summary[name] = {}
         for value, runs in by_value.items():
-            costs = [c for c in (r.cost_usd() for r in runs) if c is not None]
             scores = [r.quality.score for r in runs if r.quality is not None]
             summary[name]["on" if value else "off"] = {
                 "runs": len(runs),
-                "cost_usd_median": round(median(costs), 4) if costs else None,
                 "quality_median": round(median(scores), 1) if scores else None,
                 "duration_s_median": round(median([r.duration_s for r in runs]), 2),
             }

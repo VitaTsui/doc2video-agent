@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from doc2video.api.app import create_app
+from doc2video.core import flags
 
 
 @pytest.fixture
@@ -19,7 +20,8 @@ def test_health(client: TestClient):
 
 def test_capabilities_reports_every_layer(client: TestClient):
     body = client.get("/health/capabilities").json()
-    assert set(body) >= {"llm", "tts", "renderers", "binaries", "video"}
+    assert set(body) >= {"tts", "renderers", "binaries", "video"}
+    assert "llm" not in body  # 这个服务不持有模型
     assert "remotion" in body["renderers"]
     assert "ffmpeg" in body["binaries"]
 
@@ -54,7 +56,7 @@ def test_metrics_is_readable_before_any_run(client: TestClient):
     body = client.get("/metrics").json()
 
     assert "summary" in body
-    assert set(body["rollout"]) == {"llm_prefer_claude_code", "renderer_remotion"}
+    assert set(body["rollout"]) == set(flags.FLAGS)
 
 
 def test_metrics_runs_lists_nothing_rather_than_failing(client: TestClient):

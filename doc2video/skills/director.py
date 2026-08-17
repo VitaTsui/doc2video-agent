@@ -20,8 +20,7 @@ from ..schemas import (
     PageType,
     Scene,
 )
-from ..tools.llm import model_schema
-from .base import Skill, load_prompt
+from .base import Skill
 
 # Rhythm guardrails: too many camera moves is as bad as none (方案 §10 判断原则).
 MAX_ACTIONS_PER_SCENE = 4
@@ -65,62 +64,13 @@ class DirectorSkill(Skill):
             if page is None:
                 scene.actions = []
                 continue
-            choices = self.try_llm(
-                lambda s=scene, p=page: self._choose_with_llm(s, p),
-                lambda s=scene, p=page: self._choose_heuristically(s, p),
-                what=f"镜头设计（{scene.scene_id}）",
-            )
+            choices = self._choose_heuristically(scene, page)
             scene.actions = self._to_actions(scene, page, choices)
             total_actions += len(scene.actions)
 
         self.log.info("镜头设计完成：共 %d 个动作", total_actions)
 
     # -- choosing what to look at ---------------------------------------
-    def _choose_with_llm(self, scene: Scene, page: DocumentPage) -> list[ActionChoice]:
-        prompt = self._render_prompt(scene, page)
-        raw = self.llm.complete_json(
-            prompt, schema=model_schema(SceneDirection), system=load_prompt("director")
-        )
-        result = SceneDirection.model_validate(raw)
-
-        valid_segments = {s.id for s in scene.segments}
-        valid_targets = {e.id for e in page.elements}
-        cleaned: list[ActionChoice] = []
-        for choice in result.actions:
-            if choice.segment_id not in valid_segments:
-                continue
-            if choice.type is ActionType.RESET:
-                cleaned.append(choice)
-                continue
-            if choice.target in valid_targets:
-                cleaned.append(choice)
-        return cleaned[: MAX_ACTIONS_PER_SCENE + 1]
-
-    def _render_prompt(self, scene: Scene, page: DocumentPage) -> str:
-        lines = [
-            f"场景 {scene.scene_id}（第 {page.index} 页，{page.page_type}）",
-            f"页面标题：{page.title}",
-            f"场景总时长：{scene.duration:.1f} 秒",
-            "",
-            "页面元素：",
-        ]
-        for element in sorted(page.elements, key=lambda e: -e.importance):
-            box = element.bbox
-            text = element.text.replace("\n", " ")[:80]
-            lines.append(
-                f"- [{element.id}] ({element.kind}, 重要性 {element.importance:.1f}) "
-                f"位置 x={box.x:.0f} y={box.y:.0f} w={box.w:.0f} h={box.h:.0f}｜{text}"
-            )
-        lines.append("\n讲稿片段：")
-        for segment in scene.segments:
-            refs = "、".join(segment.element_refs) or "未绑定"
-            lines.append(
-                f"- [{segment.id}] {segment.start:.1f}s–{segment.end:.1f}s"
-                f"{'（强调）' if segment.emphasis else ''} 初步绑定：{refs}\n  {segment.text}"
-            )
-        lines.append("\n请给出这个场景的镜头动作。")
-        return "\n".join(lines)
-
     def _choose_heuristically(self, scene: Scene, page: DocumentPage) -> list[ActionChoice]:
         """Rank segments by how much they deserve a camera move, then take the top few."""
         scored: list[tuple[float, ActionChoice]] = []

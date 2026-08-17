@@ -1,6 +1,6 @@
 [project]
 name = "doc2video-agent"
-version = "0.3.0"
+version = "0.4.0"
 description = "PDF / PPT intelligent explainer-video agent: document -> narration -> TTS -> director -> deterministic render -> MP4"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,11 +13,13 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "python-multipart>=0.0.12",
-    "anthropic>=0.40",
     "PyMuPDF>=1.24",
     "python-pptx>=1.0",
     "Pillow>=10.4",
     "httpx>=0.27",
+    # MCP is a first-class surface, not an add-on: with it optional the default
+    # config (mcp_enabled=true) would fail to build the app on a plain install.
+    "mcp>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -34,11 +36,11 @@ bundled = [
     "imageio-ffmpeg>=0.6; platform_system == 'Linux' and platform_machine != 'x86_64'",
 ]
 dev = [
+    "anyio>=4",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.7",
 ]
-
 [project.scripts]
 doc2video = "doc2video.cli:main"
 

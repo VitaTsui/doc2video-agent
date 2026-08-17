@@ -19,9 +19,9 @@ from ..schemas import ProjectStatus, Source, VideoProject
 from ..skills.base import SkillContext
 from ..storage import ProjectStore
 from ..storage.run_log import RunLog
-from ..tools.llm import LLMTool, get_llm
 from ..tools.parsers import detect_source_type
 from .executor import Executor, ProgressFn
+from .planner import REVISION_STAGES as _REVISION_STAGES
 from .planner import ExecutionPlan, Planner
 
 log = get_logger(__name__)
@@ -38,7 +38,6 @@ class AgentRunResult:
     output_path: str | None = None
     review: list[dict] = field(default_factory=list)
     quality: float | None = None
-    cost_usd: float | None = None
 
     @classmethod
     def from_project(cls, project: VideoProject, plan: ExecutionPlan) -> AgentRunResult:
@@ -52,7 +51,6 @@ class AgentRunResult:
             output_path=project.render.output_path,
             review=[f.model_dump() for f in project.review],
             quality=project.quality.score if project.quality else None,
-            cost_usd=project.telemetry.cost_usd() if project.telemetry else None,
         )
 
 
@@ -61,16 +59,10 @@ class Doc2VideoAgent:
         self,
         settings: Settings | None = None,
         store: ProjectStore | None = None,
-        llm: LLMTool | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.store = store or ProjectStore(self.settings)
-        # An injected tool wins everywhere (tests, embedding callers). Otherwise
-        # the tool is resolved *per project*, because the provider rollout is
-        # keyed by project id and the agent outlives any one project.
-        self._injected_llm = llm
-        self.llm = llm or get_llm(self.settings)
-        self.planner = Planner(self.llm)
+        self.planner = Planner()
         self.run_log = RunLog(self.settings)
 
     # -- project creation ---------------------------------------------------
@@ -89,7 +81,27 @@ class Doc2VideoAgent:
         log.info("创建工程 %s（来源：%s）", project_id, source_file.name)
         return project
 
-    # -- the single entry point ---------------------------------------------
+    # -- entry points ---------------------------------------------------------
+    def prepare(self, source_file: Path, brief: str) -> VideoProject:
+        """Parse a deck and stop.
+
+        The first half of a run: everything that can be decided without knowing
+        what the video will *say*. It returns the document model so the caller
+        can read the deck and write the script — which is the step this service
+        deliberately does not perform.
+        """
+        project = self.create_project(source_file)
+        plan = self.planner.prepare_plan(brief, project)
+        with telemetry.run(project.project_id, flags=self._flags(project)) as recorder:
+            try:
+                ctx = SkillContext.build(project, store=self.store, settings=self.settings)
+                project = Executor(ctx).run(plan, message=brief)
+            except Exception as exc:
+                self._persist_run(project, recorder.finish(status="failed", error=str(exc)))
+                raise
+            self._persist_run(project, recorder.finish(status="succeeded", message=plan.summary))
+        return project
+
     def run(
         self,
         *,
@@ -97,6 +109,8 @@ class Doc2VideoAgent:
         project_id: str | None = None,
         files: list[Path] | None = None,
         progress: ProgressFn | None = None,
+        narrations: dict[int, str] | None = None,
+        scene_narrations: dict[str, str] | None = None,
     ) -> AgentRunResult:
         if project_id:
             project = self.store.load(project_id)
@@ -107,22 +121,24 @@ class Doc2VideoAgent:
                 log.warning("当前版本仅处理第一个文件：%s", files[0].name)
             project = self.create_project(files[0])
 
-        llm = self._project_llm(project)
-        active = flags.active_flags(project.project_id, self.settings)
+        active = self._flags(project)
 
-        # Telemetry opens before planning, not before execution: intent parsing
-        # is a model call like any other and its cost belongs to the run.
         with telemetry.run(project.project_id, flags=active) as recorder:
             try:
                 with recorder.stage_scope("plan"):
-                    planner = Planner(llm)
-                    plan = (
-                        planner.edit_plan(message, project)
-                        if project_id
-                        else planner.initial_plan(message, project)
-                    )
+                    if narrations:
+                        plan = self.planner.render_plan(narrations)
+                    elif project_id:
+                        plan = self.planner.edit_plan(message, project)
+                    else:
+                        plan = self.planner.initial_plan(message, project)
+                    if scene_narrations:
+                        # A revision names its scenes by supplying their text.
+                        plan.scene_narrations = dict(scene_narrations)
+                        plan.scene_ids = list(scene_narrations)
+                        plan.stages = _REVISION_STAGES
                 ctx = SkillContext.build(
-                    project, store=self.store, settings=self.settings, llm=llm
+                    project, store=self.store, settings=self.settings
                 )
                 project = Executor(ctx, progress=progress).run(plan, message=message)
             except Exception as exc:
@@ -134,10 +150,8 @@ class Doc2VideoAgent:
 
         return AgentRunResult.from_project(project, plan)
 
-    def _project_llm(self, project: VideoProject) -> LLMTool:
-        if self._injected_llm is not None:
-            return self._injected_llm
-        return get_llm(self.settings, rollout_key=project.project_id)
+    def _flags(self, project: VideoProject) -> dict[str, bool]:
+        return flags.active_flags(project.project_id, self.settings)
 
     def _persist_run(self, project: VideoProject, record) -> None:
         """Keep the latest run on the project, every run in the ledger.

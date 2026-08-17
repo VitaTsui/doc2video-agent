@@ -20,49 +20,53 @@ def _settings(**overrides) -> Settings:
 
 
 def test_zero_percent_is_off_and_hundred_is_on():
-    settings = _settings(flags={"llm_prefer_claude_code": 0, "renderer_remotion": 100})
+    off = _settings(flags={"renderer_remotion": 0})
+    on = _settings(flags={"renderer_remotion": 100})
 
-    assert not flags.enabled("llm_prefer_claude_code", "proj_anything", settings)
-    assert flags.enabled("renderer_remotion", "proj_anything", settings)
+    assert not flags.enabled("renderer_remotion", "proj_anything", off)
+    assert flags.enabled("renderer_remotion", "proj_anything", on)
 
 
 def test_the_same_project_always_lands_in_the_same_arm():
-    settings = _settings(flags={"llm_prefer_claude_code": 50})
-    first = flags.enabled("llm_prefer_claude_code", "proj_stable", settings)
+    settings = _settings(flags={"renderer_remotion": 50})
+    first = flags.enabled("renderer_remotion", "proj_stable", settings)
 
     for _ in range(20):
-        assert flags.enabled("llm_prefer_claude_code", "proj_stable", settings) is first
+        assert flags.enabled("renderer_remotion", "proj_stable", settings) is first
 
 
 def test_widening_a_rollout_only_ever_adds_projects():
     """A project inside 20% must still be inside 60% — otherwise a mid-rollout
     project could flip *out* of the new path and re-render against old clips."""
     keys = [f"proj_{index:04d}" for index in range(400)]
-    narrow = _settings(flags={"llm_prefer_claude_code": 20})
-    wide = _settings(flags={"llm_prefer_claude_code": 60})
+    narrow = _settings(flags={"renderer_remotion": 20})
+    wide = _settings(flags={"renderer_remotion": 60})
 
-    inside_narrow = {k for k in keys if flags.enabled("llm_prefer_claude_code", k, narrow)}
-    inside_wide = {k for k in keys if flags.enabled("llm_prefer_claude_code", k, wide)}
+    inside_narrow = {k for k in keys if flags.enabled("renderer_remotion", k, narrow)}
+    inside_wide = {k for k in keys if flags.enabled("renderer_remotion", k, wide)}
 
     assert inside_narrow <= inside_wide
 
 
 def test_the_split_is_roughly_the_configured_share():
     keys = [f"proj_{index:04d}" for index in range(1000)]
-    settings = _settings(flags={"llm_prefer_claude_code": 30})
+    settings = _settings(flags={"renderer_remotion": 30})
 
-    share = sum(flags.enabled("llm_prefer_claude_code", k, settings) for k in keys) / len(keys)
+    share = sum(flags.enabled("renderer_remotion", k, settings) for k in keys) / len(keys)
 
     assert 0.25 < share < 0.35
 
 
 def test_different_flags_do_not_select_the_same_projects():
-    """Hashing on the key alone would put every flag's 10% on one unlucky tenth."""
-    keys = [f"proj_{index:04d}" for index in range(500)]
-    settings = _settings(flags={"llm_prefer_claude_code": 30, "renderer_remotion": 30})
+    """Hashing the key alone would land every flag's 10% on one unlucky tenth.
 
-    a = {k for k in keys if flags.enabled("llm_prefer_claude_code", k, settings)}
-    b = {k for k in keys if flags.enabled("renderer_remotion", k, settings)}
+    Asserted against the bucketing function directly so the property holds for
+    flags that do not exist yet — it is about the hash, not today's roster.
+    """
+    keys = [f"proj_{index:04d}" for index in range(500)]
+
+    a = {k for k in keys if flags._bucket("flag_a", k) < 30}
+    b = {k for k in keys if flags._bucket("flag_b", k) < 30}
 
     assert a != b
 
@@ -71,11 +75,11 @@ def test_a_bad_percentage_is_rejected_at_config_load():
     """Loudly, at startup — a rollout running at a percentage the operator did
     not intend is worse than one that refuses to start."""
     with pytest.raises(ValidationError):
-        _settings(flags={"llm_prefer_claude_code": "many"})  # type: ignore[dict-item]
+        _settings(flags={"renderer_remotion": "many"})  # type: ignore[dict-item]
 
 
 def test_percentages_are_clamped():
-    name = "llm_prefer_claude_code"
+    name = "renderer_remotion"
 
     def percent(value: int) -> int:
         return flags.rollout_percent(name, _settings(flags={name: value}))
@@ -90,9 +94,9 @@ def test_unknown_flag_is_an_error_not_a_silent_false():
 
 
 def test_report_lists_every_flag_with_its_share():
-    report = flags.report(_settings(flags={"llm_prefer_claude_code": 25}))
+    report = flags.report(_settings(flags={"renderer_remotion": 25}))
 
-    assert report["llm_prefer_claude_code"]["percent"] == 25
+    assert report["renderer_remotion"]["percent"] == 25
     assert set(report) == set(flags.FLAGS)
 
 

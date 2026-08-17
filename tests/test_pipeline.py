@@ -27,7 +27,7 @@ def built_project(settings: Settings, store: ProjectStore, demo_pptx: Path) -> V
     project = agent.create_project(demo_pptx)
     plan = agent.planner.initial_plan("生成一个3分钟的讲解视频，面向企业客户，第5页重点讲", project)
     plan.stages = [s for s in plan.stages if s is not Stage.RENDER]
-    ctx = SkillContext.build(project, store=store, settings=settings, llm=agent.llm)
+    ctx = SkillContext.build(project, store=store, settings=settings)
     return Executor(ctx).run(plan, message="test")
 
 
@@ -100,8 +100,11 @@ def test_scene_edit_only_touches_the_named_scene(
     before = {s.scene_id: s.audio.text_hash for s in built_project.scenes}
 
     plan = agent.planner.edit_plan("第3页太长了，压缩到8秒", built_project)
+    # The script is the caller's to write; the plan only says which scene and
+    # how long it should now be.
+    plan.scene_narrations = {plan.scene_ids[0]: "这一页压缩后的讲稿。"}
     plan.stages = [s for s in plan.stages if s is not Stage.RENDER]
-    ctx = SkillContext.build(built_project, store=store, settings=settings, llm=agent.llm)
+    ctx = SkillContext.build(built_project, store=store, settings=settings)
     updated = Executor(ctx).run(plan, message="第3页太长了，压缩到8秒")
 
     changed = [s.scene_id for s in updated.scenes if s.audio.text_hash != before[s.scene_id]]

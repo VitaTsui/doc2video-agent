@@ -4,37 +4,41 @@
 [![python](https://img.shields.io/badge/python-3.11%2B-3776AB.svg)](./pyproject.toml)
 [![renderer](https://img.shields.io/badge/renderer-Remotion%20%7C%20FFmpeg-orange.svg)](./renderer)
 
-面向 **PDF / PPT 的 AI 视频导演插件**。上传一份文档，用一句话说明你想要什么，
-Agent 自动完成文档理解、讲稿生成、配音、镜头设计、渲染合成，产出可继续修改的视频工程和 MP4。
+把 **PDF / PPT 变成讲解视频**的确定性引擎，以 MCP 工具的形式给模型调用。
+
+> **它本身不持有模型，也不需要任何模型 Key。**
+> 讲稿由调用方（Claude / ChatGPT / 你自己的 Agent）写好传进来；
+> 它负责解析幻灯片、时长预算、配音、镜头、时间轴、渲染合成与质检——
+> 这些是该由代码而不是模型来做的部分。
 
 > 核心资产不是 MP4，而是**可持续修改、可增量渲染的 VideoProject**。
 > 「第 7 页太长了，压缩到 20 秒」只会重写一页讲稿、重配一段音、重渲一个片段。
 
 ```
-用户：上传 company_intro.pptx
-用户：帮我生成一个 8 分钟的产品讲解视频，面向企业客户，专业一点，
-      第 5~8 页重点讲，关键数据出现时放大。
+你 → 模型：把这份 company_intro.pptx 做成 8 分钟讲解视频，面向企业客户
 
-Agent：理解需求 → 分析文档 → 生成讲稿 → 配音 → 导演 → 渲染 → 预览
+模型 → prepare_project()   拿到逐页内容 + 每页时长/字数预算
+模型                        读完页面，按预算写逐页讲稿   ← 唯一需要模型的一步
+模型 → render_video()      配音 → 镜头 → 时间轴 → 渲染 → 质检
+模型 → project_summary()   读质量分与质检结果，必要时 revise_scenes 局部重来
 ```
 
 ## 设计要点
 
 | 原则 | 落地方式 |
 | --- | --- |
-| 对外只有一个 Agent 入口 | `POST /agent/run`，首次传文件、之后带 `project_id` 自然语言修改 |
-| Skill 表达业务、Tool 表达技术 | `skills/` 不依赖任何具体模型与视频框架，换渲染器不动叙事逻辑 |
-| AI 决定「怎么看」、渲染器决定「如何实现」 | 导演 Skill 只输出目标元素与动作类型，时间戳一律由 TTS 时间轴推导 |
+| **语义归调用方，确定性归服务端** | 服务端不含任何模型调用；讲稿从 `render_video(narrations)` 传入 |
+| 时长在写之前就定好 | `prepare_project` 返回每页的秒数与字数预算——音频一旦生成，长度就改不动了 |
 | 信息型画面坚持确定性渲染 | 生成式视频仅作为 B-roll，`GenerativeVideoAdapter` 显式不承载数据画面 |
+| 改一页只重做一页 | `revise_scenes` 只重配音、重渲受影响的场景，其余片段复用 |
 | 长任务可观测、可重试 | 后台任务 + 分阶段落盘，失败可从当前工程续跑 |
-| 无外部依赖也能跑通 | 没有 API Key 时全链路降级为启发式规则，仍产出结构完整的工程 |
+| 质检是结构化的 | 缺音画、镜头指向不存在的元素、节奏、字幕溢出、讲稿照读页面——都是可计算的 |
 
 ## 技术栈
 
 | 分类 | 选型 |
 | --- | --- |
 | Agent 后端 | Python 3.11+、FastAPI、Pydantic v2 |
-| LLM / VLM | Anthropic Claude：API Key（结构化 JSON 输出、自适应思考），或本机 Claude Code CLI（免 Key） |
 | PDF 解析 | PyMuPDF（文本块 / 图片 / bbox / 高清页面渲染） |
 | PPT 解析 | python-pptx + OOXML；幻灯片渲染三档：LibreOffice / Chromium / 内置栅格化器 |
 | TTS | 可插拔 provider（内置 macOS `say`、静音兜底） |
@@ -45,57 +49,76 @@ Agent：理解需求 → 分析文档 → 生成讲稿 → 配音 → 导演 →
 ## 快速开始
 
 ```bash
-# 1. 安装 Python 依赖（bundled 会把 ffmpeg 一起装进虚拟环境）
+# 1. 装依赖（bundled 会把 ffmpeg 与 ffprobe 一起装进虚拟环境）
 uv venv --python 3.12
 uv pip install -e ".[bundled,dev]"
 
-# 2. 配置（可选：本机装了 Claude Code 就不必配 Key，见「不配 API Key 也能用真模型」）
-cp .env.example .env
-
-# 3. 体检：看看当前机器有哪些能力
+# 2. 体检
 uv run doc2video doctor
 
-# 4. 生成
-uv run doc2video run ./demo.pptx "生成一个 8 分钟的产品讲解视频，面向企业客户，第 5~8 页重点讲"
-
-# 5. 对话式修改
-uv run doc2video edit proj_xxxx "第 7 页太长了，压缩到 20 秒"
-
-# 6. 起服务
-uv run doc2video serve       # http://127.0.0.1:8400/docs
+# 3. 起服务（MCP 挂在 /mcp）
+D2V_API_TOKEN=$(openssl rand -hex 32) uv run doc2video serve
 ```
 
-装完 `[bundled]` 就能直接出片。想要更好的镜头表现力再装 Remotion：
+不需要任何模型 Key。想要更好的镜头表现力再装 Remotion：
 
 ```bash
 cd renderer && pnpm install
 ```
 
-## 不配 API Key 也能用真模型
+## MCP：让模型直接驱动
 
-装了 [Claude Code](https://claude.com/claude-code) 并已登录的机器，可以直接把本机的
-`claude` 当成模型后端，不需要 `ANTHROPIC_API_KEY`：
+同一个 Agent 以 MCP 工具的形式挂在 `/mcp`（Streamable HTTP），和 HTTP API 同进程、同一份工程库——MCP 建的工程就是 `GET /projects/{id}` 返回的那个。
 
 ```bash
-D2V_LLM_PROVIDER=auto   # 默认值：先 API Key，没有就用 Claude Code CLI，都没有才走启发式
-uv run doc2video doctor
-# LLM        : 可用｜模型 claude-opus-5｜来源 Claude Code CLI
+D2V_API_TOKEN=$(openssl rand -hex 32) uv run doc2video serve --host 0.0.0.0
+# MCP (Streamable HTTP)：http://0.0.0.0:8400/mcp
 ```
 
-实现上是 headless 调用（`claude -p --output-format json`），Skill 层完全无感。
-三处与 API 路径的差别，都在 provider 内部消化掉了：
+客户端接入（Claude Code）：
 
-| 差别 | 处理方式 |
+```bash
+claude mcp add --transport http doc2video https://your-host/mcp \
+  --header "Authorization: Bearer $D2V_API_TOKEN"
+```
+
+### 工具
+
+| 工具 | 作用 |
 | --- | --- |
-| 没有 structured outputs | JSON Schema 写进提示词，回复按「去围栏 → 取最外层 `{}`」解析，失败纠正重试一次 |
-| 不能直接传图片 | 页面渲染图交给 CLI 自带的 `Read` 工具读盘，并用 `--add-dir` 授权该目录；`Read` 是唯一放行的工具 |
-| 每次调用有固定开销 | 约 20k input tokens 的 CLI 系统提示与工具定义，连续调用大部分走缓存命中 |
+| `prepare_project(brief, upload_id)` | 解析幻灯片，返回逐页内容 + **每页时长/字数预算**。秒级返回 |
+| `render_video(project_id, narrations)` | 用你写的讲稿配音、导演、渲染、质检。**立即返回 job_id** |
+| `revise_scenes(project_id, scenes)` | 传新讲稿，只重做那几个场景 |
+| `job_status(job_id)` | 轮询状态与当前阶段 |
+| `project_summary(project_id)` | 质量分、各维度得分、质检结果、逐场景讲稿 |
+| `list_projects()` / `video_download_path(project_id)` | 工程列表 / 成片下载路径 |
 
-同时会用 `--strict-mcp-config` 屏蔽本机 MCP 服务、`--exclude-dynamic-system-prompt-sections`
-去掉工作目录/git 前言，并在一个空临时目录里运行——否则你仓库里的 CLAUDE.md
-会跟着进每一次讲稿生成。
+三处设计各有其不得不如此的理由，都写进了工具描述里：
 
-> 适合本机试跑和没有 Key 的环境。批量出片仍建议用 API Key：更便宜，且 JSON 输出有 schema 保证。
+- **讲稿必须由你写**。服务端没有模型。`prepare_project` 把页面文字、元素和图表事实一并返回，就是为了让你不用再问一次就能开始写。
+- **必须按预算写**。时长是按字数估的，`narration_guide` 给出每页的秒数与字数上限——超了成片就超时长，而音频一旦生成长度就改不动了。
+- **文件要先传、不能阻塞**。远端读不到你的磁盘，源文件走 `POST /uploads`；渲染要数分钟，所以起任务的工具立刻返回 `job_id`。
+
+`project_summary` 的质检是结构化的（缺音画、镜头指向不存在的元素、节奏、字幕溢出、讲稿与页面文字重合度）。判断讲稿「写得好不好」是你的事——它把逐场景讲稿原文一并返回，就是为了让你自己判断后接 `revise_scenes`。
+
+### 鉴权：不是可选项
+
+每条路由都要 `Authorization: Bearer $D2V_API_TOKEN`（`/health` 除外，探针要用）。**鉴权覆盖整个应用而不只是 `/mcp`**——只保护 MCP 的话，`POST /agent/run` 仍然能被拿去烧你的额度，`GET /projects` 会列出所有工程，`/projects/{id}/assets/{path}` 能取走别人的页面图和配音。
+
+没配 token 时 `serve` **拒绝监听非本机地址**：
+
+```
+错误[invalid_request]：拒绝在 0.0.0.0 上无鉴权启动：这会把上传、工程列表和成片暴露给任何人。
+```
+
+### 部署到域名后的两个坑
+
+| 现象 | 原因与配置 |
+| --- | --- |
+| MCP 全部请求 **421 Misdirected Request** | SDK 自带 DNS-rebinding 防护，默认只认 localhost。把域名加进 `D2V_MCP_ALLOWED_HOSTS`。**匹配的是完整 Host 头、含端口**：反代在 443 后面填 `["your-host"]`，直接暴露端口要填 `["your-host:8400"]` 或用通配 `["your-host:*"]` |
+| 浏览器端跨域被拦 | `D2V_CORS_ORIGINS` 默认空（同源）。要跨域访问再按需放开，别用 `*`——token 只和允许发送它的来源一样安全 |
+
+其余部署注意：渲染吃 CPU（9 页 deck 出 84 秒视频约 250 秒）；一个工程约 28MB（页面渲染图 + 每场景音频 + 分镜 + 成片），工程是可重渲的资产不是临时文件，要规划清理。
 
 ## 依赖内置
 
@@ -211,6 +234,7 @@ curl -X POST http://127.0.0.1:8400/agent/run \
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| POST | `/uploads` | 上传源文件，返回 MCP `create_video` 用的 upload_id |
 | GET | `/health/capabilities` | LLM / TTS / 渲染器 / 外部二进制的可用性 |
 | GET | `/jobs`、`/jobs/{id}` | 任务状态与进度 |
 | POST | `/jobs/{id}/retry` | 失败任务重试（复用已生成的工程，不重头再来） |
@@ -292,8 +316,7 @@ doc2video-agent/
 
 | 缺失 | 影响 | 降级行为 |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | 无（装了 Claude Code 时） | 自动改用本机 `claude` CLI，模型能力不变 |
-| API Key **和** Claude Code 都没有 | 讲稿质量 | 全部 Skill 走启发式规则，工程结构完整 |
+| 调用方没给某页讲稿 | 那一页内容无意义 | 用占位文本，并在运行记录里计一次降级、在返回值里列出缺哪几页 |
 | LibreOffice (`soffice`) | PPT 幻灯片保真度 | 降级到 Chromium 渲染（保留主题色/字体/填充）；两者都缺才用内置栅格化器 |
 | Node / Remotion | 镜头表现力 | 自动回退到 FFmpeg 渲染器 |
 | `say`（非 macOS） | 真实语音 | 生成等时长静音轨，时间轴与字幕仍然正确 |
@@ -326,10 +349,10 @@ uv run doc2video show <id>   # 单个工程的质量分与上次运行开销
 根本拼不起来。放量比例调大只会新增工程，不会把已在新路径上的工程弹出去。
 
 ```bash
-D2V_FLAGS='{"llm_prefer_claude_code": 25}'   # 25% 的工程优先用本机 Claude Code CLI
+D2V_FLAGS='{"renderer_remotion": 25}'   # 只有 25% 的工程用 Remotion 渲染
 ```
 
-两条开关都接在真实分叉上（LLM provider、渲染器），每次运行记下自己走的分支，
+开关接在真实分叉上（渲染器选择），每次运行记下自己走的分支，
 `doc2video metrics` 于是能给出**两条分支的成本与质量对照**——这才让「要不要扩量」
 变成一个看数据的决定，而不是拍脑袋。
 

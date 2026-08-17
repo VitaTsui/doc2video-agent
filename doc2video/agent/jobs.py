@@ -6,6 +6,13 @@ re-uploading anything (方案 §16 任务状态、失败重试).
 
 In-process by design for the MVP; swapping in Celery or Temporal means replacing
 this module only — the API talks to ``JobManager``, not to threads.
+
+Concurrency is bounded here rather than left to the OS. A render saturates the
+CPU for minutes (Chromium, then ffmpeg), so N simultaneous requests do not
+finish N times faster — they finish together, much later, on a machine that
+stopped responding in the meantime. Beyond the queue depth a submission is
+refused outright, because a request that will not start for an hour is more
+useful as an error than as a promise.
 """
 
 from __future__ import annotations
@@ -18,6 +25,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..core.config import Settings, get_settings
+from ..core.errors import TooBusy
 from ..core.logging import get_logger
 from .service import AgentRunResult, Doc2VideoAgent
 
@@ -43,6 +52,10 @@ class JobRequest:
     message: str
     project_id: str | None = None
     files: list[Path] = field(default_factory=list)
+    # The caller's script. By page index for a whole run, by scene id for a
+    # targeted revision — this service writes neither.
+    narrations: dict[int, str] = field(default_factory=dict)
+    scene_narrations: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -74,14 +87,23 @@ class Job:
 
 
 class JobManager:
-    def __init__(self, agent: Doc2VideoAgent) -> None:
+    def __init__(self, agent: Doc2VideoAgent, settings: Settings | None = None) -> None:
         self._agent = agent
+        self._settings = settings or get_settings()
         self._jobs: OrderedDict[str, Job] = OrderedDict()
         self._lock = threading.Lock()
+        self._slots = threading.Semaphore(max(1, self._settings.max_concurrent_jobs))
+        self._waiting = 0
 
     def submit(self, request: JobRequest) -> Job:
-        job = Job(id=f"job_{uuid.uuid4().hex[:12]}", request=request)
         with self._lock:
+            if self._waiting >= self._settings.max_queued_jobs:
+                raise TooBusy(
+                    f"排队任务已达上限（{self._settings.max_queued_jobs}），请稍后再试",
+                    detail={"queued": self._waiting},
+                )
+            self._waiting += 1
+            job = Job(id=f"job_{uuid.uuid4().hex[:12]}", request=request)
             self._jobs[job.id] = job
             while len(self._jobs) > MAX_JOBS_RETAINED:
                 self._jobs.popitem(last=False)
@@ -100,6 +122,8 @@ class JobManager:
             job.request.project_id = job.result.project_id
         job.status = "queued"
         job.error = None
+        with self._lock:
+            self._waiting += 1
         threading.Thread(target=self._execute, args=(job,), daemon=True).start()
         return job
 
@@ -114,6 +138,12 @@ class JobManager:
 
     # -- worker ----------------------------------------------------------
     def _execute(self, job: Job) -> None:
+        # Wait for a slot before touching the pipeline. The job is already
+        # visible as "queued", so a client polling job_status sees it waiting
+        # rather than wondering whether the submission was lost.
+        self._slots.acquire()
+        with self._lock:
+            self._waiting -= 1
         job.status = "running"
         job.attempts += 1
         job.updated_at = _now()
@@ -129,6 +159,8 @@ class JobManager:
                 project_id=job.request.project_id,
                 files=job.request.files,
                 progress=progress,
+                narrations=job.request.narrations,
+                scene_narrations=job.request.scene_narrations,
             )
             job.result = result
             job.status = "succeeded"
@@ -141,3 +173,4 @@ class JobManager:
             job.detail = job.error.get("message", "")
         finally:
             job.updated_at = _now()
+            self._slots.release()

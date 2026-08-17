@@ -31,14 +31,6 @@ class Flag:
 
 
 FLAGS: dict[str, Flag] = {
-    # Named for what it does: it reorders `auto`, it does not force a provider.
-    # A run with this flag off still ends up on the CLI when no API key exists —
-    # which provider actually answered is recorded per call, not inferred here.
-    "llm_prefer_claude_code": Flag(
-        name="llm_prefer_claude_code",
-        description="优先用本机 Claude Code CLI 而不是 API Key（省 Key，但更慢、无 schema 保证）",
-        default_percent=0,
-    ),
     "renderer_remotion": Flag(
         name="renderer_remotion",
         description="用 Remotion 渲染而不是纯 ffmpeg（镜头表现力更强，依赖 Node）",

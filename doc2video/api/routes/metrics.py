@@ -1,7 +1,7 @@
 """Cross-run metrics: the question no single project can answer.
 
 `/projects/{id}/telemetry` says what one run did. This says whether runs are
-getting slower, what a video costs, how often steps degrade, and how the two
+getting slower, how often steps degrade, and how the two
 arms of each rollout compare — which is the whole reason run records are kept
 in a ledger rather than only on the project.
 """
@@ -41,7 +41,6 @@ def runs(limit: int = 20) -> dict:
                 "started_at": r.started_at.isoformat(),
                 "status": r.status,
                 "duration_s": round(r.duration_s, 2),
-                "cost_usd": r.cost_usd(),
                 "quality": r.quality.score if r.quality else None,
                 "degradations": len(r.degradations),
                 "flags": r.flags,
