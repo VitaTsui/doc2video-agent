@@ -61,8 +61,9 @@ class Checker:
     period: float
 
 
-# CSS angles: 0deg draws the gradient upward, so horizontal lines come from a
-# 0deg gradient and vertical ones from 90deg. 45deg is the "upward" diagonal.
+# CSS angles name the gradient *axis*; the stripes run perpendicular to it. So
+# horizontal lines come from a 0deg gradient, vertical ones from 90deg, and an
+# "upward" diagonal (bottom-left to top-right) needs 135deg, not 45.
 HATCHES: dict[str, Hatch] = {
     "LIGHT_HORIZONTAL": Hatch((0,), 1, 6),
     "HORIZONTAL": Hatch((0,), 2, 7),
@@ -72,20 +73,20 @@ HATCHES: dict[str, Hatch] = {
     "VERTICAL": Hatch((90,), 2, 7),
     "DARK_VERTICAL": Hatch((90,), 3, 7),
     "NARROW_VERTICAL": Hatch((90,), 1, 4),
-    "LIGHT_UPWARD_DIAGONAL": Hatch((45,), 1, 6),
-    "UPWARD_DIAGONAL": Hatch((45,), 2, 7),
-    "DARK_UPWARD_DIAGONAL": Hatch((45,), 3, 7),
-    "WIDE_UPWARD_DIAGONAL": Hatch((45,), 3, 11),
-    "LIGHT_DOWNWARD_DIAGONAL": Hatch((135,), 1, 6),
-    "DOWNWARD_DIAGONAL": Hatch((135,), 2, 7),
-    "DARK_DOWNWARD_DIAGONAL": Hatch((135,), 3, 7),
-    "WIDE_DOWNWARD_DIAGONAL": Hatch((135,), 3, 11),
+    "LIGHT_UPWARD_DIAGONAL": Hatch((135,), 1, 6),
+    "UPWARD_DIAGONAL": Hatch((135,), 2, 7),
+    "DARK_UPWARD_DIAGONAL": Hatch((135,), 3, 7),
+    "WIDE_UPWARD_DIAGONAL": Hatch((135,), 3, 11),
+    "LIGHT_DOWNWARD_DIAGONAL": Hatch((45,), 1, 6),
+    "DOWNWARD_DIAGONAL": Hatch((45,), 2, 7),
+    "DARK_DOWNWARD_DIAGONAL": Hatch((45,), 3, 7),
+    "WIDE_DOWNWARD_DIAGONAL": Hatch((45,), 3, 11),
     # Dashed presets are dashes along the same axis; at slide scale a thinner
     # continuous line is closer than anything we could tile.
     "DASHED_HORIZONTAL": Hatch((0,), 1, 8),
     "DASHED_VERTICAL": Hatch((90,), 1, 8),
-    "DASHED_UPWARD_DIAGONAL": Hatch((45,), 1, 8),
-    "DASHED_DOWNWARD_DIAGONAL": Hatch((135,), 1, 8),
+    "DASHED_UPWARD_DIAGONAL": Hatch((135,), 1, 8),
+    "DASHED_DOWNWARD_DIAGONAL": Hatch((45,), 1, 8),
     # Crossed sets.
     "CROSS": Hatch((0, 90), 1, 6),
     "SMALL_GRID": Hatch((0, 90), 1, 5),
@@ -97,11 +98,11 @@ HATCHES: dict[str, Hatch] = {
     # Brick / shingle / wave families are offset line courses; a single hatch in
     # the dominant direction keeps the texture without pretending to be exact.
     "HORIZONTAL_BRICK": Hatch((0,), 2, 8),
-    "DIAGONAL_BRICK": Hatch((135,), 2, 8),
-    "SHINGLE": Hatch((135,), 1, 8),
+    "DIAGONAL_BRICK": Hatch((45,), 2, 8),
+    "SHINGLE": Hatch((45,), 1, 8),
     "WAVE": Hatch((0,), 1, 7),
-    "ZIG_ZAG": Hatch((45,), 1, 6),
-    "DIVOT": Hatch((45,), 1, 7),
+    "ZIG_ZAG": Hatch((135,), 1, 6),
+    "DIVOT": Hatch((135,), 1, 7),
 }
 
 DOT_PATTERNS: dict[str, Dots] = {
