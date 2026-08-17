@@ -59,3 +59,31 @@ def test_build_subtitles_stays_inside_segment_window():
     assert all(cue.end <= 8.0 for cue in cues)
     assert all(cue.start < cue.end for cue in cues)
     assert all(len(cue.text) <= 32 for cue in cues)
+    # The comma is a cut, not a character: the first clause ends on its own.
+    assert cues[0].text == "这是第一句话"
+    assert not any(c in cue.text for cue in cues for c in "，。！？；、")
+    # Every clause survives its segment's window — none is pushed past the end.
+    assert [cue.text for cue in cues] == [
+        "这是第一句话",
+        "它比较长需要拆分成多条字幕",
+        "这是第二句",
+    ]
+
+
+def test_short_clauses_all_fit_their_segment():
+    """Many small clauses in one window: the floor must not evict the tail."""
+    scene = Scene(
+        scene_id="scene_01",
+        narration="检索、生成、编程、推理、协同，都要靠它。",
+        segments=[
+            NarrationSegment(
+                id="s1", text="检索、生成、编程、推理、协同，都要靠它。", start=0.0, end=3.0
+            )
+        ],
+        duration=3.0,
+    )
+    cues = build_subtitles(scene)
+
+    assert [cue.text for cue in cues] == ["检索", "生成", "编程", "推理", "协同", "都要靠它"]
+    assert cues[-1].end <= 3.0
+    assert all(cue.start < cue.end for cue in cues)

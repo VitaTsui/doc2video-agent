@@ -53,6 +53,25 @@ def test_subtitles_are_emitted_when_drawtext_exists(monkeypatch: pytest.MonkeyPa
     assert any(f.startswith("drawtext=") for f in filters)
 
 
+def test_caption_is_anchored_to_the_bottom_edge(monkeypatch: pytest.MonkeyPatch):
+    """The gap below the box is the plan's, so both renderers agree on it.
+
+    Anchoring to ``h-text_h`` rather than a fixed line is what makes that gap
+    mean the same thing here as in the Remotion component, where it is CSS
+    padding under a bottom-aligned box.
+    """
+    monkeypatch.setattr(media_binaries, "has_filter", lambda name: True)
+    monkeypatch.setattr(
+        "doc2video.tools.renderer.ffmpeg_adapter._find_font", lambda: "/tmp/font.ttc"
+    )
+    plan = _plan()
+    plan.subtitle_margin = 0.05
+    draw = next(f for f in FFmpegAdapter()._build_filters(plan) if f.startswith("drawtext="))
+
+    # 0.05 * 1080 = 54px of frame, plus the border the box adds past the text.
+    assert ":y=h-text_h-70:" in draw
+
+
 def test_has_filter_reports_false_without_ffmpeg(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         media_binaries, "ffmpeg", lambda: media_binaries.Binary("ffmpeg", None, "missing")

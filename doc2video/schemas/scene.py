@@ -7,8 +7,6 @@ Scene and re-renders only that scene.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -87,22 +85,3 @@ class Scene(BaseModel):
     actions: list[DirectorAction] = Field(default_factory=list)
     audio: SceneAudio = Field(default_factory=SceneAudio)
     notes: str = ""
-
-    def content_hash(self) -> str:
-        """Fingerprint of everything that affects this scene's rendered frames.
-
-        Incremental render compares this against the hash recorded at last
-        render; audio path is included because re-voicing changes the output.
-        """
-        payload = {
-            "narration": self.narration,
-            "duration": round(self.duration, 3),
-            "visual": self.visual.model_dump(),
-            "actions": [a.model_dump() for a in self.actions],
-            "audio": self.audio.path,
-            "segments": [
-                {"t": s.text, "s": round(s.start, 3), "e": round(s.end, 3)} for s in self.segments
-            ],
-        }
-        blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-        return hashlib.sha256(blob).hexdigest()[:16]

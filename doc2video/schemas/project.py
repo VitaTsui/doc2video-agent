@@ -64,7 +64,8 @@ class RenderState(BaseModel):
     renderer: str = ""
     status: str = "idle"
     output_path: str | None = None
-    # scene_id -> content hash rendered last time; drives incremental re-render.
+    # scene_id -> the ScenePlan fingerprint rendered last time; a scene whose
+    # plan still hashes the same keeps its clip instead of re-encoding.
     rendered_scenes: dict[str, str] = Field(default_factory=dict)
     scene_clips: dict[str, str] = Field(default_factory=dict)
     last_render_at: datetime | None = None
@@ -124,14 +125,6 @@ class VideoProject(BaseModel):
         return scene
 
     # --- render bookkeeping -------------------------------------------
-    def dirty_scenes(self) -> list[Scene]:
-        """Scenes whose content changed since the last successful render."""
-        return [
-            s
-            for s in self.scenes
-            if self.render.rendered_scenes.get(s.scene_id) != s.content_hash()
-        ]
-
     def total_duration(self) -> float:
         return sum(s.duration for s in self.scenes)
 
