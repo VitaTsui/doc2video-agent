@@ -89,7 +89,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         "doc2video",
         title="Doc2Video Agent",
         instructions=INSTRUCTIONS,
-        version="0.4.0",
+        version="0.5.0",
     )
 
     @mcp.tool()
