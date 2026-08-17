@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from .agent import Doc2VideoAgent
+from .api.security import check_exposure
 from .core.config import dependency_report, filter_report, get_settings
 from .core.errors import Doc2VideoError
 from .core.flags import report as flag_report
@@ -218,6 +219,11 @@ def cmd_serve(args) -> int:
 
     settings = get_settings()
     host = args.host or settings.host
+    # Refuse to come up wide open. Every route spends quota or serves other
+    # people's projects, so a public bind without a token is not a warning.
+    check_exposure(host, settings.api_token)
+    if settings.mcp_enabled:
+        print(f"MCP (Streamable HTTP)：http://{host}:{args.port or settings.port}/mcp")
     uvicorn.run(
         "doc2video.api.app:app",
         host=host,

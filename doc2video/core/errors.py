@@ -48,6 +48,18 @@ class SkillFailed(Doc2VideoError):
     code = "skill_failed"
 
 
+class TooBusy(Doc2VideoError):
+    """Work was refused because the queue is full.
+
+    503 rather than 429: this is not a rate limit on the caller, it is the
+    service saying it has no capacity right now — a render occupies a CPU for
+    minutes and there is only so much of one.
+    """
+
+    code = "too_busy"
+    http_status = 503
+
+
 class ToolFailed(Doc2VideoError):
     """A tool invocation failed (parser, TTS, renderer, ffmpeg...)."""
 

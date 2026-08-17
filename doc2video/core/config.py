@@ -36,10 +36,31 @@ class Settings(BaseSettings):
     # From the environment as JSON: D2V_FLAGS='{"llm_prefer_claude_code": 25}'
     flags: dict[str, int] = Field(default_factory=dict)
 
+    # --- Jobs ---
+    # A render saturates the CPU, so more than one at a time makes everything
+    # slower rather than anything faster. Raise only on a machine with cores to
+    # spare — and remember rendering shares them with whatever else runs there.
+    max_concurrent_jobs: int = 1
+    max_queued_jobs: int = 20
+    max_upload_mb: int = 100
+
     # --- Storage ---
     storage_dir: Path = Path("./storage")
 
     # --- Server ---
+    # Shared secret for every route, MCP included. Empty means no auth, which
+    # is only safe on loopback — `serve` refuses to bind elsewhere without it.
+    api_token: str = ""
+    # Browser origins allowed to send that token. Same-origin by default.
+    cors_origins: list[str] = Field(default_factory=list)
+    mcp_enabled: bool = True
+    # Host headers the MCP endpoint will answer to. The SDK rejects anything
+    # else (DNS-rebinding protection), so a deployment behind a domain must
+    # list that domain here or every MCP request comes back 421.
+    mcp_allowed_hosts: list[str] = Field(default_factory=list)
+    # Loopback by default: this is a single-user tool that renders local decks,
+    # and every route either spends CPU or serves someone's slides. Exposing it
+    # is a deliberate act — pass --host explicitly, with a token.
     host: str = "127.0.0.1"
     port: int = 8400
     log_level: str = "INFO"

@@ -66,6 +66,60 @@ D2V_API_TOKEN=$(openssl rand -hex 32) uv run doc2video serve
 cd renderer && pnpm install
 ```
 
+## MCP：让模型直接驱动
+
+同一个 Agent 以 MCP 工具的形式挂在 `/mcp`（Streamable HTTP），和 HTTP API 同进程、同一份工程库——MCP 建的工程就是 `GET /projects/{id}` 返回的那个。
+
+```bash
+D2V_API_TOKEN=$(openssl rand -hex 32) uv run doc2video serve --host 0.0.0.0
+# MCP (Streamable HTTP)：http://0.0.0.0:8400/mcp
+```
+
+客户端接入（Claude Code）：
+
+```bash
+claude mcp add --transport http doc2video https://your-host/mcp \
+  --header "Authorization: Bearer $D2V_API_TOKEN"
+```
+
+### 工具
+
+| 工具 | 作用 |
+| --- | --- |
+| `prepare_project(brief, upload_id)` | 解析幻灯片，返回逐页内容 + **每页时长/字数预算**。秒级返回 |
+| `render_video(project_id, narrations)` | 用你写的讲稿配音、导演、渲染、质检。**立即返回 job_id** |
+| `revise_scenes(project_id, scenes)` | 传新讲稿，只重做那几个场景 |
+| `job_status(job_id)` | 轮询状态与当前阶段 |
+| `project_summary(project_id)` | 质量分、各维度得分、质检结果、逐场景讲稿 |
+| `list_projects()` / `video_download_path(project_id)` | 工程列表 / 成片下载路径 |
+
+三处设计各有其不得不如此的理由，都写进了工具描述里：
+
+- **讲稿必须由你写**。服务端没有模型。`prepare_project` 把页面文字、元素和图表事实一并返回，就是为了让你不用再问一次就能开始写。
+- **必须按预算写**。时长是按字数估的，`narration_guide` 给出每页的秒数与字数上限——超了成片就超时长，而音频一旦生成长度就改不动了。
+- **文件要先传、不能阻塞**。远端读不到你的磁盘，源文件走 `POST /uploads`；渲染要数分钟，所以起任务的工具立刻返回 `job_id`。
+
+`project_summary` 的质检是结构化的（缺音画、镜头指向不存在的元素、节奏、字幕溢出、讲稿与页面文字重合度）。判断讲稿「写得好不好」是你的事——它把逐场景讲稿原文一并返回，就是为了让你自己判断后接 `revise_scenes`。
+
+### 鉴权：不是可选项
+
+每条路由都要 `Authorization: Bearer $D2V_API_TOKEN`（`/health` 除外，探针要用）。**鉴权覆盖整个应用而不只是 `/mcp`**——只保护 MCP 的话，`POST /agent/run` 仍然能被拿去烧你的额度，`GET /projects` 会列出所有工程，`/projects/{id}/assets/{path}` 能取走别人的页面图和配音。
+
+没配 token 时 `serve` **拒绝监听非本机地址**：
+
+```
+错误[invalid_request]：拒绝在 0.0.0.0 上无鉴权启动：这会把上传、工程列表和成片暴露给任何人。
+```
+
+### 部署到域名后的两个坑
+
+| 现象 | 原因与配置 |
+| --- | --- |
+| MCP 全部请求 **421 Misdirected Request** | SDK 自带 DNS-rebinding 防护，默认只认 localhost。把域名加进 `D2V_MCP_ALLOWED_HOSTS`。**匹配的是完整 Host 头、含端口**：反代在 443 后面填 `["your-host"]`，直接暴露端口要填 `["your-host:8400"]` 或用通配 `["your-host:*"]` |
+| 浏览器端跨域被拦 | `D2V_CORS_ORIGINS` 默认空（同源）。要跨域访问再按需放开，别用 `*`——token 只和允许发送它的来源一样安全 |
+
+其余部署注意：渲染吃 CPU（9 页 deck 出 84 秒视频约 250 秒）；一个工程约 28MB（页面渲染图 + 每场景音频 + 分镜 + 成片），工程是可重渲的资产不是临时文件，要规划清理。
+
 ## 依赖内置
 
 系统级依赖里，**ffmpeg 已经内置，LibreOffice 不能内置**——两者性质不同。
@@ -180,6 +234,7 @@ curl -X POST http://127.0.0.1:8400/agent/run \
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| POST | `/uploads` | 上传源文件，返回 MCP `create_video` 用的 upload_id |
 | GET | `/health/capabilities` | LLM / TTS / 渲染器 / 外部二进制的可用性 |
 | GET | `/jobs`、`/jobs/{id}` | 任务状态与进度 |
 | POST | `/jobs/{id}/retry` | 失败任务重试（复用已生成的工程，不重头再来） |
