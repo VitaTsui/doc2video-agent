@@ -31,7 +31,6 @@ from mcp.server import MCPServer
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 from .agent import JobRequest
-from .api.deps import get_agent, get_jobs
 from .core.config import Settings, get_settings
 from .core.errors import Doc2VideoError
 from .core.logging import get_logger
@@ -75,7 +74,15 @@ class StaticTokenVerifier(TokenVerifier):
 
 
 def build_server(settings: Settings | None = None) -> MCPServer:
-    """Build the MCP server. Tools close over the API process's singletons."""
+    """Build the MCP server. Tools close over the API process's singletons.
+
+    ``api.deps`` is imported here rather than at module scope: importing the
+    api package builds the FastAPI app, which mounts this module — so a caller
+    that reaches for ``mcp_server`` first would import a half-built module of
+    its own. Deferring the import breaks that cycle whichever side starts it.
+    """
+    from .api.deps import get_agent, get_jobs
+
     settings = settings or get_settings()
 
     mcp = MCPServer(
