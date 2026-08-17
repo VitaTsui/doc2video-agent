@@ -1,0 +1,36 @@
+name: branch-flow
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  branch-flow:
+    runs-on: ubuntu-latest
+    steps:
+      # 分支布局与其他仓库一致：
+      #   main       当前大版本，合并即打 tag 并生成 Release
+      #   develop    当前大版本的集成分支
+      #   <major>.x  旧大版本的长期维护分支
+      - name: 校验合并流向
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          if echo "$BASE" | grep -qE '^[0-9]+\.x$'; then
+            echo "合并流向合法（维护分支）：$HEAD -> $BASE"
+            exit 0
+          fi
+
+          if [ "$BASE" = "main" ] && [ "$HEAD" != "develop" ]; then
+            echo "::error::main 只允许从 develop 合并，当前来源分支：$HEAD"
+            exit 1
+          fi
+          if [ "$BASE" != "main" ] && [ "$BASE" != "develop" ]; then
+            echo "::error::目标分支只能是 main、develop 或维护分支（如 1.x），当前：$BASE"
+            exit 1
+          fi
+          echo "合并流向合法：$HEAD -> $BASE"

@@ -1,0 +1,60 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+.playwright-mcp
+playwright
+.cursor
+.codex
+# 忽略 .claude 本地配置，但保留项目级 skills
+.claude/*
+!.claude/skills/
+tmp
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.eggs/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 运行期产物：工程数据、上传文件、渲染中间物与成片
+storage/
+out/
+.env
+.env.local
+
+# Remotion
+renderer/.remotion/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+*.zip
+
+# 立项方案原件不入库（架构说明已覆盖设计与取舍）
+docs/*.docx
+# codebase-memory-mcp 本机索引排除（个人偏好，不入库）
+.cbmignore

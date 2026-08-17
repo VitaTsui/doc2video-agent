@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - "[0-9]+.x"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 安装依赖
+        run: uv sync --python ${{ matrix.python }} --extra bundled --extra dev --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      # 测试全部跑在启发式降级路径上，不依赖 LLM / 网络。
+      - name: 测试
+        env:
+          D2V_LLM_PROVIDER: mock
+          D2V_TTS_PROVIDER: mock
+        run: uv run pytest -q
+
+      - name: JSON Schema 与仓库内文件一致
+        run: |
+          uv run doc2video export-schemas
+          git diff --exit-code -- doc2video/schemas/json \
+            || { echo "::error::JSON Schema 已过期，请运行 doc2video export-schemas 并提交"; exit 1; }
+
+  renderer:
+    name: Renderer
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: renderer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 启用 Corepack
+        run: corepack enable
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm typecheck

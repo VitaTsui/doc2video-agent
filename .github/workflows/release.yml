@@ -1,0 +1,56 @@
+name: release
+
+on:
+  push:
+    branches:
+      - main
+      - "[0-9]+.x"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 与其他仓库同一套流程，只是版本号来自 pyproject.toml；本项目不是
+      # npm 包，所以没有 publish 步骤，合并到 main 即打 tag 并生成 Release。
+      - name: 读取版本号并检查 tag
+        id: ver
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          VERSION=$(python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          TAG="v$VERSION"
+          MAJOR=${VERSION%%.*}
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          if [ "$BRANCH" = "main" ]; then
+            echo "latest_flag=--latest" >> "$GITHUB_OUTPUT"
+          else
+            BRANCH_MAJOR=${BRANCH%%.x}
+            if [ "$MAJOR" != "$BRANCH_MAJOR" ]; then
+              echo "::error::分支 $BRANCH 上的版本号是 $VERSION，大版本对不上"
+              exit 1
+            fi
+            echo "latest_flag=--latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "tag $TAG 已存在，跳过发布"
+          fi
+
+      - name: 打 tag 并生成 Release
+        if: steps.ver.outputs.skip != 'true'
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --generate-notes \
+            --target "${{ github.ref_name }}" \
+            "${{ steps.ver.outputs.latest_flag }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
