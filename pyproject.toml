@@ -1,0 +1,64 @@
+[project]
+name = "doc2video-agent"
+version = "0.1.0"
+description = "PDF / PPT intelligent explainer-video agent: document -> narration -> TTS -> director -> deterministic render -> MP4"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "VitaHsu" }]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-multipart>=0.0.12",
+    "anthropic>=0.40",
+    "PyMuPDF>=1.24",
+    "python-pptx>=1.0",
+    "Pillow>=10.4",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# Vendors a static ffmpeg binary into the Python environment, so producing an
+# MP4 needs no system install. NOTE: that build is GPL-licensed — see README
+# 「依赖内置」 before shipping it inside a closed-source product.
+bundled = [
+    "imageio-ffmpeg>=0.6",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+
+[project.scripts]
+doc2video = "doc2video.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["doc2video"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.ruff.lint.isort]
+# Declared explicitly: ruff's automatic first-party detection depends on how the
+# project happens to be installed, so a clean checkout and a working copy can
+# disagree about import order. Naming them keeps lint reproducible.
+known-first-party = ["doc2video"]
+# Reached via a sys.path insert in tests/conftest.py, not installed.
+known-local-folder = ["make_demo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

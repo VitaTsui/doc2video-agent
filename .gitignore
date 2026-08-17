@@ -1,5 +1,5 @@
 # Logs
-logs
+/logs
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -8,18 +8,18 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
-dist-ssr
+/dist
+/dist-ssr
 *.local
 
 .playwright-mcp
-playwright
+/playwright
 .cursor
 .codex
 # 忽略 .claude 本地配置，但保留项目级 skills
 .claude/*
 !.claude/skills/
-tmp
+/tmp/
 
 # Python
 __pycache__/
@@ -32,9 +32,10 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
-# 运行期产物：工程数据、上传文件、渲染中间物与成片
-storage/
-out/
+# 运行期产物：工程数据、上传文件、渲染中间物与成片。
+# 必须锚定到仓库根：doc2video/storage/ 是包源码，未锚定的 storage/ 会把它一起排除。
+/storage/
+/out/
 .env
 .env.local
 

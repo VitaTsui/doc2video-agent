@@ -1,0 +1,263 @@
+{
+  "$defs": {
+    "ActionCue": {
+      "description": "An absolute-timed director action with geometry already resolved.\n\n``area`` is normalized 0..1 against the video frame, so the renderer needs\nno knowledge of the source document's page size.",
+      "properties": {
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "type": {
+          "$ref": "#/$defs/ActionType"
+        },
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "effect": {
+          "default": "",
+          "title": "Effect",
+          "type": "string"
+        },
+        "area": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "type",
+        "scene_id"
+      ],
+      "title": "ActionCue",
+      "type": "object"
+    },
+    "ActionType": {
+      "enum": [
+        "zoom",
+        "highlight",
+        "pointer",
+        "pan",
+        "reset",
+        "transition",
+        "broll"
+      ],
+      "title": "ActionType",
+      "type": "string"
+    },
+    "AudioClip": {
+      "properties": {
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "asset": {
+          "title": "Asset",
+          "type": "string"
+        },
+        "gain_db": {
+          "default": 0.0,
+          "title": "Gain Db",
+          "type": "number"
+        }
+      },
+      "required": [
+        "scene_id",
+        "start",
+        "end",
+        "asset"
+      ],
+      "title": "AudioClip",
+      "type": "object"
+    },
+    "BBox": {
+      "description": "Axis-aligned box in *rendered page pixel* coordinates (origin top-left).",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        },
+        "w": {
+          "title": "W",
+          "type": "number"
+        },
+        "h": {
+          "title": "H",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "title": "BBox",
+      "type": "object"
+    },
+    "SubtitleCue": {
+      "properties": {
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "text",
+        "scene_id"
+      ],
+      "title": "SubtitleCue",
+      "type": "object"
+    },
+    "VideoClip": {
+      "properties": {
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "asset": {
+          "title": "Asset",
+          "type": "string"
+        },
+        "kind": {
+          "default": "slide",
+          "title": "Kind",
+          "type": "string"
+        },
+        "transition_in": {
+          "default": "fade",
+          "title": "Transition In",
+          "type": "string"
+        },
+        "transition_duration": {
+          "default": 0.4,
+          "title": "Transition Duration",
+          "type": "number"
+        }
+      },
+      "required": [
+        "scene_id",
+        "start",
+        "end",
+        "asset"
+      ],
+      "title": "VideoClip",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "fps": {
+      "default": 30,
+      "title": "Fps",
+      "type": "integer"
+    },
+    "width": {
+      "default": 1920,
+      "title": "Width",
+      "type": "integer"
+    },
+    "height": {
+      "default": 1080,
+      "title": "Height",
+      "type": "integer"
+    },
+    "duration": {
+      "default": 0.0,
+      "title": "Duration",
+      "type": "number"
+    },
+    "video": {
+      "items": {
+        "$ref": "#/$defs/VideoClip"
+      },
+      "title": "Video",
+      "type": "array"
+    },
+    "audio": {
+      "items": {
+        "$ref": "#/$defs/AudioClip"
+      },
+      "title": "Audio",
+      "type": "array"
+    },
+    "subtitles": {
+      "items": {
+        "$ref": "#/$defs/SubtitleCue"
+      },
+      "title": "Subtitles",
+      "type": "array"
+    },
+    "actions": {
+      "items": {
+        "$ref": "#/$defs/ActionCue"
+      },
+      "title": "Actions",
+      "type": "array"
+    }
+  },
+  "title": "Timeline",
+  "type": "object"
+}

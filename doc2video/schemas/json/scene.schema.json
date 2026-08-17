@@ -1,0 +1,250 @@
+{
+  "$defs": {
+    "ActionType": {
+      "enum": [
+        "zoom",
+        "highlight",
+        "pointer",
+        "pan",
+        "reset",
+        "transition",
+        "broll"
+      ],
+      "title": "ActionType",
+      "type": "string"
+    },
+    "DirectorAction": {
+      "description": "A camera / attention instruction at a precise time within the scene.",
+      "properties": {
+        "at": {
+          "description": "Seconds from scene start",
+          "title": "At",
+          "type": "number"
+        },
+        "type": {
+          "$ref": "#/$defs/ActionType"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Element id, when applicable",
+          "title": "Target"
+        },
+        "effect": {
+          "default": "",
+          "title": "Effect",
+          "type": "string"
+        },
+        "duration": {
+          "default": 2.0,
+          "title": "Duration",
+          "type": "number"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        }
+      },
+      "required": [
+        "at",
+        "type"
+      ],
+      "title": "DirectorAction",
+      "type": "object"
+    },
+    "NarrationSegment": {
+      "description": "A sentence-sized chunk of narration, bound to the elements it talks about.\n\nThe binding is what makes the director deterministic: the model decides\n*what* is being talked about, the timing comes from TTS timestamps.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "element_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Element Refs",
+          "type": "array"
+        },
+        "emphasis": {
+          "default": false,
+          "title": "Emphasis",
+          "type": "boolean"
+        },
+        "start": {
+          "default": 0.0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "default": 0.0,
+          "title": "End",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "title": "NarrationSegment",
+      "type": "object"
+    },
+    "SceneAudio": {
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "duration": {
+          "default": 0.0,
+          "title": "Duration",
+          "type": "number"
+        },
+        "voice": {
+          "default": "",
+          "title": "Voice",
+          "type": "string"
+        },
+        "provider": {
+          "default": "",
+          "title": "Provider",
+          "type": "string"
+        },
+        "text_hash": {
+          "default": "",
+          "title": "Text Hash",
+          "type": "string"
+        }
+      },
+      "title": "SceneAudio",
+      "type": "object"
+    },
+    "SceneVisual": {
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/VisualType",
+          "default": "slide"
+        },
+        "asset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset"
+        },
+        "source_page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Page"
+        }
+      },
+      "title": "SceneVisual",
+      "type": "object"
+    },
+    "VisualType": {
+      "enum": [
+        "slide",
+        "image",
+        "generated_video",
+        "existing_video"
+      ],
+      "title": "VisualType",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "scene_id": {
+      "title": "Scene Id",
+      "type": "string"
+    },
+    "source_page": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Page"
+    },
+    "title": {
+      "default": "",
+      "title": "Title",
+      "type": "string"
+    },
+    "narration": {
+      "default": "",
+      "title": "Narration",
+      "type": "string"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/NarrationSegment"
+      },
+      "title": "Segments",
+      "type": "array"
+    },
+    "duration": {
+      "default": 0.0,
+      "title": "Duration",
+      "type": "number"
+    },
+    "visual": {
+      "$ref": "#/$defs/SceneVisual"
+    },
+    "actions": {
+      "items": {
+        "$ref": "#/$defs/DirectorAction"
+      },
+      "title": "Actions",
+      "type": "array"
+    },
+    "audio": {
+      "$ref": "#/$defs/SceneAudio"
+    },
+    "notes": {
+      "default": "",
+      "title": "Notes",
+      "type": "string"
+    }
+  },
+  "required": [
+    "scene_id"
+  ],
+  "title": "Scene",
+  "type": "object"
+}
