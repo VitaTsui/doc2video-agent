@@ -7,7 +7,7 @@ from pathlib import Path
 from doc2video.core import telemetry
 from doc2video.core.config import Settings
 from doc2video.core.pricing import cost_usd
-from doc2video.schemas.telemetry import RunRecord
+from doc2video.schemas.telemetry import LLMCall, QualityReport, RunRecord
 from doc2video.storage.run_log import RunLog, summarize
 
 
@@ -176,3 +176,26 @@ def test_failed_runs_count_but_do_not_pollute_the_duration_distribution(tmp_path
 
     assert summary["failed"] == 1
     assert summary["duration_s"]["count"] == 1
+
+
+def test_summary_separates_the_rollout_arms(tmp_path: Path):
+    """The point of recording which arm a run took: comparing the two."""
+    records = [
+        _record(tmp_path, run_id="a", flags={"renderer_remotion": True}, duration_s=30.0,
+                quality=QualityReport(score=90.0)),
+        _record(tmp_path, run_id="b", flags={"renderer_remotion": False}, duration_s=10.0,
+                quality=QualityReport(score=70.0)),
+    ]
+
+    summary = summarize(records)
+
+    assert summary["flags"]["renderer_remotion"]["on"]["quality_median"] == 90.0
+    assert summary["flags"]["renderer_remotion"]["off"]["quality_median"] == 70.0
+
+
+def test_the_provider_that_answered_is_recorded_separately_from_the_arm(tmp_path: Path):
+    """With no API key both arms end up on the CLI — the flag alone would lie."""
+    records = [_record(tmp_path, flags={"llm_prefer_claude_code": False},
+                       llm_calls=[LLMCall(provider="claude_code", model="claude-opus-5")])]
+
+    assert summarize(records)["providers"] == {"claude_code": 1}

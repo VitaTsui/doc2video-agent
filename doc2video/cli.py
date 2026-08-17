@@ -14,6 +14,7 @@ from pathlib import Path
 from .agent import Doc2VideoAgent
 from .core.config import dependency_report, filter_report, get_settings
 from .core.errors import Doc2VideoError
+from .core.flags import report as flag_report
 from .core.logging import setup_logging
 from .storage.run_log import RunLog, summarize
 from .tools.llm import get_llm
@@ -52,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     projects = sub.add_parser("projects", help="列出全部工程")
     projects.set_defaults(func=cmd_projects)
 
-    metrics = sub.add_parser("metrics", help="查看跨运行的耗时、成本与质量")
+    metrics = sub.add_parser("metrics", help="查看跨运行的耗时、成本、质量与放量对照")
     metrics.add_argument("--limit", type=int, default=500, help="参与统计的最近运行条数")
     metrics.set_defaults(func=cmd_metrics)
 
@@ -214,6 +215,28 @@ def cmd_metrics(args) -> int:
         for what, count in summary["degradations"].items():
             print(f"  {count:>4} × {what}")
 
+    if summary["providers"]:
+        calls = "｜".join(f"{name} {count}" for name, count in summary["providers"].items())
+        print(f"\n实际应答的 provider：{calls}")
+
+    print("\n放量对照（记录的是分支，不是实际 provider）：")
+    # Historical records keep the flag names they were written with, so a flag
+    # that was renamed or retired still shows up here — report it as retired
+    # rather than crashing on a name the current build no longer knows.
+    current = flag_report(settings)
+    for name, arms in summary["flags"].items():
+        percent = current.get(name, {}).get("percent")
+        share = f"当前放量 {percent}%" if percent is not None else "已下线"
+        print(f"  {name}（{share}）")
+        for arm, stats in sorted(arms.items()):
+            quality = stats["quality_median"]
+            cost_median = stats["cost_usd_median"]
+            print(
+                f"    {arm:3s} 运行 {stats['runs']:>3}｜质量 "
+                f"{quality if quality is not None else '—'}｜成本 "
+                f"{f'${cost_median:.4f}' if cost_median is not None else '—'}"
+                f"｜耗时 {stats['duration_s_median']}s"
+            )
     return 0
 
 

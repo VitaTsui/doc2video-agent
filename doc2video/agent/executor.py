@@ -172,7 +172,7 @@ class Executor:
         if not project.scenes:
             raise SkillFailed("没有可渲染的场景")
 
-        adapter = select_adapter(self.ctx.settings)
+        adapter = select_adapter(self.ctx.settings, rollout_key=project.project_id)
         previous_renderer = project.render.renderer
         project.render.renderer = adapter.name
         project.render.status = "rendering"

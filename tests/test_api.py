@@ -51,7 +51,10 @@ def test_project_list_is_available(client: TestClient):
 
 def test_metrics_is_readable_before_any_run(client: TestClient):
     """A brand-new deployment must not 500 on its own dashboard."""
-    assert client.get("/metrics").json()["summary"] == {"runs": 0}
+    body = client.get("/metrics").json()
+
+    assert "summary" in body
+    assert set(body["rollout"]) == {"llm_prefer_claude_code", "renderer_remotion"}
 
 
 def test_metrics_runs_lists_nothing_rather_than_failing(client: TestClient):

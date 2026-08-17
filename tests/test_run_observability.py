@@ -92,3 +92,10 @@ def test_a_failed_run_is_recorded_rather_than_lost(
     assert records[-1].status == "failed"
     assert "解析炸了" in records[-1].error
     assert records[-1].stages[-1].status == "failed"
+
+
+def test_the_run_records_which_rollout_arm_it_took(agent, demo_pptx: Path):
+    result = agent.run(message="生成一个3分钟的讲解视频", files=[demo_pptx])
+    project = agent.get_project(result.project_id)
+
+    assert set(project.telemetry.flags) == {"llm_prefer_claude_code", "renderer_remotion"}

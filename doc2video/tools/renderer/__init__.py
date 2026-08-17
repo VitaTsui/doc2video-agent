@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ...core import flags
 from ...core.config import Settings, get_settings
 from ...core.errors import DependencyMissing
 from ...core.logging import get_logger
@@ -22,7 +23,14 @@ REGISTRY: dict[str, type[RendererAdapter]] = {
 }
 
 
-def select_adapter(settings: Settings | None = None) -> RendererAdapter:
+def select_adapter(
+    settings: Settings | None = None, *, rollout_key: str = ""
+) -> RendererAdapter:
+    """Pick a renderer. ``rollout_key`` (a project id) gates the Remotion arm.
+
+    Only consulted when the renderer is on ``auto`` — an explicit setting is an
+    operator decision and a rollout must not override it.
+    """
     settings = settings or get_settings()
     preference = settings.renderer
 
@@ -38,8 +46,13 @@ def select_adapter(settings: Settings | None = None) -> RendererAdapter:
             )
         return adapter
 
+    order = ADAPTER_ORDER
+    if rollout_key and not flags.enabled("renderer_remotion", rollout_key, settings):
+        order = [cls for cls in ADAPTER_ORDER if cls is not RemotionAdapter]
+        log.info("工程 %s 不在 Remotion 放量范围内，使用 ffmpeg 渲染器", rollout_key)
+
     reasons: dict[str, str] = {}
-    for adapter_cls in ADAPTER_ORDER:
+    for adapter_cls in order:
         adapter = adapter_cls()
         if adapter.available():
             log.info("使用渲染器：%s", adapter.name)

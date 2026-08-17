@@ -6,6 +6,7 @@ import shutil
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,6 +42,11 @@ class Settings(BaseSettings):
     video_width: int = 1920
     video_height: int = 1080
     video_fps: int = 30
+
+    # --- Rollout ---
+    # Per-flag rollout percentage, overriding the defaults in core/flags.py.
+    # From the environment as JSON: D2V_FLAGS='{"llm_prefer_claude_code": 25}'
+    flags: dict[str, int] = Field(default_factory=dict)
 
     # --- Storage ---
     storage_dir: Path = Path("./storage")

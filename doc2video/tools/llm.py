@@ -24,6 +24,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from ..core import flags
 from ..core.config import Settings, get_settings
 from ..core.errors import ToolFailed
 from ..core.logging import get_logger
@@ -517,15 +518,24 @@ PROVIDERS: dict[str, type[LLMTool]] = {
 AUTO_ORDER = ("anthropic", "claude_code")
 
 
-def get_llm(settings: Settings | None = None) -> LLMTool:
-    """Build the configured LLM tool, degrading to MockLLM when unusable."""
+def get_llm(settings: Settings | None = None, *, rollout_key: str = "") -> LLMTool:
+    """Build the configured LLM tool, degrading to MockLLM when unusable.
+
+    ``rollout_key`` (a project id) can flip the ``auto`` order so a share of
+    projects prefer the CLI provider — the arm is recorded with the run, which
+    is what makes the two paths' cost and quality comparable afterwards.
+    """
     settings = settings or get_settings()
     provider = settings.llm_provider.strip().lower()
     if provider == "mock":
         return MockLLM()
 
+    order = AUTO_ORDER
+    if rollout_key and flags.enabled("llm_prefer_claude_code", rollout_key, settings):
+        order = tuple(reversed(AUTO_ORDER))
+
     reasons: list[str] = []
-    for name in AUTO_ORDER if provider == "auto" else (provider,):
+    for name in order if provider == "auto" else (provider,):
         factory = PROVIDERS.get(name)
         if factory is None:
             reasons.append(f"{name}：未知的 provider")

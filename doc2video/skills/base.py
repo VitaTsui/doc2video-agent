@@ -58,7 +58,9 @@ class SkillContext:
             project=project,
             store=store or ProjectStore(settings),
             settings=settings,
-            llm=llm or get_llm(settings),
+            # The project id is the rollout key: the provider a project starts
+            # on is the provider it keeps across later edits.
+            llm=llm or get_llm(settings, rollout_key=project.project_id),
         )
 
     @property

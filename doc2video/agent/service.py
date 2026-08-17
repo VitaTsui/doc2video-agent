@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..core import telemetry
+from ..core import flags, telemetry
 from ..core.config import Settings, get_settings
 from ..core.errors import InvalidRequest
 from ..core.ids import new_project_id
@@ -65,6 +65,10 @@ class Doc2VideoAgent:
     ) -> None:
         self.settings = settings or get_settings()
         self.store = store or ProjectStore(self.settings)
+        # An injected tool wins everywhere (tests, embedding callers). Otherwise
+        # the tool is resolved *per project*, because the provider rollout is
+        # keyed by project id and the agent outlives any one project.
+        self._injected_llm = llm
         self.llm = llm or get_llm(self.settings)
         self.planner = Planner(self.llm)
         self.run_log = RunLog(self.settings)
@@ -103,18 +107,22 @@ class Doc2VideoAgent:
                 log.warning("当前版本仅处理第一个文件：%s", files[0].name)
             project = self.create_project(files[0])
 
+        llm = self._project_llm(project)
+        active = flags.active_flags(project.project_id, self.settings)
+
         # Telemetry opens before planning, not before execution: intent parsing
         # is a model call like any other and its cost belongs to the run.
-        with telemetry.run(project.project_id) as recorder:
+        with telemetry.run(project.project_id, flags=active) as recorder:
             try:
                 with recorder.stage_scope("plan"):
+                    planner = Planner(llm)
                     plan = (
-                        self.planner.edit_plan(message, project)
+                        planner.edit_plan(message, project)
                         if project_id
-                        else self.planner.initial_plan(message, project)
+                        else planner.initial_plan(message, project)
                     )
                 ctx = SkillContext.build(
-                    project, store=self.store, settings=self.settings, llm=self.llm
+                    project, store=self.store, settings=self.settings, llm=llm
                 )
                 project = Executor(ctx, progress=progress).run(plan, message=message)
             except Exception as exc:
@@ -125,6 +133,11 @@ class Doc2VideoAgent:
             self._persist_run(project, record)
 
         return AgentRunResult.from_project(project, plan)
+
+    def _project_llm(self, project: VideoProject) -> LLMTool:
+        if self._injected_llm is not None:
+            return self._injected_llm
+        return get_llm(self.settings, rollout_key=project.project_id)
 
     def _persist_run(self, project: VideoProject, record) -> None:
         """Keep the latest run on the project, every run in the ledger.

@@ -95,6 +95,11 @@ def summarize(records: list[RunRecord]) -> dict[str, object]:
         "quality": _quality_distribution(qualities),
         "stages": _stage_summary(records),
         "degradations": _degradation_counts(records),
+        # Which provider actually answered, which is not the same question as
+        # which rollout arm the run took: with no API key configured, both arms
+        # of the provider flag end up on the CLI.
+        "providers": _provider_counts(records),
+        "flags": _flag_summary(succeeded),
     }
 
 
@@ -145,6 +150,36 @@ def _degradation_counts(records: list[RunRecord]) -> dict[str, int]:
         for degradation in record.degradations:
             counts[degradation.what] = counts.get(degradation.what, 0) + 1
     return dict(sorted(counts.items(), key=lambda item: -item[1]))
+
+
+def _provider_counts(records: list[RunRecord]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        for call in record.llm_calls:
+            counts[call.provider] = counts.get(call.provider, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: -item[1]))
+
+
+def _flag_summary(records: list[RunRecord]) -> dict[str, dict[str, dict[str, object]]]:
+    """Cost and quality per rollout arm — the point of recording flags at all."""
+    arms: dict[str, dict[bool, list[RunRecord]]] = {}
+    for record in records:
+        for name, value in record.flags.items():
+            arms.setdefault(name, {}).setdefault(value, []).append(record)
+
+    summary: dict[str, dict[str, dict[str, object]]] = {}
+    for name, by_value in arms.items():
+        summary[name] = {}
+        for value, runs in by_value.items():
+            costs = [c for c in (r.cost_usd() for r in runs) if c is not None]
+            scores = [r.quality.score for r in runs if r.quality is not None]
+            summary[name]["on" if value else "off"] = {
+                "runs": len(runs),
+                "cost_usd_median": round(median(costs), 4) if costs else None,
+                "quality_median": round(median(scores), 1) if scores else None,
+                "duration_s_median": round(median([r.duration_s for r in runs]), 2),
+            }
+    return summary
 
 
 def load_summary(settings: Settings | None = None) -> dict[str, object]:
