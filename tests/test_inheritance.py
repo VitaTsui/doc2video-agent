@@ -197,3 +197,30 @@ def test_extraction_keeps_the_accent_approximation_without_definitions(
     # Falls back rather than rendering a bare grid.
     assert tables[0].header_fill
     assert tables[0].band_fill
+
+
+def test_the_style_cache_pins_the_objects_it_keys_on(demo_pptx: Path):
+    """The cache is keyed by ``id()``, which is only unique while the object lives.
+
+    python-pptx builds its element proxies on demand, so an entry whose key
+    object has been collected can be hit by a *different* element allocated at
+    the same address — handing that shape the previous shape's inherited size,
+    colour and bullet. Each entry therefore keeps a reference to its key object.
+    Dropping that reference reintroduces a bug that only shows up as an
+    occasional wrong bullet in a rendered slide.
+    """
+    from pptx import Presentation
+
+    from doc2video.tools.slides.inherit import StyleResolver
+    from doc2video.tools.slides.theme import load_theme
+
+    presentation = Presentation(str(demo_pptx))
+    resolver = StyleResolver(presentation, load_theme(demo_pptx))
+    for slide in presentation.slides:
+        for shape in slide.shapes:
+            resolver.defaults_for(shape, 0)
+
+    assert resolver._shape_cache, "示例 deck 应至少缓存一个形状"
+    for key, entry in resolver._shape_cache.items():
+        pinned, _value = entry
+        assert id(pinned) == key, "缓存必须持有键所对应的对象，否则地址会被复用"

@@ -79,8 +79,16 @@ class StyleResolver:
         self._theme = theme
         self._presentation = presentation
         self._default_style = self._read_default_text_style(presentation)
-        self._master_cache: dict[int, dict[str, dict[int, LevelDefaults]]] = {}
-        self._shape_cache: dict[int, dict[int, LevelDefaults]] = {}
+        # Each entry keeps a reference to the object it was keyed on. The key is
+        # ``id()``, and an id is only unique while its object is alive:
+        # python-pptx builds element proxies on demand, so an unreferenced one
+        # can be collected and the next element allocated at the same address —
+        # the cache would then hand that shape the *previous* shape's inherited
+        # size, colour and bullet. Holding the object pins the address.
+        # (The element itself cannot be the key: lxml elements do not compare by
+        # identity, so structurally similar shapes would collide.)
+        self._master_cache: dict[int, tuple[object, dict[str, dict[int, LevelDefaults]]]] = {}
+        self._shape_cache: dict[int, tuple[object, dict[int, LevelDefaults]]] = {}
 
     # -- public ------------------------------------------------------------
     def defaults_for(self, shape, level: int) -> LevelDefaults:
@@ -110,10 +118,10 @@ class StyleResolver:
 
     # -- chain -------------------------------------------------------------
     def _levels_for_shape(self, shape) -> dict[int, LevelDefaults]:
-        key = id(shape._element)
-        cached = self._shape_cache.get(key)
+        element = shape._element
+        cached = self._shape_cache.get(id(element))
         if cached is not None:
-            return cached
+            return cached[1]
 
         chain: list[dict[int, LevelDefaults]] = [self._default_style]
 
@@ -145,14 +153,13 @@ class StyleResolver:
                     value = value.merged_with(source[level])
             merged[level] = value
 
-        self._shape_cache[key] = merged
+        self._shape_cache[id(element)] = (element, merged)
         return merged
 
     def _master_styles(self, master) -> dict[str, dict[int, LevelDefaults]]:
-        key = id(master)
-        cached = self._master_cache.get(key)
+        cached = self._master_cache.get(id(master))
         if cached is not None:
-            return cached
+            return cached[1]
 
         styles: dict[str, dict[int, LevelDefaults]] = {}
         tx_styles = master.element.find(qn("p:txStyles"))
@@ -166,7 +173,7 @@ class StyleResolver:
                 if node is not None:
                     styles[name] = self._parse_levels(node)
 
-        self._master_cache[key] = styles
+        self._master_cache[id(master)] = (master, styles)
         return styles
 
     def _read_default_text_style(self, presentation) -> dict[int, LevelDefaults]:
