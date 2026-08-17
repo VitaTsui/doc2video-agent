@@ -12,8 +12,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from doc2video.core.config import Settings  # noqa: E402
 from doc2video.storage import ProjectStore  # noqa: E402
 
-from make_demo import SLIDES as DEMO_SLIDES  # noqa: E402
+from make_demo import PAGE_COUNT as _PAGE_COUNT  # noqa: E402
 from make_demo import build as build_demo  # noqa: E402
+
+# Re-exported so tests assert against the deck's real size instead of a
+# hardcoded number that silently drifts when the generator changes.
+DEMO_PAGE_COUNT = _PAGE_COUNT
 
 
 @pytest.fixture
@@ -33,10 +37,6 @@ def settings(tmp_path: Path) -> Settings:
 def store(settings: Settings) -> ProjectStore:
     settings.ensure_dirs()
     return ProjectStore(settings)
-
-
-# Tests assert against the demo deck; derive its size so the two cannot drift.
-DEMO_PAGE_COUNT = len(DEMO_SLIDES)
 
 
 @pytest.fixture

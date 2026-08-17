@@ -12,6 +12,9 @@ from doc2video.tools.slides.theme import Theme, apply_brightness
 
 from .conftest import DEMO_PAGE_COUNT
 
+# The one page in the demo deck that formats nothing itself.
+LAYOUT_SLIDE_TITLE = "客户落地案例"
+
 
 @pytest.fixture
 def deck(demo_pptx: Path, tmp_path: Path):
@@ -114,17 +117,74 @@ def test_alignment_is_preserved(deck):
     assert "right" in aligns, "页码是右对齐的"
 
 
+def _slide_titled(deck, title: str):
+    for slide in deck.slides:
+        for shape in slide.shapes:
+            if shape.text and any(
+                run.text.strip() == title
+                for para in shape.text.paragraphs
+                for run in para.runs
+            ):
+                return slide
+    raise AssertionError(f"示例 deck 里找不到标题为 {title} 的页")
+
+
 def test_bullets_are_not_invented_for_plain_text_boxes(deck):
     """A plain text box inherits no bullet — inventing one diverges from PowerPoint."""
+    placeholder_slide = _slide_titled(deck, LAYOUT_SLIDE_TITLE)
     bullets = [
         para.bullet
         for slide in deck.slides
+        if slide is not placeholder_slide
         for shape in slide.shapes
         if shape.text
         for para in shape.text.paragraphs
     ]
     assert bullets, "示例 deck 应有段落"
     assert all(b == "" for b in bullets)
+
+
+# -- placeholder inheritance ------------------------------------------------
+
+
+def test_placeholder_slide_inherits_sizes_and_bullets(deck):
+    """The layout-driven page formats nothing itself; the master supplies it all."""
+    slide = _slide_titled(deck, LAYOUT_SLIDE_TITLE)
+    bodies = [
+        shape
+        for shape in slide.shapes
+        if shape.text and any(para.bullet for para in shape.text.paragraphs)
+    ]
+    assert bodies, "正文占位符应从母版继承到项目符号"
+
+    body = bodies[0]
+    sizes = [
+        run.size_pt
+        for para in body.text.paragraphs
+        for run in para.runs
+        if run.size_pt is not None
+    ]
+    assert sizes, "正文字号应从母版继承，而不是留空退化成默认值"
+    # PowerPoint's default master shrinks each outline level.
+    levels = [(para.level, para.runs[0].size_pt) for para in body.text.paragraphs]
+    for (_, outer), (_, inner) in zip(levels, levels[1:], strict=False):
+        assert inner < outer, f"层级越深字号应越小：{levels}"
+
+
+def test_placeholder_title_inherits_alignment(deck):
+    """The default master centres its title — guessing would have said left."""
+    slide = _slide_titled(deck, LAYOUT_SLIDE_TITLE)
+    titles = [
+        para
+        for shape in slide.shapes
+        if shape.text
+        for para in shape.text.paragraphs
+        for run in para.runs
+        if run.text.strip() == LAYOUT_SLIDE_TITLE
+    ]
+    assert titles
+    assert titles[0].align.value == "center"
+    assert titles[0].runs[0].size_pt == pytest.approx(44.0)
 
 
 # -- tables ---------------------------------------------------------------
