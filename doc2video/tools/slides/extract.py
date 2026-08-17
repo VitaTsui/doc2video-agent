@@ -20,6 +20,8 @@ from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 
 from ...core.logging import get_logger
+from .chart_xml import PlotGroups, RawSeries, read_plot_groups
+from .effects import text_effects
 from .inherit import LevelDefaults, StyleResolver
 from .model import (
     Align,
@@ -40,6 +42,7 @@ from .model import (
     TextBody,
     VAnchor,
 )
+from .pattern import pattern_css
 from .table_style import TableStyle, TableStyles, load_table_styles
 from .theme import Theme, load_theme
 
@@ -242,7 +245,13 @@ class _Context:
 
     def _fill(self, shape) -> str | None:
         try:
-            fill = shape.fill
+            return self._fill_value(shape.fill)
+        except (AttributeError, ValueError, NotImplementedError):
+            return None
+
+    def _fill_value(self, fill) -> str | None:
+        """Any fill python-pptx can name, as a CSS ``background`` value."""
+        try:
             fill_type = fill.type
         except (AttributeError, ValueError, NotImplementedError):
             return None
@@ -254,8 +263,27 @@ class _Context:
             return self.theme.resolve(fill.fore_color)
         if type_name == "GRADIENT":
             return self._gradient(fill)
-        # BACKGROUND means "no fill"; patterns/pictures are out of scope.
+        if type_name == "PATTERNED":
+            return self._pattern(fill)
+        # BACKGROUND means "no fill"; picture fills are staged as images instead.
         return None
+
+    def _pattern(self, fill) -> str | None:
+        """A hatch preset as CSS.
+
+        Dropping the fill would make a hatched shape transparent, which reads as
+        a different shape rather than an approximate one — so an unmapped preset
+        still comes back as a blend of its two colours.
+        """
+        try:
+            preset = getattr(fill.pattern, "name", "") or ""
+            fore = self.theme.resolve(fill.fore_color)
+            back = self.theme.resolve(fill.back_color)
+        except (AttributeError, ValueError, NotImplementedError):
+            return None
+        if not fore and not back:
+            return None
+        return pattern_css(preset, fore or "#000000", back or "#FFFFFF")
 
     def _gradient(self, fill) -> str | None:
         try:
@@ -334,6 +362,10 @@ class _Context:
         for run in paragraph.runs:
             if not run.text:
                 continue
+            # Read WordArt first: python-pptx's ColorFormat calls
+            # get_or_change_to_solidFill(), so merely *asking* for run.font.color
+            # replaces a gradient text fill with an empty solid one.
+            effects = text_effects(run, self.theme, self.emu_to_px)
             explicit_size = run.font.size.pt if run.font.size is not None else None
             size_pt = explicit_size if explicit_size is not None else inherited.size_pt
             runs.append(
@@ -345,6 +377,7 @@ class _Context:
                     size_pt=size_pt * scale if size_pt is not None else None,
                     color=self.theme.resolve(run.font.color) or inherited.color,
                     font=run.font.name or inherited.font,
+                    effects=effects,
                 )
             )
         bullet = _bullet_of(paragraph, inherited=inherited)
@@ -412,12 +445,20 @@ class _Context:
         except (AttributeError, ValueError):
             return None
 
+        groups = read_plot_groups(chart, self.theme)
+        # The declared type names the whole chart; the plot groups know better
+        # when it mixes types, and cover the 3D and cone/pyramid variants that
+        # have no XL_CHART_TYPE entry of their own.
         kind = CHART_KIND_MAP.get(_chart_type_name(chart), ChartKind.OTHER)
-        categories = _chart_categories(chart)
-        series = self._chart_series(chart)
+        if kind is ChartKind.OTHER:
+            kind = groups.kind_at(0) or ChartKind.OTHER
+        categories = _chart_categories(chart) or groups.categories
+        series = self._chart_series(chart, groups, kind)
         if not series:
             return None
 
+        primary = groups.primary_scale
+        secondary = groups.secondary_scale
         is_round = kind in (ChartKind.PIE, ChartKind.DOUGHNUT)
         return ChartData(
             kind=kind,
@@ -433,30 +474,60 @@ class _Context:
             legend_position=_legend_position(chart),
             has_data_labels=_has_data_labels(chart),
             gridlines=_has_gridlines(chart),
-            y_min=_axis_scale(chart, "minimum_scale"),
-            y_max=_axis_scale(chart, "maximum_scale"),
+            # Once the plot area has parsed it is the authority: python-pptx
+            # answers `value_axis` with one of the two axes on a combo chart,
+            # and reading bars against the percentage axis pins every bar to
+            # the ceiling. Its value is only a fallback for unparsable XML.
+            y_min=primary.minimum if primary else _axis_scale(chart, "minimum_scale"),
+            y_max=primary.maximum if primary else _axis_scale(chart, "maximum_scale"),
+            y2_min=secondary.minimum if secondary else None,
+            y2_max=secondary.maximum if secondary else None,
+            y2_visible=secondary.visible if secondary else True,
+            three_d=groups.three_d or _is_three_d(_chart_type_name(chart)),
         )
 
-    def _chart_series(self, chart) -> list[ChartSeries]:
-        series: list[ChartSeries] = []
+    def _chart_series(
+        self, chart, groups: PlotGroups, chart_kind: ChartKind
+    ) -> list[ChartSeries]:
         try:
             raw_series = list(chart.series)
         except (AttributeError, ValueError):
-            return []
+            # python-pptx opens nine plot tags; a 3D or of-pie chart raises here.
+            raw_series = []
 
-        for index, item in enumerate(raw_series):
+        series: list[ChartSeries] = []
+        for index in range(max(len(raw_series), len(groups.series))):
+            item = raw_series[index] if index < len(raw_series) else None
+            from_xml = groups.series[index] if index < len(groups.series) else None
+            own_kind = groups.kind_at(index)
+            series.append(
+                ChartSeries(
+                    name=self._series_name(item, from_xml, index),
+                    values=self._series_values(item, from_xml),
+                    color=self._series_color(item, from_xml, index),
+                    # Only carry a kind when it differs; every series naming the
+                    # chart's own kind would just be noise in the model.
+                    kind=own_kind if own_kind not in (None, chart_kind) else None,
+                    secondary_axis=groups.secondary_at(index),
+                )
+            )
+        return [s for s in series if s.values]
+
+    @staticmethod
+    def _series_name(item, from_xml: RawSeries | None, index: int) -> str:
+        name = str(getattr(item, "name", "") or "") if item is not None else ""
+        return name or (from_xml.name if from_xml else "") or f"系列 {index + 1}"
+
+    @staticmethod
+    def _series_values(item, from_xml: RawSeries | None) -> list[float | None]:
+        if item is not None:
             try:
                 values = [None if v is None else float(v) for v in item.values]
             except (AttributeError, TypeError, ValueError):
                 values = []
-            series.append(
-                ChartSeries(
-                    name=str(getattr(item, "name", "") or f"系列 {index + 1}"),
-                    values=values,
-                    color=self._series_color(item, index),
-                )
-            )
-        return series
+            if values:
+                return values
+        return list(from_xml.values) if from_xml else []
 
     def _point_colors(self, series: list[ChartSeries], category_count: int) -> list[str]:
         """One colour per slice, the way PowerPoint assigns them.
@@ -468,27 +539,27 @@ class _Context:
         count = max(category_count, len(series[0].values) if series else 0)
         return [self.theme.slot(f"accent{i % 6 + 1}") for i in range(count)]
 
-    def _series_color(self, item, index: int) -> str:
+    def _series_color(self, item, from_xml: RawSeries | None, index: int) -> str:
         """Explicit series fill, else the theme accent PowerPoint would use.
 
         PowerPoint cycles accent1..accent6 by series index, so reproducing a deck
         means cycling too — even though a chart designed from scratch should not.
         """
         try:
-            fill = item.format.fill
-            if fill.type is not None and getattr(fill.type, "name", "") == "SOLID":
+            fill = item.format.fill if item is not None else None
+            if fill is not None and getattr(fill.type, "name", "") == "SOLID":
                 explicit = self.theme.resolve(fill.fore_color)
                 if explicit:
                     return explicit
         except (AttributeError, ValueError, NotImplementedError):
             pass
+        if from_xml is not None and from_xml.color:
+            return from_xml.color
         return self.theme.slot(f"accent{index % 6 + 1}")
 
     def _cell_fill(self, cell) -> str | None:
         try:
-            if cell.fill.type is None or getattr(cell.fill.type, "name", "") != "SOLID":
-                return None
-            return self.theme.resolve(cell.fill.fore_color)
+            return self._fill_value(cell.fill)
         except (AttributeError, ValueError, NotImplementedError):
             return None
 
@@ -633,11 +704,11 @@ def _corner_radius(shape, short_side: float) -> float:
     return max(0.0, short_side * adj / 100000)
 
 
-# XL_CHART_TYPE member name -> our render kind. Unlisted types fall back to a
-# labelled placeholder rather than being drawn as something they are not.
+# XL_CHART_TYPE member name -> our render kind. Unlisted types fall back to the
+# kind read off the plot group, and only then to a labelled placeholder — being
+# drawn as something they are not is the one outcome to avoid.
 CHART_KIND_MAP = {
     "COLUMN_CLUSTERED": ChartKind.COLUMN,
-    "COLUMN_CLUSTERED_3D": ChartKind.COLUMN,
     "COLUMN_STACKED": ChartKind.COLUMN_STACKED,
     "COLUMN_STACKED_100": ChartKind.COLUMN_STACKED,
     "BAR_CLUSTERED": ChartKind.BAR,
@@ -646,8 +717,13 @@ CHART_KIND_MAP = {
     "LINE": ChartKind.LINE,
     "LINE_MARKERS": ChartKind.LINE_MARKERS,
     "LINE_STACKED": ChartKind.LINE,
+    "LINE_STACKED_100": ChartKind.LINE,
+    "LINE_MARKERS_STACKED": ChartKind.LINE_MARKERS,
+    "LINE_MARKERS_STACKED_100": ChartKind.LINE_MARKERS,
     "PIE": ChartKind.PIE,
     "PIE_EXPLODED": ChartKind.PIE,
+    "PIE_OF_PIE": ChartKind.PIE,
+    "BAR_OF_PIE": ChartKind.PIE,
     "DOUGHNUT": ChartKind.DOUGHNUT,
     "DOUGHNUT_EXPLODED": ChartKind.DOUGHNUT,
     "AREA": ChartKind.AREA,
@@ -656,7 +732,47 @@ CHART_KIND_MAP = {
     "XY_SCATTER": ChartKind.SCATTER,
     "XY_SCATTER_LINES": ChartKind.SCATTER,
     "XY_SCATTER_LINES_NO_MARKERS": ChartKind.SCATTER,
+    "XY_SCATTER_SMOOTH": ChartKind.SCATTER,
+    "XY_SCATTER_SMOOTH_NO_MARKERS": ChartKind.SCATTER,
+    "BUBBLE": ChartKind.SCATTER,
+    "BUBBLE_THREE_D_EFFECT": ChartKind.SCATTER,
+    # 3D types plot the same data; the depth is a look, not a third dimension.
+    "THREE_D_COLUMN": ChartKind.COLUMN,
+    "THREE_D_COLUMN_CLUSTERED": ChartKind.COLUMN,
+    "THREE_D_COLUMN_STACKED": ChartKind.COLUMN_STACKED,
+    "THREE_D_COLUMN_STACKED_100": ChartKind.COLUMN_STACKED,
+    "THREE_D_BAR_CLUSTERED": ChartKind.BAR,
+    "THREE_D_BAR_STACKED": ChartKind.BAR_STACKED,
+    "THREE_D_BAR_STACKED_100": ChartKind.BAR_STACKED,
+    "THREE_D_LINE": ChartKind.LINE,
+    "THREE_D_AREA": ChartKind.AREA,
+    "THREE_D_AREA_STACKED": ChartKind.AREA_STACKED,
+    "THREE_D_AREA_STACKED_100": ChartKind.AREA_STACKED,
+    "THREE_D_PIE": ChartKind.PIE,
+    "THREE_D_PIE_EXPLODED": ChartKind.PIE,
+    # Cone / cylinder / pyramid are column and bar charts wearing a shape.
+    **{
+        f"{prefix}_{suffix}": kind
+        for prefix in ("CONE", "CYLINDER", "PYRAMID")
+        for suffix, kind in (
+            ("COL", ChartKind.COLUMN),
+            ("COL_CLUSTERED", ChartKind.COLUMN),
+            ("COL_STACKED", ChartKind.COLUMN_STACKED),
+            ("COL_STACKED_100", ChartKind.COLUMN_STACKED),
+            ("BAR_CLUSTERED", ChartKind.BAR),
+            ("BAR_STACKED", ChartKind.BAR_STACKED),
+            ("BAR_STACKED_100", ChartKind.BAR_STACKED),
+        )
+    },
 }
+
+# Names whose type is already 3D, for decks whose plot group we could not read.
+THREE_D_PREFIXES = ("THREE_D_", "CONE_", "CYLINDER_", "PYRAMID_")
+
+
+def _is_three_d(type_name: str) -> bool:
+    return type_name.startswith(THREE_D_PREFIXES) or type_name == "BUBBLE_THREE_D_EFFECT"
+
 
 LEGEND_POSITIONS = {"BOTTOM": "bottom", "TOP": "top", "RIGHT": "right", "LEFT": "left"}
 

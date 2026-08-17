@@ -4,11 +4,46 @@ import { Chart } from "./Chart";
 import {
   fontFamily,
   type Paragraph,
+  type Run,
   type SlideShape,
   type TextBody,
 } from "./types";
 
-const isGradient = (fill: string) => fill.startsWith("linear-gradient");
+/**
+ * Anything that is not a flat colour has to go through `background`.
+ *
+ * Pattern hatches arrive as `repeating-linear-gradient(...)` layers and picture
+ * fills as `url(...)`, so testing for a `linear-gradient` prefix silently
+ * dropped every hatch.
+ */
+const isImageFill = (fill: string) => /gradient\(|url\(/.test(fill);
+
+/**
+ * WordArt as CSS.
+ *
+ * A gradient fill has to be painted as a background and clipped to the glyphs,
+ * which means the text itself must go transparent — so `color` is only cleared
+ * when there really is a gradient, or plain runs would vanish.
+ */
+const wordArt = (effects: Run["effects"]): React.CSSProperties => {
+  if (!effects) return {};
+  const style: React.CSSProperties = {};
+  if (effects.gradient) {
+    style.backgroundImage = effects.gradient;
+    style.WebkitBackgroundClip = "text";
+    style.backgroundClip = "text";
+    style.color = "transparent";
+  }
+  if (effects.outline_color && effects.outline_width_px > 0) {
+    style.WebkitTextStrokeWidth = effects.outline_width_px;
+    style.WebkitTextStrokeColor = effects.outline_color;
+    // The stroke is centred on the glyph edge, so half of it eats into the
+    // letterform; painting the fill over it keeps thin text legible.
+    style.paintOrder = "stroke fill";
+  }
+  if (effects.shadow) style.textShadow = effects.shadow;
+  return style;
+};
 
 const anchorToJustify = (anchor: TextBody["v_anchor"]) =>
   anchor === "middle" ? "center" : anchor === "bottom" ? "flex-end" : "flex-start";
@@ -66,6 +101,7 @@ const ParagraphView: React.FC<{
               color: run.color ?? undefined,
               fontFamily: fontFamily(run.font),
               whiteSpace: "pre-wrap",
+              ...wordArt(run.effects),
             }}
           >
             {run.text}
@@ -202,9 +238,9 @@ export const Shape: React.FC<{ shape: SlideShape; ptToPx: number }> = ({
           ...surface,
           // A gradient must go through `background`, a flat colour through
           // `backgroundColor` — mixing them silently drops the gradient.
-          background: style.fill && isGradient(style.fill) ? style.fill : undefined,
+          background: style.fill && isImageFill(style.fill) ? style.fill : undefined,
           backgroundColor:
-            style.fill && !isGradient(style.fill) ? style.fill : undefined,
+            style.fill && !isImageFill(style.fill) ? style.fill : undefined,
           display: "flex",
           flexDirection: "column",
           justifyContent: body ? anchorToJustify(body.v_anchor) : "flex-start",
