@@ -68,6 +68,17 @@ class Box(BaseModel):
     h: float
 
 
+class TextEffects(BaseModel):
+    """WordArt: the parts of a run's look that are not just a colour."""
+
+    outline_color: str | None = None
+    outline_width_px: float = 0.0
+    # A CSS gradient painted through the glyphs instead of a solid colour.
+    gradient: str | None = None
+    # A ready-made CSS ``text-shadow`` value (shadow and glow both land here).
+    shadow: str | None = None
+
+
 class Run(BaseModel):
     text: str
     bold: bool = False
@@ -77,6 +88,7 @@ class Run(BaseModel):
     size_pt: float | None = None
     color: str | None = None
     font: str | None = None
+    effects: TextEffects | None = None
 
 
 class Paragraph(BaseModel):
@@ -121,8 +133,8 @@ class TableData(BaseModel):
     rows: list[list[TableCell]] = Field(default_factory=list)
     col_widths: list[float] = Field(default_factory=list)
     row_heights: list[float] = Field(default_factory=list)
-    # Table styles live in ppt/tableStyles.xml and are not resolved; these carry
-    # the deck's accent so the default banded look can be approximated.
+    # Resolved from ppt/tableStyles.xml when the deck defines the style it names;
+    # otherwise these carry a theme-accent approximation of the default look.
     header_fill: str | None = None
     band_fill: str | None = None
     border_color: str = "#FFFFFF"
@@ -134,6 +146,11 @@ class ChartSeries(BaseModel):
     # None is a genuine gap in the data, not zero — the renderer must not join across it.
     values: list[float | None] = Field(default_factory=list)
     color: str = "#4472C4"
+    # Combo charts mix plot types in one chart; None means "same as the chart".
+    kind: ChartKind | None = None
+    # Series on the secondary axis have their own scale, usually because their
+    # magnitude is nowhere near the primary one's.
+    secondary_axis: bool = False
 
 
 class ChartData(BaseModel):
@@ -158,6 +175,14 @@ class ChartData(BaseModel):
     gridlines: bool = True
     y_min: float | None = None
     y_max: float | None = None
+    # Secondary value axis, present only when some series sits on it.
+    y2_min: float | None = None
+    y2_max: float | None = None
+    y2_visible: bool = True
+    # PowerPoint's 3D chart types. The data is plotted flat — a rotated 3D plot
+    # is harder to read, which is why it is an anti-pattern — but the extruded
+    # look is kept so the frame still matches the slide it came from.
+    three_d: bool = False
 
 
 class SlideShape(BaseModel):

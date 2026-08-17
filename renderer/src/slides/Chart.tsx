@@ -1,5 +1,5 @@
 import React from "react";
-import { fontFamily, type ChartData, type ChartSeries } from "./types";
+import { fontFamily, type ChartData, type ChartKind, type ChartSeries } from "./types";
 
 /**
  * Charts drawn as plain SVG.
@@ -10,6 +10,17 @@ import { fontFamily, type ChartData, type ChartSeries } from "./types";
  * them on. What is applied from general practice is everything the file does
  * *not* specify: recessive gridlines, ink-coloured text, thin marks with rounded
  * data ends, a legend only when more than one series needs identifying.
+ *
+ * Two shapes here exist purely for fidelity, against general practice:
+ *
+ * - **A secondary axis.** Two y-scales in one frame is the classic misleading
+ *   chart, but a deck that has one is *read* against it — flattening the series
+ *   onto the primary scale would put a percentage line along the floor of a
+ *   chart running to thousands, which misrepresents the slide more than the
+ *   dual axis misrepresents the data.
+ * - **3D extrusion.** Also an anti-pattern, also what the audience is looking
+ *   at. The data is plotted flat and the depth is drawn as a face on top, so
+ *   the geometry stays honest while the frame still matches the slide.
  */
 
 const INK = "#1F2430";
@@ -21,6 +32,9 @@ const SURFACE_GAP = 2;
 const BAR_RADIUS = 4;
 const LINE_WIDTH = 2;
 const MARKER_RADIUS = 4;
+/** Depth of the 3D face, as a share of the bar's own width. */
+const DEPTH_RATIO = 0.32;
+const MAX_DEPTH = 12;
 
 type Layout = {
   left: number;
@@ -29,8 +43,19 @@ type Layout = {
   height: number;
 };
 
+type Scale = { min: number; max: number; step: number };
+
+const isStackedKind = (kind: ChartKind) => kind.endsWith("_stacked");
+const isAreaKind = (kind: ChartKind) => kind === "area" || kind === "area_stacked";
+const isPathKind = (kind: ChartKind) =>
+  kind === "line" || kind === "line_markers" || kind === "scatter" || isAreaKind(kind);
+
+/** The plot type this series is drawn as: its own, or the chart's. */
+const kindOf = (series: ChartSeries, chart: ChartData): ChartKind =>
+  series.kind ?? chart.kind;
+
 /** "Nice" axis bounds and step, so ticks land on readable numbers. */
-const niceScale = (min: number, max: number, ticks = 4) => {
+const niceScale = (min: number, max: number, ticks = 4): Scale => {
   if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
     return { min: 0, max: max || 1, step: (max || 1) / ticks };
   }
@@ -52,13 +77,28 @@ const formatValue = (value: number): string => {
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${(value / 1_000).toFixed(abs >= 10_000 ? 0 : 1)}k`;
   if (Number.isInteger(value)) return String(value);
-  return value.toFixed(1);
+  // A secondary axis often carries rates, where 0.4 must not print as "0".
+  return abs < 1 ? value.toFixed(2) : value.toFixed(1);
 };
 
 const stackedTotals = (series: ChartSeries[], count: number): number[] =>
   Array.from({ length: count }, (_, i) =>
     series.reduce((sum, s) => sum + (s.values[i] ?? 0), 0),
   );
+
+/** Lighten (positive) or darken (negative) a `#RRGGBB` for the 3D faces. */
+const shade = (color: string, amount: number): string => {
+  const value = color.replace("#", "");
+  if (value.length !== 6) return color;
+  const channels = [0, 2, 4].map((i) => parseInt(value.slice(i, i + 2), 16));
+  if (channels.some((c) => Number.isNaN(c))) return color;
+  const mixed = channels.map((c) =>
+    Math.round(amount >= 0 ? c + (255 - c) * amount : c * (1 + amount)),
+  );
+  return `#${mixed
+    .map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, "0"))
+    .join("")}`;
+};
 
 export const Chart: React.FC<{
   chart: ChartData;
@@ -67,20 +107,20 @@ export const Chart: React.FC<{
   ptToPx: number;
 }> = ({ chart, width, height, ptToPx }) => {
   const fontSize = Math.max(11, 10 * ptToPx);
-  const isStacked =
-    chart.kind === "column_stacked" ||
-    chart.kind === "bar_stacked" ||
-    chart.kind === "area_stacked";
   const isRound = chart.kind === "pie" || chart.kind === "doughnut";
   const isHorizontal = chart.kind === "bar" || chart.kind === "bar_stacked";
+  const hasSecondary =
+    !isRound && chart.y2_visible && chart.series.some((s) => s.secondary_axis);
 
   const titleHeight = chart.title ? fontSize * 2.2 : fontSize * 0.6;
   const legendHeight = chart.has_legend ? fontSize * 2.2 : 0;
 
+  const gutter = fontSize * 3.4;
+  const rightGutter = hasSecondary ? gutter : fontSize;
   const plot: Layout = {
-    left: isRound ? 0 : fontSize * 3.4,
+    left: isRound ? 0 : gutter,
     top: titleHeight,
-    width: width - (isRound ? 0 : fontSize * 3.4) - fontSize,
+    width: width - (isRound ? 0 : gutter + rightGutter),
     height: height - titleHeight - legendHeight - (isRound ? 0 : fontSize * 2),
   };
 
@@ -111,8 +151,8 @@ export const Chart: React.FC<{
           chart={chart}
           plot={plot}
           fontSize={fontSize}
-          isStacked={isStacked}
           isHorizontal={isHorizontal}
+          hasSecondary={hasSecondary}
         />
       )}
 
@@ -129,58 +169,97 @@ export const Chart: React.FC<{
 };
 
 // ---------------------------------------------------------------------------
-// cartesian: column / bar / line / area / scatter
+// cartesian: column / bar / line / area / scatter, and combinations of them
 // ---------------------------------------------------------------------------
 
 const CartesianPlot: React.FC<{
   chart: ChartData;
   plot: Layout;
   fontSize: number;
-  isStacked: boolean;
   isHorizontal: boolean;
-}> = ({ chart, plot, fontSize, isStacked, isHorizontal }) => {
+  hasSecondary: boolean;
+}> = ({ chart, plot, fontSize, isHorizontal, hasSecondary }) => {
   const count = Math.max(
     chart.categories.length,
     ...chart.series.map((s) => s.values.length),
     1,
   );
 
-  const flat = chart.series.flatMap((s) =>
-    s.values.filter((v): v is number => v !== null),
+  const onPrimary = chart.series.filter((s) => !s.secondary_axis);
+  const onSecondary = chart.series.filter((s) => s.secondary_axis);
+
+  /** Bounds across a set of series, stacking only what is actually stacked. */
+  const boundsOf = (list: ChartSeries[]) => {
+    const stacked = list.filter((s) => isStackedKind(kindOf(s, chart)));
+    const plain = list.filter((s) => !isStackedKind(kindOf(s, chart)));
+    const values = [
+      ...(stacked.length ? stackedTotals(stacked, count) : []),
+      ...plain.flatMap((s) => s.values.filter((v): v is number => v !== null)),
+    ];
+    return {
+      min: Math.min(0, ...(values.length ? values : [0])),
+      max: Math.max(0, ...(values.length ? values : [1])),
+    };
+  };
+
+  const primaryBounds = boundsOf(onPrimary.length ? onPrimary : chart.series);
+  const primary = niceScale(
+    chart.y_min ?? primaryBounds.min,
+    chart.y_max ?? primaryBounds.max,
   );
-  const totals = isStacked ? stackedTotals(chart.series, count) : flat;
-  const dataMin = Math.min(0, ...(totals.length ? totals : [0]));
-  const dataMax = Math.max(0, ...(totals.length ? totals : [1]));
-  const scale = niceScale(chart.y_min ?? dataMin, chart.y_max ?? dataMax);
+  const secondaryBounds = boundsOf(onSecondary);
+  const secondary = niceScale(
+    chart.y2_min ?? secondaryBounds.min,
+    chart.y2_max ?? secondaryBounds.max,
+  );
 
   // Along = the category direction; across = the value direction.
   const alongSize = isHorizontal ? plot.height : plot.width;
   const acrossSize = isHorizontal ? plot.width : plot.height;
-  const valueToPx = (v: number) =>
+  const pxOn = (scale: Scale) => (v: number) =>
     ((v - scale.min) / (scale.max - scale.min || 1)) * acrossSize;
+  const scaleFor = (series: ChartSeries) =>
+    pxOn(series.secondary_axis ? secondary : primary);
 
   const band = alongSize / count;
-  const groupCount = isStacked ? 1 : chart.series.length || 1;
+  // Only bar-shaped series claim a slot in the band; a line laid over columns
+  // runs through the middle of them rather than beside them.
+  const barSeries = chart.series.filter((s) => !isPathKind(kindOf(s, chart)));
+  const stackedBars = barSeries.filter((s) => isStackedKind(kindOf(s, chart)));
+  const groupCount = Math.max(
+    barSeries.length - stackedBars.length + (stackedBars.length ? 1 : 0),
+    1,
+  );
   // Leave ~30% of the band as breathing room between category groups.
   const barWidth = Math.max(2, (band * 0.7) / groupCount);
+  const depth = chart.three_d ? Math.min(barWidth * DEPTH_RATIO, MAX_DEPTH) : 0;
 
   const ticks: number[] = [];
-  for (let v = scale.min; v <= scale.max + scale.step / 2; v += scale.step) {
+  for (let v = primary.min; v <= primary.max + primary.step / 2; v += primary.step) {
     ticks.push(Number(v.toFixed(6)));
   }
+  /** The secondary value sharing a gridline with this primary tick. */
+  const secondaryAt = (tick: number) => {
+    const share = (tick - primary.min) / (primary.max - primary.min || 1);
+    return secondary.min + share * (secondary.max - secondary.min);
+  };
 
-  const isLineLike =
-    chart.kind === "line" ||
-    chart.kind === "line_markers" ||
-    chart.kind === "scatter";
-  const isArea = chart.kind === "area" || chart.kind === "area_stacked";
+  /** Slot within the band, for bar-shaped series only. */
+  const slotOf = (series: ChartSeries): number => {
+    let slot = 0;
+    for (const other of barSeries) {
+      if (other === series) return slot;
+      if (!isStackedKind(kindOf(other, chart))) slot += 1;
+    }
+    return slot;
+  };
 
   return (
     <g>
       {/* Gridlines stay recessive: they orient, they do not compete. */}
       {chart.gridlines
         ? ticks.map((tick, i) => {
-            const offset = valueToPx(tick);
+            const offset = pxOn(primary)(tick);
             return isHorizontal ? (
               <line
                 key={i}
@@ -207,7 +286,7 @@ const CartesianPlot: React.FC<{
 
       {/* Value axis labels */}
       {ticks.map((tick, i) => {
-        const offset = valueToPx(tick);
+        const offset = pxOn(primary)(tick);
         return isHorizontal ? (
           <text
             key={i}
@@ -232,6 +311,23 @@ const CartesianPlot: React.FC<{
           </text>
         );
       })}
+
+      {/* The second scale, labelled on the right so each series can be read
+          against the axis it was actually plotted on. */}
+      {hasSecondary && !isHorizontal
+        ? ticks.map((tick, i) => (
+            <text
+              key={`s-${i}`}
+              x={plot.left + plot.width + fontSize * 0.5}
+              y={plot.top + plot.height - pxOn(primary)(tick) + fontSize * 0.35}
+              textAnchor="start"
+              fill={INK_MUTED}
+              fontSize={fontSize * 0.95}
+            >
+              {formatValue(secondaryAt(tick))}
+            </text>
+          ))
+        : null}
 
       <line
         x1={plot.left}
@@ -269,28 +365,20 @@ const CartesianPlot: React.FC<{
         ),
       )}
 
-      {isLineLike || isArea
-        ? chart.series.map((series, si) => (
-            <SeriesPath
-              key={si}
-              series={series}
-              index={si}
-              chart={chart}
-              plot={plot}
-              band={band}
-              valueToPx={valueToPx}
-              isArea={isArea}
-              isStacked={isStacked}
-              showMarkers={chart.kind !== "line" && chart.kind !== "area"}
-              fontSize={fontSize}
-            />
-          ))
-        : chart.series.map((series, si) =>
-            series.values.slice(0, count).map((value, ci) => {
+      {/* Bars first, paths over them: a combo chart's line belongs on top. */}
+      {chart.series.map((series, si) => {
+        const kind = kindOf(series, chart);
+        if (isPathKind(kind)) return null;
+        const stacked = isStackedKind(kind);
+        const valueToPx = scaleFor(series);
+        return (
+          <g key={`b-${si}`}>
+            {series.values.slice(0, count).map((value, ci) => {
               if (value === null) return null;
-              const below = isStacked
+              const below = stacked
                 ? chart.series
                     .slice(0, si)
+                    .filter((s) => isStackedKind(kindOf(s, chart)))
                     .reduce((sum, s) => sum + (s.values[ci] ?? 0), 0)
                 : 0;
               const length = Math.abs(valueToPx(value + below) - valueToPx(below));
@@ -298,42 +386,67 @@ const CartesianPlot: React.FC<{
               const alongPos =
                 band * (ci + 0.5) -
                 (barWidth * groupCount) / 2 +
-                (isStacked ? 0 : si * barWidth);
+                slotOf(series) * barWidth;
 
-              return isHorizontal ? (
-                <rect
+              const thickness = Math.max(1, barWidth - SURFACE_GAP);
+              const extent = Math.max(1, length - (stacked ? SURFACE_GAP : 0));
+              const x = isHorizontal ? plot.left + start : plot.left + alongPos;
+              const y = isHorizontal
+                ? plot.top + alongPos
+                : plot.top + plot.height - start - length;
+              const w = isHorizontal ? extent : thickness;
+              const h = isHorizontal ? thickness : extent;
+
+              return (
+                <Bar
                   key={`${si}-${ci}`}
-                  x={plot.left + start}
-                  y={plot.top + alongPos + (isStacked ? 0 : 0)}
-                  width={Math.max(1, length - (isStacked ? SURFACE_GAP : 0))}
-                  height={Math.max(1, barWidth - SURFACE_GAP)}
-                  rx={Math.min(BAR_RADIUS, barWidth / 3)}
-                  fill={series.color}
-                />
-              ) : (
-                <rect
-                  key={`${si}-${ci}`}
-                  x={plot.left + alongPos}
-                  y={plot.top + plot.height - start - length}
-                  width={Math.max(1, barWidth - SURFACE_GAP)}
-                  height={Math.max(1, length - (isStacked ? SURFACE_GAP : 0))}
-                  rx={Math.min(BAR_RADIUS, barWidth / 3)}
-                  fill={series.color}
+                  x={x}
+                  y={y}
+                  width={w}
+                  height={h}
+                  color={series.color}
+                  radius={depth ? 0 : Math.min(BAR_RADIUS, barWidth / 3)}
+                  depth={depth}
                 />
               );
-            }),
-          )}
+            })}
+          </g>
+        );
+      })}
+
+      {chart.series.map((series, si) => {
+        const kind = kindOf(series, chart);
+        if (!isPathKind(kind)) return null;
+        return (
+          <SeriesPath
+            key={`p-${si}`}
+            series={series}
+            index={si}
+            chart={chart}
+            plot={plot}
+            band={band}
+            valueToPx={scaleFor(series)}
+            isArea={isAreaKind(kind)}
+            isStacked={isStackedKind(kind)}
+            showMarkers={kind !== "line" && kind !== "area"}
+          />
+        );
+      })}
 
       {/* Data labels only when the deck asked for them. */}
-      {chart.has_data_labels && !isStacked
-        ? chart.series.map((series, si) =>
-            series.values.slice(0, count).map((value, ci) => {
+      {chart.has_data_labels
+        ? chart.series.map((series, si) => {
+            if (isStackedKind(kindOf(series, chart))) return null;
+            const valueToPx = scaleFor(series);
+            const isPath = isPathKind(kindOf(series, chart));
+            return series.values.slice(0, count).map((value, ci) => {
               if (value === null) return null;
-              const alongPos =
-                band * (ci + 0.5) -
-                (barWidth * groupCount) / 2 +
-                si * barWidth +
-                barWidth / 2;
+              const alongPos = isPath
+                ? band * (ci + 0.5)
+                : band * (ci + 0.5) -
+                  (barWidth * groupCount) / 2 +
+                  slotOf(series) * barWidth +
+                  barWidth / 2;
               const across = valueToPx(value);
               return isHorizontal ? (
                 <text
@@ -357,9 +470,45 @@ const CartesianPlot: React.FC<{
                   {formatValue(value)}
                 </text>
               );
-            }),
-          )
+            });
+          })
         : null}
+    </g>
+  );
+};
+
+/**
+ * One bar, optionally extruded.
+ *
+ * The depth is drawn as two lighter/darker faces going up and to the right, so
+ * the front face still starts at the baseline and ends at the true value — the
+ * geometry a reader measures stays exactly as tall as the number.
+ */
+const Bar: React.FC<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: string;
+  radius: number;
+  depth: number;
+}> = ({ x, y, width, height, color, radius, depth }) => {
+  if (!depth) {
+    return (
+      <rect x={x} y={y} width={width} height={height} rx={radius} fill={color} />
+    );
+  }
+  const top = `M ${x} ${y} L ${x + depth} ${y - depth} L ${x + width + depth} ${
+    y - depth
+  } L ${x + width} ${y} Z`;
+  const side = `M ${x + width} ${y} L ${x + width + depth} ${y - depth} L ${
+    x + width + depth
+  } ${y + height - depth} L ${x + width} ${y + height} Z`;
+  return (
+    <g>
+      <path d={side} fill={shade(color, -0.25)} />
+      <path d={top} fill={shade(color, 0.22)} />
+      <rect x={x} y={y} width={width} height={height} fill={color} />
     </g>
   );
 };
@@ -374,7 +523,6 @@ const SeriesPath: React.FC<{
   isArea: boolean;
   isStacked: boolean;
   showMarkers: boolean;
-  fontSize: number;
 }> = ({
   series,
   index,
@@ -392,6 +540,7 @@ const SeriesPath: React.FC<{
       const below = isStacked
         ? chart.series
             .slice(0, index)
+            .filter((s) => isStackedKind(kindOf(s, chart)))
             .reduce((sum, s) => sum + (s.values[i] ?? 0), 0)
         : 0;
       return {
@@ -480,44 +629,57 @@ const RoundPlot: React.FC<{
   const cy = plot.top + plot.height / 2;
   const radius = Math.max(4, Math.min(plot.width, plot.height) / 2 - fontSize);
   const inner = chart.kind === "doughnut" ? radius * 0.55 : 0;
+  // A 3D pie is tilted and given a rim; the angles stay untouched, so the
+  // proportions a reader takes from it are the proportions in the data.
+  const depth = chart.three_d ? Math.min(radius * 0.16, MAX_DEPTH) : 0;
+  const squash = depth ? 0.72 : 1;
 
+  const slice = (start: number, end: number, r: number, ri: number) => {
+    const large = end - start > Math.PI ? 1 : 0;
+    const px = (angle: number, rr: number) => cx + rr * Math.cos(angle);
+    const py = (angle: number, rr: number) => cy + rr * squash * Math.sin(angle);
+    return (
+      `M ${px(start, ri)} ${py(start, ri)} L ${px(start, r)} ${py(start, r)} ` +
+      `A ${r} ${r * squash} 0 ${large} 1 ${px(end, r)} ${py(end, r)} ` +
+      `L ${px(end, ri)} ${py(end, ri)} ` +
+      (ri > 0
+        ? `A ${ri} ${ri * squash} 0 ${large} 0 ${px(start, ri)} ${py(start, ri)}`
+        : "") +
+      " Z"
+    );
+  };
+
+  const angles: Array<{ start: number; end: number }> = [];
   let angle = -Math.PI / 2;
+  for (const value of values) {
+    const sweep = (Math.abs(value) / total) * Math.PI * 2;
+    angles.push({ start: angle, end: angle + sweep });
+    angle += sweep;
+  }
+
   return (
     <g>
-      {values.map((value, i) => {
-        const sweep = (Math.abs(value) / total) * Math.PI * 2;
-        const start = angle;
-        const end = angle + sweep;
-        angle = end;
+      {/* The rim: the same slices, dropped by the depth and darkened. */}
+      {depth
+        ? angles.map(({ start, end }, i) => (
+            <path
+              key={`d-${i}`}
+              d={slice(start, end, radius, inner)}
+              transform={`translate(0, ${depth})`}
+              fill={shade(sliceColor(chart, i), -0.3)}
+            />
+          ))
+        : null}
 
-        const large = sweep > Math.PI ? 1 : 0;
-        const x0 = cx + radius * Math.cos(start);
-        const y0 = cy + radius * Math.sin(start);
-        const x1 = cx + radius * Math.cos(end);
-        const y1 = cy + radius * Math.sin(end);
-
-        const outer = `M ${cx + inner * Math.cos(start)} ${
-          cy + inner * Math.sin(start)
-        } L ${x0} ${y0} A ${radius} ${radius} 0 ${large} 1 ${x1} ${y1} L ${
-          cx + inner * Math.cos(end)
-        } ${cy + inner * Math.sin(end)} ${
-          inner > 0
-            ? `A ${inner} ${inner} 0 ${large} 0 ${cx + inner * Math.cos(start)} ${
-                cy + inner * Math.sin(start)
-              }`
-            : ""
-        } Z`;
-
-        return (
-          <path
-            key={i}
-            d={outer}
-            fill={sliceColor(chart, i)}
-            stroke="#FFFFFF"
-            strokeWidth={SURFACE_GAP}
-          />
-        );
-      })}
+      {angles.map(({ start, end }, i) => (
+        <path
+          key={i}
+          d={slice(start, end, radius, inner)}
+          fill={sliceColor(chart, i)}
+          stroke="#FFFFFF"
+          strokeWidth={SURFACE_GAP}
+        />
+      ))}
     </g>
   );
 };

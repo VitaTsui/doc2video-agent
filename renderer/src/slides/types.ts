@@ -26,6 +26,16 @@ export type Geometry = "rect" | "roundRect" | "ellipse" | "line" | "other";
 
 export type Box = { x: number; y: number; w: number; h: number };
 
+/** WordArt: the parts of a run's look that are not just a colour. */
+export type TextEffects = {
+  outline_color: string | null;
+  outline_width_px: number;
+  /** A CSS gradient painted through the glyphs instead of a solid colour. */
+  gradient: string | null;
+  /** A ready-made CSS `text-shadow` value (shadow and glow both land here). */
+  shadow: string | null;
+};
+
 export type Run = {
   text: string;
   bold: boolean;
@@ -35,6 +45,7 @@ export type Run = {
   size_pt: number | null;
   color: string | null;
   font: string | null;
+  effects: TextEffects | null;
 };
 
 export type Paragraph = {
@@ -59,7 +70,7 @@ export type TextBody = {
 };
 
 export type ShapeStyle = {
-  /** A hex colour or a full CSS `linear-gradient(...)` string. */
+  /** A hex colour, or any CSS `background` value (gradient, pattern hatch). */
   fill: string | null;
   line_color: string | null;
   line_width_px: number;
@@ -79,7 +90,7 @@ export type TableData = {
   rows: TableCell[][];
   col_widths: number[];
   row_heights: number[];
-  /** Approximation of PowerPoint's default banded table style. */
+  /** From ppt/tableStyles.xml, or an approximation of the default banded look. */
   header_fill: string | null;
   band_fill: string | null;
   border_color: string;
@@ -91,6 +102,9 @@ export type ChartSeries = {
   /** null is a real gap in the data — never draw through it. */
   values: (number | null)[];
   color: string;
+  /** Combo charts mix plot types; null means "same as the chart". */
+  kind: ChartKind | null;
+  secondary_axis: boolean;
 };
 
 export type ChartData = {
@@ -106,6 +120,12 @@ export type ChartData = {
   gridlines: boolean;
   y_min: number | null;
   y_max: number | null;
+  /** Secondary value axis, present only when some series sits on it. */
+  y2_min: number | null;
+  y2_max: number | null;
+  y2_visible: boolean;
+  /** A PowerPoint 3D chart type: plotted flat, drawn with an extruded face. */
+  three_d: boolean;
 };
 
 export type SlideShape = {
