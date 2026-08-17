@@ -3,10 +3,11 @@
 Reads the styling the semantic parser deliberately ignores: theme colours,
 fonts, fills, gradients, line work, rotation, group transforms, tables.
 
-What is *not* resolved: placeholder inheritance from layout/master text styles.
-PowerPoint stores those defaults in ``<a:lstStyle>`` chains that python-pptx does
-not expose; runs that inherit their size fall back to a per-placeholder default
-(see ``DEFAULT_SIZES``). Everything explicitly set on the slide is honoured.
+Placeholder inheritance is resolved too (see ``inherit.py``): a body
+placeholder's size, colour, alignment and bullet usually live in the layout or
+master rather than on the slide, so reading only the slide yields the text
+without its appearance. ``DEFAULT_SIZES`` now applies only when even the master
+says nothing.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 
 from ...core.logging import get_logger
+from .inherit import LevelDefaults, StyleResolver
 from .model import (
     Align,
     Box,
@@ -38,6 +40,7 @@ from .model import (
     TextBody,
     VAnchor,
 )
+from .table_style import TableStyle, TableStyles, load_table_styles
 from .theme import Theme, load_theme
 
 log = get_logger(__name__)
@@ -89,7 +92,13 @@ def extract_deck(
     px_height = int(round(slide_h_emu * emu_to_px))
     pt_to_px = target_width / (slide_w_emu / EMU_PER_INCH) / 72
 
-    ctx = _Context(theme=theme, emu_to_px=emu_to_px, assets_dir=assets_dir)
+    ctx = _Context(
+        theme=theme,
+        emu_to_px=emu_to_px,
+        assets_dir=assets_dir,
+        styles=StyleResolver(prs, theme),
+        table_styles=load_table_styles(pptx_path, theme),
+    )
 
     slides: list[Slide] = []
     for index, slide in enumerate(prs.slides, start=1):
@@ -120,10 +129,20 @@ def chart_of(shape, theme: Theme | None = None) -> ChartData | None:
 class _Context:
     """Carries the per-deck constants through the recursive shape walk."""
 
-    def __init__(self, *, theme: Theme, emu_to_px: float, assets_dir: Path) -> None:
+    def __init__(
+        self,
+        *,
+        theme: Theme,
+        emu_to_px: float,
+        assets_dir: Path,
+        styles: StyleResolver | None = None,
+        table_styles: TableStyles | None = None,
+    ) -> None:
         self.theme = theme
         self.emu_to_px = emu_to_px
         self.assets_dir = assets_dir
+        self.styles = styles
+        self.table_styles = table_styles
         self.page_index = 0
         self.seq = 0
 
@@ -284,8 +303,8 @@ class _Context:
         if not frame.text.strip():
             return None
 
-        inherits_bullets = _inherits_bullets(shape)
-        paragraphs = [self._paragraph(p, inherits_bullets) for p in frame.paragraphs]
+        scale = self.styles.font_scale(shape) if self.styles else 1.0
+        paragraphs = [self._paragraph(p, shape, scale) for p in frame.paragraphs]
         paragraphs = [p for p in paragraphs if p.runs]
         if not paragraphs:
             return None
@@ -298,35 +317,47 @@ class _Context:
             margin_right_pt=_emu_to_pt(frame.margin_right, 7.2),
             margin_top_pt=_emu_to_pt(frame.margin_top, 3.6),
             margin_bottom_pt=_emu_to_pt(frame.margin_bottom, 3.6),
-            default_size_pt=_default_size(shape),
+            default_size_pt=_default_size(shape) * scale,
         )
 
-    def _paragraph(self, paragraph, inherits_bullets: bool = False) -> Paragraph:
+    def _paragraph(self, paragraph, shape=None, scale: float = 1.0) -> Paragraph:
+        level = int(paragraph.level or 0)
+        # What the layout/master says for this placeholder at this level; every
+        # value here is a fallback the slide itself may override.
+        inherited = (
+            self.styles.defaults_for(shape, level)
+            if self.styles is not None and shape is not None
+            else LevelDefaults()
+        )
+
         runs = []
         for run in paragraph.runs:
             if not run.text:
                 continue
+            explicit_size = run.font.size.pt if run.font.size is not None else None
+            size_pt = explicit_size if explicit_size is not None else inherited.size_pt
             runs.append(
                 Run(
                     text=run.text,
-                    bold=bool(run.font.bold),
-                    italic=bool(run.font.italic),
-                    underline=bool(run.font.underline),
-                    size_pt=run.font.size.pt if run.font.size is not None else None,
-                    color=self.theme.resolve(run.font.color),
-                    font=run.font.name,
+                    bold=_first_set(run.font.bold, inherited.bold, False),
+                    italic=_first_set(run.font.italic, inherited.italic, False),
+                    underline=_first_set(run.font.underline, inherited.underline, False),
+                    size_pt=size_pt * scale if size_pt is not None else None,
+                    color=self.theme.resolve(run.font.color) or inherited.color,
+                    font=run.font.name or inherited.font,
                 )
             )
-        bullet = _bullet_of(paragraph, inherits_bullets=inherits_bullets)
+        bullet = _bullet_of(paragraph, inherited=inherited)
         if bullet and runs:
             # Some decks type the bullet into the text as well; rendering both
             # would double it.
             runs[0].text = _strip_leading_bullet(runs[0].text)
 
+        explicit_align = ALIGN_MAP.get(paragraph.alignment) if paragraph.alignment else None
         return Paragraph(
             runs=runs,
-            align=ALIGN_MAP.get(paragraph.alignment, Align.LEFT),
-            level=int(paragraph.level or 0),
+            align=explicit_align or Align(inherited.align or "left"),
+            level=level,
             bullet=bullet,
             line_spacing=_line_spacing(paragraph),
             space_before_pt=_length_to_pt(paragraph.space_before),
@@ -356,19 +387,22 @@ class _Context:
         total_w = sum(int(c.width or 0) for c in table.columns) or 1
         total_h = sum(int(r.height or 0) for r in table.rows) or 1
 
-        # PowerPoint always applies a table style — the out-of-the-box default is
-        # an accent-coloured header over banded rows. Rendering bare gridlines
-        # instead is further from the original than approximating that default,
-        # so derive it from the deck's own accent colour.
+        # PowerPoint always applies a table style. Read the real definition when
+        # the deck ships one; otherwise approximate its out-of-the-box default
+        # (accent header over banded rows), which is still far closer than
+        # bare gridlines.
+        style = self.table_styles.get(_table_style_id(table)) if self.table_styles else None
         accent = self.theme.slot("accent1")
+        banded = _has_header(table)
+
         return TableData(
             rows=rows,
             col_widths=[int(c.width or 0) / total_w * box.w for c in table.columns],
             row_heights=[int(r.height or 0) / total_h * box.h for r in table.rows],
-            header_fill=accent if _has_header(table) else None,
-            band_fill=self.theme.slot("accent1", 0.8),
-            border_color="#FFFFFF",
-            header_text="#FFFFFF",
+            header_fill=_style_value(style, "header_fill", accent) if banded else None,
+            band_fill=_style_value(style, "band_fill", self.theme.slot("accent1", 0.8)),
+            border_color=_style_value(style, "border_color", "#FFFFFF"),
+            header_text=_style_value(style, "header_text", "#FFFFFF"),
         )
 
     def _chart(self, shape) -> ChartData | None:
@@ -558,14 +592,12 @@ def _default_size(shape) -> float:
     return DEFAULT_SIZE
 
 
-def _bullet_of(paragraph, *, inherits_bullets: bool) -> str:
-    """Read the bullet from the paragraph's XML properties.
+def _bullet_of(paragraph, *, inherited: LevelDefaults) -> str:
+    """Bullet for a paragraph: explicit first, then whatever it inherits.
 
-    Only *explicit* bullets are trusted. When a paragraph defines nothing, the
-    real bullet comes from the layout's list style, which we do not resolve —
-    guessing "indented means bulleted" invents bullets PowerPoint would not
-    draw (plain text boxes have none). So inference is limited to body
-    placeholders, where a layout-supplied bullet is the norm.
+    Guessing from indent level used to invent bullets on plain text boxes.
+    Now the layout/master answers the question, and "no bullet" is a real
+    answer rather than the absence of one.
     """
     p_pr = paragraph._p.find(qn("a:pPr"))
     if p_pr is not None:
@@ -576,19 +608,7 @@ def _bullet_of(paragraph, *, inherits_bullets: bool) -> str:
             return bu_char.get("char") or "•"
         if p_pr.find(qn("a:buAutoNum")) is not None:
             return "1."
-    return "•" if inherits_bullets else ""
-
-
-BULLET_PLACEHOLDERS = {PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.SUBTITLE}
-
-
-def _inherits_bullets(shape) -> bool:
-    if not getattr(shape, "is_placeholder", False):
-        return False
-    try:
-        return shape.placeholder_format.type in BULLET_PLACEHOLDERS
-    except (AttributeError, ValueError):
-        return False
+    return inherited.bullet or ""
 
 
 # OOXML's default rounded-rectangle adjustment: radius = 1/6 of the short side.
@@ -697,6 +717,20 @@ def _axis_scale(chart, attribute: str) -> float | None:
     return None if value is None else float(value)
 
 
+def _style_value(style: TableStyle | None, field: str, fallback: str) -> str:
+    """The deck's own value when it defines one, else the approximation."""
+    value = getattr(style, field, None) if style is not None else None
+    return value or fallback
+
+
+def _table_style_id(table) -> str | None:
+    tbl_pr = table._tbl.find(qn("a:tblPr"))
+    if tbl_pr is None:
+        return None
+    node = tbl_pr.find(qn("a:tableStyleId"))
+    return node.text if node is not None and node.text else None
+
+
 def _has_header(table) -> bool:
     """Whether the deck asked for a banded header row (``firstRow`` in tblPr)."""
     try:
@@ -706,6 +740,14 @@ def _has_header(table) -> bool:
     if tbl_pr is None:
         return True
     return tbl_pr.get("firstRow", "1") in ("1", "true")
+
+
+def _first_set(*values):
+    """First value that was actually specified; the last one is the fallback."""
+    for value in values:
+        if value is not None:
+            return value
+    return None
 
 
 LEADING_BULLETS = "•·‣▪◦-*–—"

@@ -53,14 +53,70 @@ DEFAULT_SCHEME = {
 }
 
 
-class Theme:
-    """A deck's colour scheme, with tint/shade applied on lookup."""
+# `<a:schemeClr val="...">` uses its own names for four of the slots.
+SCHEME_CLR_ALIASES = {
+    "tx1": "dk1",
+    "bg1": "lt1",
+    "tx2": "dk2",
+    "bg2": "lt2",
+}
 
-    def __init__(self, scheme: dict[str, str] | None = None) -> None:
+DEFAULT_FONTS = {
+    "major_latin": "Calibri Light",
+    "major_ea": "",
+    "minor_latin": "Calibri",
+    "minor_ea": "",
+}
+
+
+class Theme:
+    """A deck's colour scheme and font scheme, with tint/shade applied on lookup."""
+
+    def __init__(
+        self, scheme: dict[str, str] | None = None, fonts: dict[str, str] | None = None
+    ) -> None:
         self.scheme = {**DEFAULT_SCHEME, **(scheme or {})}
+        self.fonts = {**DEFAULT_FONTS, **(fonts or {})}
 
     def slot(self, name: str, brightness: float = 0.0) -> str:
         return apply_brightness(self.scheme.get(name, "#000000"), brightness)
+
+    def font_ref(self, typeface: str | None) -> str | None:
+        """Resolve a theme font reference such as ``+mn-ea`` to a real family."""
+        if not typeface:
+            return None
+        mapping = {
+            "+mj-lt": "major_latin",
+            "+mj-ea": "major_ea",
+            "+mn-lt": "minor_latin",
+            "+mn-ea": "minor_ea",
+        }
+        key = mapping.get(typeface)
+        if key is None:
+            return typeface
+        return self.fonts.get(key) or None
+
+    def color_element(self, node) -> str | None:
+        """Resolve a raw ``<a:srgbClr>`` / ``<a:schemeClr>`` element to ``#RRGGBB``.
+
+        python-pptx only exposes colours through its own wrappers; the
+        layout/master style chains are read as raw XML, so they need this.
+        """
+        if node is None:
+            return None
+        srgb = node.find(f"{A_NS}srgbClr")
+        if srgb is not None and srgb.get("val"):
+            return apply_brightness(f"#{srgb.get('val').upper()}", _brightness_of(srgb))
+        scheme = node.find(f"{A_NS}schemeClr")
+        if scheme is not None and scheme.get("val"):
+            name = scheme.get("val")
+            # phClr only has meaning inside a style definition being applied to
+            # a shape; there is no concrete colour to resolve it to here.
+            if name == "phClr":
+                return None
+            slot = SCHEME_CLR_ALIASES.get(name, name)
+            return self.slot(slot, _brightness_of(scheme))
+        return None
 
     def resolve(self, color) -> str | None:
         """Turn a python-pptx ColorFormat into ``#RRGGBB``, or None if unset."""
@@ -116,19 +172,35 @@ def load_theme(pptx_path) -> Theme:
         log.debug("解析主题 XML 失败，使用默认配色：%s", exc)
         return Theme()
 
-    scheme_el = root.find(f".//{A_NS}clrScheme")
-    if scheme_el is None:
-        return Theme()
-
     scheme: dict[str, str] = {}
-    for slot in SCHEME_SLOTS:
-        node = scheme_el.find(f"{A_NS}{slot}")
-        if node is None:
+    scheme_el = root.find(f".//{A_NS}clrScheme")
+    if scheme_el is not None:
+        for slot in SCHEME_SLOTS:
+            node = scheme_el.find(f"{A_NS}{slot}")
+            if node is None:
+                continue
+            value = _colour_of(node)
+            if value:
+                scheme[slot] = value
+
+    return Theme(scheme, _font_scheme(root))
+
+
+def _font_scheme(root) -> dict[str, str]:
+    """Major (headings) and minor (body) typefaces, latin and East Asian."""
+    fonts: dict[str, str] = {}
+    font_el = root.find(f".//{A_NS}fontScheme")
+    if font_el is None:
+        return fonts
+    for prefix, tag in (("major", "majorFont"), ("minor", "minorFont")):
+        group = font_el.find(f"{A_NS}{tag}")
+        if group is None:
             continue
-        value = _colour_of(node)
-        if value:
-            scheme[slot] = value
-    return Theme(scheme)
+        for kind, child in (("latin", "latin"), ("ea", "ea")):
+            node = group.find(f"{A_NS}{child}")
+            if node is not None and node.get("typeface"):
+                fonts[f"{prefix}_{kind}"] = node.get("typeface")
+    return fonts
 
 
 def _colour_of(node) -> str | None:
@@ -143,6 +215,26 @@ def _colour_of(node) -> str | None:
             return f"#{last.upper()}"
         return "#FFFFFF" if sys_clr.get("val") == "window" else "#000000"
     return None
+
+
+def _brightness_of(node) -> float:
+    """Approximate OOXML tint/shade/lumMod as a single brightness delta."""
+    for tag, sign in (("tint", 1.0), ("lumOff", 1.0), ("shade", -1.0)):
+        child = node.find(f"{A_NS}{tag}")
+        if child is not None and child.get("val"):
+            try:
+                # OOXML stores these as thousandths of a percent.
+                value = int(child.get("val")) / 100000
+            except ValueError:
+                continue
+            return sign * (1 - value) if tag != "lumOff" else value
+    lum_mod = node.find(f"{A_NS}lumMod")
+    if lum_mod is not None and lum_mod.get("val"):
+        try:
+            return int(lum_mod.get("val")) / 100000 - 1
+        except ValueError:
+            return 0.0
+    return 0.0
 
 
 def apply_brightness(hex_color: str, brightness: float) -> str:

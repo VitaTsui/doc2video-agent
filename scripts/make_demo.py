@@ -1,7 +1,9 @@
 """Generate a demo .pptx so the pipeline can be exercised without real assets.
 
-Deliberately uses theme colours, shape fills, a table and rotation — the slide
-renderers are only meaningfully tested by a deck that has styling to lose.
+Deliberately uses theme colours, shape fills, a table, charts and one slide
+built on a *standard layout* — the slide renderers are only meaningfully tested
+by a deck that has styling to lose, and placeholder inheritance is only
+exercised by a slide that formats nothing itself.
 
     uv run python scripts/make_demo.py tmp/demo.pptx
 """
@@ -53,11 +55,22 @@ SLIDES = [
 ]
 
 
+# The deck is the SLIDES list plus one slide built on a standard layout.
+PAGE_COUNT = len(SLIDES) + 1
+
+
 def build(out_path: Path) -> None:
     prs = Presentation()
     blank = prs.slide_layouts[6]
 
-    for slide_index, (title, subtitle, bullets) in enumerate(SLIDES, start=1):
+    slide_index = 0
+    for title, subtitle, bullets in SLIDES:
+        # Keep the summary last: the layout-driven case study goes before it.
+        if title == "总结":
+            slide_index += 1
+            _add_layout_slide(prs, slide_index, PAGE_COUNT)
+
+        slide_index += 1
         slide = prs.slides.add_slide(blank)
 
         # An accent band across the top: gives every slide a fill to render.
@@ -118,7 +131,7 @@ def build(out_path: Path) -> None:
         # Page number, right-aligned — exercises alignment and small text.
         footer = slide.shapes.add_textbox(Inches(8.2), Inches(6.7), Inches(1.2), Inches(0.4))
         footer_frame = footer.text_frame
-        footer_frame.text = f"{slide_index} / {len(SLIDES)}"
+        footer_frame.text = f"{slide_index} / {PAGE_COUNT}"
         footer_para = footer_frame.paragraphs[0]
         footer_para.alignment = PP_ALIGN.RIGHT
         footer_para.runs[0].font.size = Pt(12)
@@ -136,7 +149,7 @@ def build(out_path: Path) -> None:
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(out_path)
-    print(f"已生成 {out_path}（{len(SLIDES)} 页）")
+    print(f"已生成 {out_path}（{PAGE_COUNT} 页）")
 
 
 def _add_table(slide, top_inches: float) -> None:
@@ -158,6 +171,30 @@ def _add_table(slide, top_inches: float) -> None:
             paragraph.runs[0].font.size = Pt(14)
             if r == 0:
                 paragraph.runs[0].font.bold = True
+
+
+def _add_layout_slide(prs, index: int, total: int) -> None:
+    """A slide that formats nothing itself.
+
+    Its title size, body sizes, bullets and alignment all come from the master,
+    so it is the only page in this deck that proves inheritance is resolved.
+    """
+    slide = prs.slides.add_slide(prs.slide_layouts[1])  # Title and Content
+    slide.shapes.title.text = "客户落地案例"
+    body = slide.placeholders[1].text_frame
+    body.text = "某制造企业：季度经营汇报"
+    for text, level in (("原本 3 天的视频制作压缩到 20 分钟", 1), ("讲稿由业务负责人一次确认", 2)):
+        paragraph = body.add_paragraph()
+        paragraph.text = text
+        paragraph.level = level
+    footer = slide.shapes.add_textbox(Inches(8.2), Inches(6.7), Inches(1.2), Inches(0.4))
+    footer.text_frame.text = f"{index} / {total}"
+    footer_para = footer.text_frame.paragraphs[0]
+    footer_para.alignment = PP_ALIGN.RIGHT
+    footer_para.runs[0].font.size = Pt(12)
+    footer_para.runs[0].font.color.rgb = MUTED
+
+    slide.notes_slide.notes_text_frame.text = "讲这一页时强调：这一页的样式完全由母版决定"
 
 
 def _add_column_chart(slide, top_inches: float) -> None:

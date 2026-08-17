@@ -97,6 +97,44 @@ def test_small_target_still_zooms(settings: Settings, store: ProjectStore):
     assert any(a.type is ActionType.ZOOM for a in result.actions if a.target == "e_tiny")
 
 
+def test_brief_mention_of_a_small_target_uses_a_pointer(
+    settings: Settings, store: ProjectStore
+):
+    # 1% of the page, mentioned in passing — a highlight box would be larger
+    # than the thing it is pointing at.
+    page = _page([_element("e_speck", BBox(x=400, y=400, w=100, h=100), ElementKind.BULLET)])
+    scene = _scene(
+        [
+            NarrationSegment(id="s1", text="顺带提一下 e_speck", element_refs=["e_speck"],
+                             start=0.0, end=2.0),
+            NarrationSegment(id="s2", text="继续讲别的", start=2.0, end=12.0),
+        ]
+    )
+    result = _run(page, scene, settings, store)
+
+    targeted = [a for a in result.actions if a.target == "e_speck"]
+    assert targeted
+    assert all(a.type is ActionType.POINTER for a in targeted)
+
+
+def test_a_dwelt_on_target_is_highlighted_not_pointed_at(
+    settings: Settings, store: ProjectStore
+):
+    """The same small element, talked about at length, deserves a lasting mark."""
+    page = _page([_element("e_speck", BBox(x=400, y=400, w=100, h=100), ElementKind.BULLET)])
+    scene = _scene(
+        [
+            NarrationSegment(id="s1", text="展开讲 e_speck", element_refs=["e_speck"],
+                             start=0.0, end=8.0),
+        ]
+    )
+    result = _run(page, scene, settings, store)
+
+    targeted = [a for a in result.actions if a.target == "e_speck"]
+    assert targeted
+    assert all(a.type is not ActionType.POINTER for a in targeted)
+
+
 def test_repeated_reference_produces_one_move(settings: Settings, store: ProjectStore):
     page = _page([_element("e_one", BBox(x=100, y=100, w=200, h=150))])
     segments = [
