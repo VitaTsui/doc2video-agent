@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     tts_provider: str = "auto"
     tts_voice: str = ""
     tts_speech_rate: float = 1.0
+    # Silence around each page's narration, so pages do not cut into one
+    # another and nobody speaks over a slide that is still fading in. Part of
+    # the scene's own clip, so subtitles stay inside the speech.
+    scene_lead_seconds: float = 0.8
+    scene_tail_seconds: float = 0.7
 
     # --- Renderer / encoding ---
     renderer: str = "auto"

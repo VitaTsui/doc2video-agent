@@ -12,6 +12,10 @@ import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ...core.logging import get_logger
+
+log = get_logger(__name__)
+
 # Rough speaking rates used to estimate duration before audio exists.
 CJK_CHARS_PER_SECOND = 4.6
 LATIN_WORDS_PER_SECOND = 2.6
@@ -93,6 +97,44 @@ def allocate_segments(sentences: list[str], total_duration: float) -> list[Segme
 # --------------------------------------------------------------------------
 # duration probing
 # --------------------------------------------------------------------------
+
+
+def pad_silence(path: Path, *, lead: float = 0.0, tail: float = 0.0) -> float | None:
+    """Wrap a clip in silence, returning its new duration.
+
+    Both ends earn their keep. The tail is the beat between pages: without it
+    one scene's last word runs straight into the next slide. The lead is the
+    page arriving before anyone speaks over it — a scene starts on a fade, and
+    a narrator who begins during the transition is talking about something the
+    viewer cannot see yet.
+
+    It happens to the *audio* rather than to the timeline because everything
+    downstream takes its timing from the clip: the scene holds its frames for
+    exactly as long as the audio runs, and the subtitle cues — which come from
+    the speech — sit inside the silence rather than over it.
+
+    WAV only, written with the standard library so a pause costs no external
+    binary. Anything else is left untouched rather than transcoded.
+    """
+    if (lead <= 0 and tail <= 0) or path.suffix.lower() != ".wav":
+        return audio_duration(path)
+
+    try:
+        with wave.open(str(path), "rb") as handle:
+            params = handle.getparams()
+            frames = handle.readframes(handle.getnframes())
+    except (wave.Error, OSError, EOFError) as exc:
+        log.debug("无法为 %s 追加静音：%s", path.name, exc)
+        return audio_duration(path)
+
+    def _silence(seconds: float) -> bytes:
+        samples = max(0, int(seconds * params.framerate))
+        return b"\x00" * (samples * params.sampwidth * params.nchannels)
+
+    with wave.open(str(path), "wb") as handle:
+        handle.setparams(params)
+        handle.writeframes(_silence(lead) + frames + _silence(tail))
+    return audio_duration(path)
 
 
 def audio_duration(path: Path) -> float | None:
