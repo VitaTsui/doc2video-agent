@@ -19,13 +19,16 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from ..core import flags
 from ..core.config import Settings, get_settings
 from ..core.errors import ToolFailed
 from ..core.logging import get_logger
+from ..core.telemetry import LLMUsage, record_llm
 
 log = get_logger(__name__)
 
@@ -172,6 +175,7 @@ class AnthropicLLM(LLMTool):
         if system:
             kwargs["system"] = system
 
+        started = time.monotonic()
         try:
             message = self._stream_with_fallbacks(kwargs)
         except (TypeError, self._anthropic.AuthenticationError) as exc:
@@ -182,6 +186,8 @@ class AnthropicLLM(LLMTool):
                 "Claude 凭据不可用，后续步骤将使用启发式降级",
                 detail={"reason": str(exc)[:200]},
             ) from exc
+
+        self._report_usage(message, time.monotonic() - started)
 
         if message.stop_reason == "refusal":
             details = getattr(message, "stop_details", None)
@@ -212,6 +218,27 @@ class AnthropicLLM(LLMTool):
             log.debug("服务端 fallback 不可用，降级为普通请求：%s", exc)
         with self._client.messages.stream(**kwargs) as stream:
             return stream.get_final_message()
+
+    def _report_usage(self, message, duration_s: float) -> None:
+        """Hand token counts to telemetry. Cost is left to the price table.
+
+        A refused message is reported too — it was billed, and a run that spent
+        money without producing anything is exactly what monitoring should see.
+        """
+        usage = getattr(message, "usage", None)
+        if usage is None:
+            return
+        record_llm(
+            LLMUsage(
+                provider=self.source,
+                model=getattr(message, "model", self.model),
+                input_tokens=getattr(usage, "input_tokens", 0) or 0,
+                output_tokens=getattr(usage, "output_tokens", 0) or 0,
+                cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+                cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                duration_s=duration_s,
+            )
+        )
 
     @staticmethod
     def _first_text(message) -> str:
@@ -317,6 +344,7 @@ class ClaudeCodeLLM(LLMTool):
         return command
 
     def _invoke(self, prompt: str, *, system: str, images: list[Path]) -> str:
+        started = time.monotonic()
         try:
             result = subprocess.run(
                 self._command(system=system, images=images),
@@ -351,6 +379,8 @@ class ClaudeCodeLLM(LLMTool):
                 detail={"returncode": result.returncode, "stderr": result.stderr[-400:]},
             ) from exc
 
+        self._report_usage(payload, time.monotonic() - started)
+
         if payload.get("is_error") or payload.get("subtype") != "success":
             raise ToolFailed(
                 "Claude Code CLI 调用失败",
@@ -364,6 +394,31 @@ class ClaudeCodeLLM(LLMTool):
         if not text.strip():
             raise ToolFailed("Claude Code CLI 返回了空结果")
         return text
+
+
+    def _report_usage(self, payload: dict, duration_s: float) -> None:
+        """Read the CLI's own usage envelope.
+
+        Unlike the API path this reports ``cost_usd`` directly — the CLI already
+        priced the call, including the models it may have swapped in, so its
+        figure beats anything the local price table could reconstruct.
+        """
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return
+        cost = payload.get("total_cost_usd")
+        record_llm(
+            LLMUsage(
+                provider=self.source,
+                model=self.model,
+                input_tokens=int(usage.get("input_tokens") or 0),
+                output_tokens=int(usage.get("output_tokens") or 0),
+                cache_read_tokens=int(usage.get("cache_read_input_tokens") or 0),
+                cache_write_tokens=int(usage.get("cache_creation_input_tokens") or 0),
+                duration_s=duration_s,
+                cost_usd=float(cost) if isinstance(cost, int | float) else None,
+            )
+        )
 
 
 @lru_cache(maxsize=1)
@@ -463,15 +518,24 @@ PROVIDERS: dict[str, type[LLMTool]] = {
 AUTO_ORDER = ("anthropic", "claude_code")
 
 
-def get_llm(settings: Settings | None = None) -> LLMTool:
-    """Build the configured LLM tool, degrading to MockLLM when unusable."""
+def get_llm(settings: Settings | None = None, *, rollout_key: str = "") -> LLMTool:
+    """Build the configured LLM tool, degrading to MockLLM when unusable.
+
+    ``rollout_key`` (a project id) can flip the ``auto`` order so a share of
+    projects prefer the CLI provider — the arm is recorded with the run, which
+    is what makes the two paths' cost and quality comparable afterwards.
+    """
     settings = settings or get_settings()
     provider = settings.llm_provider.strip().lower()
     if provider == "mock":
         return MockLLM()
 
+    order = AUTO_ORDER
+    if rollout_key and flags.enabled("llm_prefer_claude_code", rollout_key, settings):
+        order = tuple(reversed(AUTO_ORDER))
+
     reasons: list[str] = []
-    for name in AUTO_ORDER if provider == "auto" else (provider,):
+    for name in order if provider == "auto" else (provider,):
         factory = PROVIDERS.get(name)
         if factory is None:
             reasons.append(f"{name}：未知的 provider")

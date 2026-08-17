@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..core import flags, telemetry
 from ..core.config import Settings, get_settings
 from ..core.errors import InvalidRequest
 from ..core.ids import new_project_id
@@ -17,6 +18,7 @@ from ..core.logging import get_logger
 from ..schemas import ProjectStatus, Source, VideoProject
 from ..skills.base import SkillContext
 from ..storage import ProjectStore
+from ..storage.run_log import RunLog
 from ..tools.llm import LLMTool, get_llm
 from ..tools.parsers import detect_source_type
 from .executor import Executor, ProgressFn
@@ -35,6 +37,8 @@ class AgentRunResult:
     duration: float = 0.0
     output_path: str | None = None
     review: list[dict] = field(default_factory=list)
+    quality: float | None = None
+    cost_usd: float | None = None
 
     @classmethod
     def from_project(cls, project: VideoProject, plan: ExecutionPlan) -> AgentRunResult:
@@ -47,6 +51,8 @@ class AgentRunResult:
             duration=round(project.total_duration(), 1),
             output_path=project.render.output_path,
             review=[f.model_dump() for f in project.review],
+            quality=project.quality.score if project.quality else None,
+            cost_usd=project.telemetry.cost_usd() if project.telemetry else None,
         )
 
 
@@ -59,8 +65,13 @@ class Doc2VideoAgent:
     ) -> None:
         self.settings = settings or get_settings()
         self.store = store or ProjectStore(self.settings)
+        # An injected tool wins everywhere (tests, embedding callers). Otherwise
+        # the tool is resolved *per project*, because the provider rollout is
+        # keyed by project id and the agent outlives any one project.
+        self._injected_llm = llm
         self.llm = llm or get_llm(self.settings)
         self.planner = Planner(self.llm)
+        self.run_log = RunLog(self.settings)
 
     # -- project creation ---------------------------------------------------
     def create_project(self, source_file: Path) -> VideoProject:
@@ -89,19 +100,57 @@ class Doc2VideoAgent:
     ) -> AgentRunResult:
         if project_id:
             project = self.store.load(project_id)
-            plan = self.planner.edit_plan(message, project)
         else:
             if not files:
                 raise InvalidRequest("首次生成需要上传 PDF / PPT / PPTX 文件")
             if len(files) > 1:
                 log.warning("当前版本仅处理第一个文件：%s", files[0].name)
             project = self.create_project(files[0])
-            plan = self.planner.initial_plan(message, project)
 
-        ctx = SkillContext.build(project, store=self.store, settings=self.settings, llm=self.llm)
-        executor = Executor(ctx, progress=progress)
-        project = executor.run(plan, message=message)
+        llm = self._project_llm(project)
+        active = flags.active_flags(project.project_id, self.settings)
+
+        # Telemetry opens before planning, not before execution: intent parsing
+        # is a model call like any other and its cost belongs to the run.
+        with telemetry.run(project.project_id, flags=active) as recorder:
+            try:
+                with recorder.stage_scope("plan"):
+                    planner = Planner(llm)
+                    plan = (
+                        planner.edit_plan(message, project)
+                        if project_id
+                        else planner.initial_plan(message, project)
+                    )
+                ctx = SkillContext.build(
+                    project, store=self.store, settings=self.settings, llm=llm
+                )
+                project = Executor(ctx, progress=progress).run(plan, message=message)
+            except Exception as exc:
+                self._persist_run(project, recorder.finish(status="failed", error=str(exc)))
+                raise
+            record = recorder.finish(status="succeeded", message=plan.summary)
+            record.quality = project.quality
+            self._persist_run(project, record)
+
         return AgentRunResult.from_project(project, plan)
+
+    def _project_llm(self, project: VideoProject) -> LLMTool:
+        if self._injected_llm is not None:
+            return self._injected_llm
+        return get_llm(self.settings, rollout_key=project.project_id)
+
+    def _persist_run(self, project: VideoProject, record) -> None:
+        """Keep the latest run on the project, every run in the ledger.
+
+        Best-effort on purpose: a video that rendered must not be reported as
+        failed because its telemetry could not be written.
+        """
+        try:
+            project.telemetry = record
+            self.store.save(project)
+        except Exception as exc:  # noqa: BLE001 - telemetry must never fail a run
+            log.warning("保存运行遥测失败：%s", exc)
+        self.run_log.append(record)
 
     # -- read paths ----------------------------------------------------------
     def get_project(self, project_id: str) -> VideoProject:

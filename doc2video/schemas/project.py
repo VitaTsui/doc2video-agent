@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .document import DocumentModel
 from .scene import Scene
+from .telemetry import QualityReport, RunRecord
 from .timeline import Timeline
 
 
@@ -98,6 +99,9 @@ class VideoProject(BaseModel):
     assets: dict[str, str] = Field(default_factory=dict)
     render: RenderState = Field(default_factory=RenderState)
     review: list[ReviewFinding] = Field(default_factory=list)
+    # Set by the review skill; the run that produced them is in `telemetry`.
+    quality: QualityReport | None = None
+    telemetry: RunRecord | None = None
     history: list[HistoryEntry] = Field(default_factory=list)
 
     # --- scene access -------------------------------------------------

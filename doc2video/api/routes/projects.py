@@ -51,6 +51,35 @@ def get_review(project_id: str) -> dict:
     return {"items": [f.model_dump(mode="json") for f in _load(project_id).review]}
 
 
+@router.get("/{project_id}/quality")
+def get_quality(project_id: str) -> dict:
+    """The scored quality report, or 404 before the project has been reviewed."""
+    quality = _load(project_id).quality
+    if quality is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "quality_not_ready", "message": "工程尚未质检"},
+        )
+    return quality.model_dump(mode="json")
+
+
+@router.get("/{project_id}/telemetry")
+def get_telemetry(project_id: str) -> dict:
+    """The last run's timings, model calls and cost."""
+    record = _load(project_id).telemetry
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "telemetry_not_ready", "message": "工程尚未产生运行记录"},
+        )
+    return {
+        **record.model_dump(mode="json"),
+        "cost_usd_total": record.cost_usd(),
+        "cost_by_stage": record.cost_by_stage(),
+        "total_tokens": record.total_tokens(),
+    }
+
+
 @router.get("/{project_id}/video")
 def get_video(project_id: str) -> FileResponse:
     agent = get_agent()

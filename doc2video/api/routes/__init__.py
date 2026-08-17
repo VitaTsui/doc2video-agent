@@ -1,5 +1,5 @@
 """HTTP routes."""
 
-from . import agent, health, jobs, projects
+from . import agent, health, jobs, metrics, projects
 
-__all__ = ["agent", "health", "jobs", "projects"]
+__all__ = ["agent", "health", "jobs", "metrics", "projects"]

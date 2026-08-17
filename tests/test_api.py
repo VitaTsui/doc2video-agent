@@ -47,3 +47,20 @@ def test_unknown_job_returns_404(client: TestClient):
 
 def test_project_list_is_available(client: TestClient):
     assert "items" in client.get("/projects").json()
+
+
+def test_metrics_is_readable_before_any_run(client: TestClient):
+    """A brand-new deployment must not 500 on its own dashboard."""
+    body = client.get("/metrics").json()
+
+    assert "summary" in body
+    assert set(body["rollout"]) == {"llm_prefer_claude_code", "renderer_remotion"}
+
+
+def test_metrics_runs_lists_nothing_rather_than_failing(client: TestClient):
+    assert client.get("/metrics/runs").json() == {"items": []}
+
+
+def test_quality_is_404_before_the_project_is_reviewed(client: TestClient):
+    response = client.get("/projects/proj_does_not_exist/quality")
+    assert response.status_code == 404

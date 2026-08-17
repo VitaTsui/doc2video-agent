@@ -219,6 +219,9 @@ curl -X POST http://127.0.0.1:8400/agent/run \
 | GET | `/projects/{id}/scenes` | 场景列表（讲稿、时长、镜头动作） |
 | GET | `/projects/{id}/timeline` | 绝对时间轴 |
 | GET | `/projects/{id}/review` | 质检结果 |
+| GET | `/projects/{id}/quality` | 质量分与各维度得分 |
+| GET | `/projects/{id}/telemetry` | 上次运行的分阶段耗时、模型调用与成本 |
+| GET | `/metrics`、`/metrics/runs` | 跨运行统计与灰度分支对照 |
 | GET | `/projects/{id}/video` | 下载成片 |
 | GET | `/projects/{id}/assets/{path}` | 预览页面渲染图、配音等资源 |
 
@@ -300,6 +303,36 @@ doc2video-agent/
 
 用 `doc2video doctor` 可以一次看清当前机器处在哪一档。
 
+## 运行可观测性
+
+每次 `agent.run` 都会留下一条**运行记录**：分阶段耗时、每次模型调用的 token 与花费、
+哪些步骤降级了、这次走的是哪条灰度分支，以及最终的质量分。记录同时落在**工程里**
+（`project.telemetry`，回答「这支视频怎么样」）和 `storage/runs.jsonl` **总账**里
+（回答「最近是不是变慢了、一支视频要花多少钱」）。
+
+```bash
+uv run doc2video metrics     # 跨运行的耗时 / 成本 / 质量 / 灰度对照
+uv run doc2video show <id>   # 单个工程的质量分与上次运行开销
+```
+
+| 关注点 | 落地方式 |
+| --- | --- |
+| **监控** | 每个阶段计时并记录成败；**降级也计数**——链路降级后仍然「成功」，不数就跟正常跑完毫无区别 |
+| **成本统计** | 归因到发起调用的 stage 与 skill。API 路径按价目表折算，CLI 路径直接用它自己报的 `total_cost_usd`；模型没有公开价就报「未知」，不报 0 |
+| **质量评估** | 从 review 已有的检查里折算出 0–100 分，分完整度/节奏/原创度/镜头/字幕五个维度。**按比例算而不是数条数**，所以分数不随页数漂移 |
+| **灰度** | 特性开关带放量比例，按 `flag:project_id` 哈希决定分支 |
+
+灰度的哈希**必须**按工程稳定：同一个工程下周再编辑时若换了渲染器，新旧片段编码不同、
+根本拼不起来。放量比例调大只会新增工程，不会把已在新路径上的工程弹出去。
+
+```bash
+D2V_FLAGS='{"llm_prefer_claude_code": 25}'   # 25% 的工程优先用本机 Claude Code CLI
+```
+
+两条开关都接在真实分叉上（LLM provider、渲染器），每次运行记下自己走的分支，
+`doc2video metrics` 于是能给出**两条分支的成本与质量对照**——这才让「要不要扩量」
+变成一个看数据的决定，而不是拍脑袋。
+
 ## 研发里程碑
 
 | 阶段 | 内容 | 状态 |
@@ -308,7 +341,7 @@ doc2video-agent/
 | M1 | Document Model、元素绑定、时长控制 | ✅ 本仓库 |
 | M2 | Director + Timeline、Zoom/Highlight/Pointer | ✅ 本仓库 |
 | M3 | 统一 `/agent/run`、对话修改、场景级增量渲染 | ✅ 本仓库 |
-| M4 | Beta：监控、成本统计、质量评估、灰度 | ⏳ 规划中 |
+| M4 | Beta：监控、成本统计、质量评估、灰度 | ✅ 本仓库 |
 
 MVP 暂不包含：数字人、声音克隆、复杂 PPT 原生动画恢复、重型在线剪辑器、生成式视频大规模使用。
 
