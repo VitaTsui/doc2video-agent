@@ -27,7 +27,7 @@ def capabilities() -> dict:
     settings = get_settings()
     llm = get_llm(settings)
     return {
-        "llm": {"available": llm.available, "model": llm.model},
+        "llm": {"available": llm.available, "model": llm.model, "source": llm.source},
         "tts": {"provider": TTSTool(settings).provider_name},
         "renderers": renderer_status(),
         "binaries": dependency_report(),

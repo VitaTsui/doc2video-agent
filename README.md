@@ -34,7 +34,7 @@ Agent：理解需求 → 分析文档 → 生成讲稿 → 配音 → 导演 →
 | 分类 | 选型 |
 | --- | --- |
 | Agent 后端 | Python 3.11+、FastAPI、Pydantic v2 |
-| LLM / VLM | Anthropic Claude（结构化 JSON 输出、自适应思考） |
+| LLM / VLM | Anthropic Claude：API Key（结构化 JSON 输出、自适应思考），或本机 Claude Code CLI（免 Key） |
 | PDF 解析 | PyMuPDF（文本块 / 图片 / bbox / 高清页面渲染） |
 | PPT 解析 | python-pptx + OOXML；幻灯片渲染三档：LibreOffice / Chromium / 内置栅格化器 |
 | TTS | 可插拔 provider（内置 macOS `say`、静音兜底） |
@@ -49,7 +49,7 @@ Agent：理解需求 → 分析文档 → 生成讲稿 → 配音 → 导演 →
 uv venv --python 3.12
 uv pip install -e ".[bundled,dev]"
 
-# 2. 配置（可选：不配 Key 也能跑，讲稿会退化为启发式规则）
+# 2. 配置（可选：本机装了 Claude Code 就不必配 Key，见「不配 API Key 也能用真模型」）
 cp .env.example .env
 
 # 3. 体检：看看当前机器有哪些能力
@@ -70,6 +70,32 @@ uv run doc2video serve       # http://127.0.0.1:8400/docs
 ```bash
 cd renderer && pnpm install
 ```
+
+## 不配 API Key 也能用真模型
+
+装了 [Claude Code](https://claude.com/claude-code) 并已登录的机器，可以直接把本机的
+`claude` 当成模型后端，不需要 `ANTHROPIC_API_KEY`：
+
+```bash
+D2V_LLM_PROVIDER=auto   # 默认值：先 API Key，没有就用 Claude Code CLI，都没有才走启发式
+uv run doc2video doctor
+# LLM        : 可用｜模型 claude-opus-5｜来源 Claude Code CLI
+```
+
+实现上是 headless 调用（`claude -p --output-format json`），Skill 层完全无感。
+三处与 API 路径的差别，都在 provider 内部消化掉了：
+
+| 差别 | 处理方式 |
+| --- | --- |
+| 没有 structured outputs | JSON Schema 写进提示词，回复按「去围栏 → 取最外层 `{}`」解析，失败纠正重试一次 |
+| 不能直接传图片 | 页面渲染图交给 CLI 自带的 `Read` 工具读盘，并用 `--add-dir` 授权该目录；`Read` 是唯一放行的工具 |
+| 每次调用有固定开销 | 约 20k input tokens 的 CLI 系统提示与工具定义，连续调用大部分走缓存命中 |
+
+同时会用 `--strict-mcp-config` 屏蔽本机 MCP 服务、`--exclude-dynamic-system-prompt-sections`
+去掉工作目录/git 前言，并在一个空临时目录里运行——否则你仓库里的 CLAUDE.md
+会跟着进每一次讲稿生成。
+
+> 适合本机试跑和没有 Key 的环境。批量出片仍建议用 API Key：更便宜，且 JSON 输出有 schema 保证。
 
 ## 依赖内置
 
@@ -251,7 +277,8 @@ doc2video-agent/
 
 | 缺失 | 影响 | 降级行为 |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | 讲稿质量 | 全部 Skill 走启发式规则，工程结构完整 |
+| `ANTHROPIC_API_KEY` | 无（装了 Claude Code 时） | 自动改用本机 `claude` CLI，模型能力不变 |
+| API Key **和** Claude Code 都没有 | 讲稿质量 | 全部 Skill 走启发式规则，工程结构完整 |
 | LibreOffice (`soffice`) | PPT 幻灯片保真度 | 降级到 Chromium 渲染（保留主题色/字体/填充）；两者都缺才用内置栅格化器 |
 | Node / Remotion | 镜头表现力 | 自动回退到 FFmpeg 渲染器 |
 | `say`（非 macOS） | 真实语音 | 生成等时长静音轨，时间轴与字幕仍然正确 |

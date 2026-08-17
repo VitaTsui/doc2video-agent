@@ -19,6 +19,12 @@ from .tools.llm import get_llm
 from .tools.renderer import renderer_status
 from .tools.tts import TTSTool
 
+LLM_SOURCE_LABEL = {
+    "anthropic_api": "API Key",
+    "claude_code": "Claude Code CLI",
+    "mock": "—",
+}
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="doc2video", description="PDF / PPT 智能讲解视频 Agent")
@@ -78,7 +84,8 @@ def cmd_doctor(_args) -> int:
 
     print("== 能力体检 ==")
     availability = "可用" if llm.available else "不可用（将使用启发式降级）"
-    print(f"LLM        : {availability}｜模型 {llm.model}")
+    source = LLM_SOURCE_LABEL.get(llm.source, llm.source)
+    print(f"LLM        : {availability}｜模型 {llm.model}｜来源 {source}")
     print(f"TTS        : {TTSTool(settings).provider_name}")
 
     print("\n渲染器：")

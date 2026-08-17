@@ -17,10 +17,16 @@ class Settings(BaseSettings):
     )
 
     # --- LLM / VLM ---
-    llm_provider: str = "anthropic"
+    # auto: API key first, then the local Claude Code CLI, then heuristics.
+    # Also accepts "anthropic" | "claude_code" | "mock" to pin one path.
+    llm_provider: str = "auto"
     llm_model: str = "claude-opus-5"
     llm_effort: str = "high"
     llm_max_tokens: int = 16000
+    # claude_code provider only: an explicit binary wins over PATH, and a whole
+    # deck's narration in one call can legitimately take minutes.
+    claude_cli_path: str = ""
+    claude_cli_timeout: int = 600
 
     # --- TTS ---
     tts_provider: str = "auto"
@@ -94,8 +100,7 @@ def dependency_report() -> dict[str, dict[str, object]]:
         }
 
     for name, purpose in {
-        "node": "Remotion 渲染器所需",
-        "npx": "Remotion 渲染器所需",
+        "node": "Remotion 渲染器所需",        "npx": "Remotion 渲染器所需",
         "soffice": "以原始样式渲染 PPT/PPTX 幻灯片（LibreOffice）",
         "say": "macOS 内置 TTS",
     }.items():
