@@ -112,3 +112,21 @@ def dependency_report() -> dict[str, dict[str, object]]:
             "purpose": purpose,
         }
     return report
+
+
+def filter_report() -> dict[str, dict[str, object]]:
+    """Report optional ffmpeg filters the pipeline degrades without.
+
+    Having ffmpeg is not the same as having every filter: builds differ in what
+    they compile in, and a missing one costs a feature rather than the render.
+    Which build is in use decides this, so it belongs next to the binary report
+    an operator already reads.
+    """
+    from ..tools import media_binaries
+
+    return {
+        "drawtext": {
+            "available": media_binaries.has_filter("drawtext"),
+            "purpose": "烧录字幕（缺失时只跳过字幕，渲染照常完成）",
+        }
+    }

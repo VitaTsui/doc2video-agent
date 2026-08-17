@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from .agent import Doc2VideoAgent
-from .core.config import dependency_report, get_settings
+from .core.config import dependency_report, filter_report, get_settings
 from .core.errors import Doc2VideoError
 from .core.logging import setup_logging
 from .tools.llm import get_llm
@@ -102,6 +102,11 @@ def cmd_doctor(_args) -> int:
         mark = "✓" if info["available"] else "✗"
         source = source_label.get(str(info.get("source")), "")
         print(f"  {mark} {name:8s} [{source}] {info['purpose']}")
+
+    print("\n滤镜：")
+    for name, info in filter_report().items():
+        mark = "✓" if info["available"] else "✗"
+        print(f"  {mark} {name:8s} {info['purpose']}")
 
     print(f"\n工程目录：{settings.projects_dir.resolve()}")
     return 0

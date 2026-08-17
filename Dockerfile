@@ -15,8 +15,9 @@ ENV PYTHONUNBUFFERED=1 \
     HOME=/tmp
 
 # libreoffice-impress: PPT/PPTX 按原始样式渲染成图（含旧版 .ppt 解析）
-# ffmpeg:              Debian 版带 drawtext 与 ffprobe；内置 wheel 的 Linux 构建
-#                      没有 drawtext（烧不了字幕），系统版在 PATH 里会优先被选中
+# ffmpeg:              Debian 版带 drawtext 与 ffprobe，在 PATH 里会优先被选中。
+#                      内置 wheel 在 x86_64 上也够用了，但 arm64 那一档只有
+#                      imageio-ffmpeg（无 ffprobe、无 drawtext），系统版兜住两种架构
 # fonts-noto-cjk:      没有中文字体时幻灯片和字幕会变成方块
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libreoffice-impress \

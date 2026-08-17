@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ...core.config import dependency_report, get_settings
+from ...core.config import dependency_report, filter_report, get_settings
 from ...tools.llm import get_llm
 from ...tools.renderer import renderer_status
 from ...tools.tts import TTSTool
@@ -31,6 +31,7 @@ def capabilities() -> dict:
         "tts": {"provider": TTSTool(settings).provider_name},
         "renderers": renderer_status(),
         "binaries": dependency_report(),
+        "filters": filter_report(),
         "video": {
             "width": settings.video_width,
             "height": settings.video_height,
