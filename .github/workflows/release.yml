@@ -17,6 +17,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 不依赖 runner 自带的解释器：读取 pyproject.toml 用的 tomllib 需要 3.11+。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       # 与其他仓库同一套流程，只是版本号来自 pyproject.toml；本项目不是
       # npm 包，所以没有 publish 步骤，合并到 main 即打 tag 并生成 Release。
       - name: 读取版本号并检查 tag

@@ -9,11 +9,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from make_demo import SLIDES as DEMO_SLIDES  # noqa: E402
-from make_demo import build as build_demo  # noqa: E402
-
 from doc2video.core.config import Settings  # noqa: E402
 from doc2video.storage import ProjectStore  # noqa: E402
+
+from make_demo import SLIDES as DEMO_SLIDES  # noqa: E402
+from make_demo import build as build_demo  # noqa: E402
 
 
 @pytest.fixture

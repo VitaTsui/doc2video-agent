@@ -51,6 +51,14 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["B008"]
 
+[tool.ruff.lint.isort]
+# Declared explicitly: ruff's automatic first-party detection depends on how the
+# project happens to be installed, so a clean checkout and a working copy can
+# disagree about import order. Naming them keeps lint reproducible.
+known-first-party = ["doc2video"]
+# Reached via a sys.path insert in tests/conftest.py, not installed.
+known-local-folder = ["make_demo"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
