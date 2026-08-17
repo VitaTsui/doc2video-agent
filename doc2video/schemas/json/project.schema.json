@@ -1,0 +1,1038 @@
+{
+  "$defs": {
+    "ActionCue": {
+      "description": "An absolute-timed director action with geometry already resolved.\n\n``area`` is normalized 0..1 against the video frame, so the renderer needs\nno knowledge of the source document's page size.",
+      "properties": {
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "type": {
+          "$ref": "#/$defs/ActionType"
+        },
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "effect": {
+          "default": "",
+          "title": "Effect",
+          "type": "string"
+        },
+        "area": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "type",
+        "scene_id"
+      ],
+      "title": "ActionCue",
+      "type": "object"
+    },
+    "ActionType": {
+      "enum": [
+        "zoom",
+        "highlight",
+        "pointer",
+        "pan",
+        "reset",
+        "transition",
+        "broll"
+      ],
+      "title": "ActionType",
+      "type": "string"
+    },
+    "AudioClip": {
+      "properties": {
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "asset": {
+          "title": "Asset",
+          "type": "string"
+        },
+        "gain_db": {
+          "default": 0.0,
+          "title": "Gain Db",
+          "type": "number"
+        }
+      },
+      "required": [
+        "scene_id",
+        "start",
+        "end",
+        "asset"
+      ],
+      "title": "AudioClip",
+      "type": "object"
+    },
+    "BBox": {
+      "description": "Axis-aligned box in *rendered page pixel* coordinates (origin top-left).",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        },
+        "w": {
+          "title": "W",
+          "type": "number"
+        },
+        "h": {
+          "title": "H",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "title": "BBox",
+      "type": "object"
+    },
+    "DirectorAction": {
+      "description": "A camera / attention instruction at a precise time within the scene.",
+      "properties": {
+        "at": {
+          "description": "Seconds from scene start",
+          "title": "At",
+          "type": "number"
+        },
+        "type": {
+          "$ref": "#/$defs/ActionType"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Element id, when applicable",
+          "title": "Target"
+        },
+        "effect": {
+          "default": "",
+          "title": "Effect",
+          "type": "string"
+        },
+        "duration": {
+          "default": 2.0,
+          "title": "Duration",
+          "type": "number"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        }
+      },
+      "required": [
+        "at",
+        "type"
+      ],
+      "title": "DirectorAction",
+      "type": "object"
+    },
+    "DocumentModel": {
+      "properties": {
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "language": {
+          "default": "zh",
+          "title": "Language",
+          "type": "string"
+        },
+        "topic": {
+          "default": "",
+          "title": "Topic",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "key_concepts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Key Concepts",
+          "type": "array"
+        },
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/Section"
+          },
+          "title": "Sections",
+          "type": "array"
+        },
+        "pages": {
+          "items": {
+            "$ref": "#/$defs/DocumentPage"
+          },
+          "title": "Pages",
+          "type": "array"
+        },
+        "presentation_order": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Presentation Order",
+          "type": "array"
+        }
+      },
+      "title": "DocumentModel",
+      "type": "object"
+    },
+    "DocumentPage": {
+      "properties": {
+        "index": {
+          "description": "1-based page / slide number",
+          "title": "Index",
+          "type": "integer"
+        },
+        "page_type": {
+          "$ref": "#/$defs/PageType",
+          "default": "content"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "elements": {
+          "items": {
+            "$ref": "#/$defs/SlideElement"
+          },
+          "title": "Elements",
+          "type": "array"
+        },
+        "speaker_notes": {
+          "default": "",
+          "title": "Speaker Notes",
+          "type": "string"
+        },
+        "image_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Path"
+        },
+        "width": {
+          "default": 0,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "default": 0,
+          "title": "Height",
+          "type": "number"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "key_points": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Key Points",
+          "type": "array"
+        }
+      },
+      "required": [
+        "index"
+      ],
+      "title": "DocumentPage",
+      "type": "object"
+    },
+    "ElementKind": {
+      "enum": [
+        "title",
+        "subtitle",
+        "bullet",
+        "paragraph",
+        "image",
+        "chart",
+        "table",
+        "number",
+        "shape",
+        "other"
+      ],
+      "title": "ElementKind",
+      "type": "string"
+    },
+    "HistoryEntry": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        },
+        "actions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "changed_scenes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Changed Scenes",
+          "type": "array"
+        }
+      },
+      "title": "HistoryEntry",
+      "type": "object"
+    },
+    "NarrationSegment": {
+      "description": "A sentence-sized chunk of narration, bound to the elements it talks about.\n\nThe binding is what makes the director deterministic: the model decides\n*what* is being talked about, the timing comes from TTS timestamps.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "element_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Element Refs",
+          "type": "array"
+        },
+        "emphasis": {
+          "default": false,
+          "title": "Emphasis",
+          "type": "boolean"
+        },
+        "start": {
+          "default": 0.0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "default": 0.0,
+          "title": "End",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "title": "NarrationSegment",
+      "type": "object"
+    },
+    "PageType": {
+      "enum": [
+        "cover",
+        "agenda",
+        "section",
+        "content",
+        "chart",
+        "architecture",
+        "comparison",
+        "case",
+        "summary",
+        "contact",
+        "other"
+      ],
+      "title": "PageType",
+      "type": "string"
+    },
+    "ProjectStatus": {
+      "enum": [
+        "created",
+        "parsing",
+        "writing",
+        "voicing",
+        "directing",
+        "rendering",
+        "reviewing",
+        "ready",
+        "failed"
+      ],
+      "title": "ProjectStatus",
+      "type": "string"
+    },
+    "RenderState": {
+      "properties": {
+        "renderer": {
+          "default": "",
+          "title": "Renderer",
+          "type": "string"
+        },
+        "status": {
+          "default": "idle",
+          "title": "Status",
+          "type": "string"
+        },
+        "output_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Path"
+        },
+        "rendered_scenes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Rendered Scenes",
+          "type": "object"
+        },
+        "scene_clips": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Scene Clips",
+          "type": "object"
+        },
+        "last_render_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Render At"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "title": "RenderState",
+      "type": "object"
+    },
+    "ReviewFinding": {
+      "properties": {
+        "severity": {
+          "default": "warning",
+          "title": "Severity",
+          "type": "string"
+        },
+        "kind": {
+          "default": "",
+          "title": "Kind",
+          "type": "string"
+        },
+        "scene_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scene Id"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "title": "ReviewFinding",
+      "type": "object"
+    },
+    "Scene": {
+      "properties": {
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "source_page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Page"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "narration": {
+          "default": "",
+          "title": "Narration",
+          "type": "string"
+        },
+        "segments": {
+          "items": {
+            "$ref": "#/$defs/NarrationSegment"
+          },
+          "title": "Segments",
+          "type": "array"
+        },
+        "duration": {
+          "default": 0.0,
+          "title": "Duration",
+          "type": "number"
+        },
+        "visual": {
+          "$ref": "#/$defs/SceneVisual"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/DirectorAction"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "audio": {
+          "$ref": "#/$defs/SceneAudio"
+        },
+        "notes": {
+          "default": "",
+          "title": "Notes",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scene_id"
+      ],
+      "title": "Scene",
+      "type": "object"
+    },
+    "SceneAudio": {
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "duration": {
+          "default": 0.0,
+          "title": "Duration",
+          "type": "number"
+        },
+        "voice": {
+          "default": "",
+          "title": "Voice",
+          "type": "string"
+        },
+        "provider": {
+          "default": "",
+          "title": "Provider",
+          "type": "string"
+        },
+        "text_hash": {
+          "default": "",
+          "title": "Text Hash",
+          "type": "string"
+        }
+      },
+      "title": "SceneAudio",
+      "type": "object"
+    },
+    "SceneVisual": {
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/VisualType",
+          "default": "slide"
+        },
+        "asset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset"
+        },
+        "source_page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Page"
+        }
+      },
+      "title": "SceneVisual",
+      "type": "object"
+    },
+    "Section": {
+      "description": "A narrative chapter spanning one or more pages.",
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "page_indexes": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Page Indexes",
+          "type": "array"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "Section",
+      "type": "object"
+    },
+    "SlideElement": {
+      "description": "One addressable thing on a page — the unit the director points at.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ElementKind",
+          "default": "other"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "bbox": {
+          "$ref": "#/$defs/BBox"
+        },
+        "level": {
+          "default": 0,
+          "title": "Level",
+          "type": "integer"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "importance": {
+          "default": 0.5,
+          "title": "Importance",
+          "type": "number"
+        },
+        "asset_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset Path"
+        }
+      },
+      "required": [
+        "id",
+        "bbox"
+      ],
+      "title": "SlideElement",
+      "type": "object"
+    },
+    "Source": {
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "file": {
+          "description": "Original filename",
+          "title": "File",
+          "type": "string"
+        },
+        "path": {
+          "description": "Stored path relative to the project directory",
+          "title": "Path",
+          "type": "string"
+        },
+        "page_count": {
+          "default": 0,
+          "title": "Page Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "file",
+        "path"
+      ],
+      "title": "Source",
+      "type": "object"
+    },
+    "SourceType": {
+      "enum": [
+        "pdf",
+        "ppt",
+        "pptx"
+      ],
+      "title": "SourceType",
+      "type": "string"
+    },
+    "SubtitleCue": {
+      "properties": {
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "text",
+        "scene_id"
+      ],
+      "title": "SubtitleCue",
+      "type": "object"
+    },
+    "Timeline": {
+      "properties": {
+        "fps": {
+          "default": 30,
+          "title": "Fps",
+          "type": "integer"
+        },
+        "width": {
+          "default": 1920,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "default": 1080,
+          "title": "Height",
+          "type": "integer"
+        },
+        "duration": {
+          "default": 0.0,
+          "title": "Duration",
+          "type": "number"
+        },
+        "video": {
+          "items": {
+            "$ref": "#/$defs/VideoClip"
+          },
+          "title": "Video",
+          "type": "array"
+        },
+        "audio": {
+          "items": {
+            "$ref": "#/$defs/AudioClip"
+          },
+          "title": "Audio",
+          "type": "array"
+        },
+        "subtitles": {
+          "items": {
+            "$ref": "#/$defs/SubtitleCue"
+          },
+          "title": "Subtitles",
+          "type": "array"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/ActionCue"
+          },
+          "title": "Actions",
+          "type": "array"
+        }
+      },
+      "title": "Timeline",
+      "type": "object"
+    },
+    "VideoClip": {
+      "properties": {
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "asset": {
+          "title": "Asset",
+          "type": "string"
+        },
+        "kind": {
+          "default": "slide",
+          "title": "Kind",
+          "type": "string"
+        },
+        "transition_in": {
+          "default": "fade",
+          "title": "Transition In",
+          "type": "string"
+        },
+        "transition_duration": {
+          "default": 0.4,
+          "title": "Transition Duration",
+          "type": "number"
+        }
+      },
+      "required": [
+        "scene_id",
+        "start",
+        "end",
+        "asset"
+      ],
+      "title": "VideoClip",
+      "type": "object"
+    },
+    "VideoIntent": {
+      "description": "Natural language goal, structured. Produced by the agent from one sentence.",
+      "properties": {
+        "audience": {
+          "default": "通用受众",
+          "title": "Audience",
+          "type": "string"
+        },
+        "style": {
+          "default": "professional",
+          "title": "Style",
+          "type": "string"
+        },
+        "tone": {
+          "default": "清晰、稳重",
+          "title": "Tone",
+          "type": "string"
+        },
+        "language": {
+          "default": "zh",
+          "title": "Language",
+          "type": "string"
+        },
+        "duration": {
+          "default": 480,
+          "description": "Target total duration in seconds",
+          "title": "Duration",
+          "type": "integer"
+        },
+        "emphasis_pages": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Emphasis Pages",
+          "type": "array"
+        },
+        "skip_pages": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Skip Pages",
+          "type": "array"
+        },
+        "instructions": {
+          "default": "",
+          "title": "Instructions",
+          "type": "string"
+        },
+        "zoom_on_key_data": {
+          "default": true,
+          "title": "Zoom On Key Data",
+          "type": "boolean"
+        }
+      },
+      "title": "VideoIntent",
+      "type": "object"
+    },
+    "VisualType": {
+      "enum": [
+        "slide",
+        "image",
+        "generated_video",
+        "existing_video"
+      ],
+      "title": "VisualType",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ProjectStatus",
+      "default": "created"
+    },
+    "source": {
+      "$ref": "#/$defs/Source"
+    },
+    "intent": {
+      "$ref": "#/$defs/VideoIntent"
+    },
+    "document": {
+      "$ref": "#/$defs/DocumentModel"
+    },
+    "scenes": {
+      "items": {
+        "$ref": "#/$defs/Scene"
+      },
+      "title": "Scenes",
+      "type": "array"
+    },
+    "timeline": {
+      "$ref": "#/$defs/Timeline"
+    },
+    "assets": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Assets",
+      "type": "object"
+    },
+    "render": {
+      "$ref": "#/$defs/RenderState"
+    },
+    "review": {
+      "items": {
+        "$ref": "#/$defs/ReviewFinding"
+      },
+      "title": "Review",
+      "type": "array"
+    },
+    "history": {
+      "items": {
+        "$ref": "#/$defs/HistoryEntry"
+      },
+      "title": "History",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_id",
+    "source"
+  ],
+  "title": "VideoProject",
+  "type": "object"
+}

@@ -1,0 +1,267 @@
+{
+  "$defs": {
+    "BBox": {
+      "description": "Axis-aligned box in *rendered page pixel* coordinates (origin top-left).",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        },
+        "w": {
+          "title": "W",
+          "type": "number"
+        },
+        "h": {
+          "title": "H",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "title": "BBox",
+      "type": "object"
+    },
+    "DocumentPage": {
+      "properties": {
+        "index": {
+          "description": "1-based page / slide number",
+          "title": "Index",
+          "type": "integer"
+        },
+        "page_type": {
+          "$ref": "#/$defs/PageType",
+          "default": "content"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "elements": {
+          "items": {
+            "$ref": "#/$defs/SlideElement"
+          },
+          "title": "Elements",
+          "type": "array"
+        },
+        "speaker_notes": {
+          "default": "",
+          "title": "Speaker Notes",
+          "type": "string"
+        },
+        "image_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Path"
+        },
+        "width": {
+          "default": 0,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "default": 0,
+          "title": "Height",
+          "type": "number"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "key_points": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Key Points",
+          "type": "array"
+        }
+      },
+      "required": [
+        "index"
+      ],
+      "title": "DocumentPage",
+      "type": "object"
+    },
+    "ElementKind": {
+      "enum": [
+        "title",
+        "subtitle",
+        "bullet",
+        "paragraph",
+        "image",
+        "chart",
+        "table",
+        "number",
+        "shape",
+        "other"
+      ],
+      "title": "ElementKind",
+      "type": "string"
+    },
+    "PageType": {
+      "enum": [
+        "cover",
+        "agenda",
+        "section",
+        "content",
+        "chart",
+        "architecture",
+        "comparison",
+        "case",
+        "summary",
+        "contact",
+        "other"
+      ],
+      "title": "PageType",
+      "type": "string"
+    },
+    "Section": {
+      "description": "A narrative chapter spanning one or more pages.",
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "page_indexes": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Page Indexes",
+          "type": "array"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "Section",
+      "type": "object"
+    },
+    "SlideElement": {
+      "description": "One addressable thing on a page — the unit the director points at.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ElementKind",
+          "default": "other"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "bbox": {
+          "$ref": "#/$defs/BBox"
+        },
+        "level": {
+          "default": 0,
+          "title": "Level",
+          "type": "integer"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "importance": {
+          "default": 0.5,
+          "title": "Importance",
+          "type": "number"
+        },
+        "asset_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset Path"
+        }
+      },
+      "required": [
+        "id",
+        "bbox"
+      ],
+      "title": "SlideElement",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "title": {
+      "default": "",
+      "title": "Title",
+      "type": "string"
+    },
+    "language": {
+      "default": "zh",
+      "title": "Language",
+      "type": "string"
+    },
+    "topic": {
+      "default": "",
+      "title": "Topic",
+      "type": "string"
+    },
+    "summary": {
+      "default": "",
+      "title": "Summary",
+      "type": "string"
+    },
+    "key_concepts": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Key Concepts",
+      "type": "array"
+    },
+    "sections": {
+      "items": {
+        "$ref": "#/$defs/Section"
+      },
+      "title": "Sections",
+      "type": "array"
+    },
+    "pages": {
+      "items": {
+        "$ref": "#/$defs/DocumentPage"
+      },
+      "title": "Pages",
+      "type": "array"
+    },
+    "presentation_order": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Presentation Order",
+      "type": "array"
+    }
+  },
+  "title": "DocumentModel",
+  "type": "object"
+}

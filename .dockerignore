@@ -1,0 +1,14 @@
+.venv/
+storage/
+tmp/
+out/
+node_modules/
+renderer/node_modules/
+renderer/out/
+renderer/public/staged/
+.git/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+docs/*.docx

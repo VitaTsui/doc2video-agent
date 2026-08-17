@@ -1,0 +1,5 @@
+# Remotion bundles with esbuild, whose install step fetches its native binary.
+# pnpm blocks build scripts by default; allow this one so `pnpm install` is
+# non-interactive and reproducible in CI.
+allowBuilds:
+  esbuild: true
