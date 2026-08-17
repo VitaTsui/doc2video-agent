@@ -67,11 +67,14 @@ def test_every_subpackage_is_importable():
 
 def test_runtime_directories_stay_ignored():
     """The fix must not go the other way and start committing project data."""
+    # Trailing slashes matter: without them git treats a not-yet-created path as
+    # a file, and a directory-only pattern such as `/tmp/` never matches — which
+    # made this pass locally and fail on a fresh CI checkout.
+    paths = ["storage/", "tmp/", "renderer/out/"]
     result = subprocess.run(
-        ["git", "check-ignore", "storage", "tmp", "renderer/out"],
+        ["git", "check-ignore", *paths],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
     )
-    ignored = set(result.stdout.split())
-    assert {"storage", "tmp", "renderer/out"} <= ignored
+    assert set(paths) <= set(result.stdout.split())
