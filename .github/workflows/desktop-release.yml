@@ -1,0 +1,110 @@
+# 桌面版发布：三端各自构建运行时与安装包，挂到已有的 Release 上。
+#
+# 由 release.yml 打完 tag 后触发，而不是自己去打 tag——版本号只有一个来源
+# （pyproject.toml），两套流程各自推断会在某次不同步时发出一个装不上运行时
+# 的安装包。
+#
+# 每个平台都必须在自己的 runner 上跑：解释器、ffmpeg 轮子、Remotion 的原生
+# compositor、Node 二进制全是按平台分发的，一个都交叉编不出来。
+name: desktop-release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 要发布的版本号（不带 v）
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      # 一个平台失败不该埋掉另外两个的产物——三个包是分别可用的。
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: macos-arm64
+          - os: macos-13
+            target: macos-x64
+          - os: ubuntu-22.04
+            target: linux-x64
+          - os: windows-latest
+            target: windows-x64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      # Tauri 在 Linux 上要 webkit2gtk 才能编译。
+      - name: Linux 构建依赖
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libssl-dev
+
+      - name: 版本号
+        id: ver
+        shell: bash
+        run: |
+          version="${{ github.event.inputs.version }}"
+          [ -n "$version" ] || version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # 运行时：解释器 + 流水线 + ffmpeg + 语音 + 字体（+ Remotion）。
+      # 这一步产出的 tar.gz 和 sha256 就是应用首次启动时下载的东西。
+      - name: 构建运行时
+        shell: bash
+        run: uv run python scripts/build_runtime.py --out dist/runtime --version "${{ steps.ver.outputs.version }}"
+
+      - name: 运行时自检
+        shell: bash
+        run: |
+          # 必须能在不依赖仓库、不依赖构建机 Python 的情况下跑起来——这正是
+          # 上一版用虚拟环境时会悄悄坏掉的地方。
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ./dist/runtime/python/python.exe -m doc2video.cli doctor
+          else
+            (cd / && env -i "$GITHUB_WORKSPACE/dist/runtime/python/bin/python3" -m doc2video.cli doctor)
+          fi
+
+      - name: 构建安装包
+        working-directory: desktop
+        run: |
+          pnpm install
+          pnpm tauri build
+
+      - name: 收集产物
+        shell: bash
+        run: |
+          mkdir -p out
+          cp dist/*.tar.gz dist/*.sha256 out/ 2>/dev/null || true
+          find desktop/src-tauri/target/release/bundle \
+            -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
+            -o -name '*.AppImage' -o -name '*.deb' \) -exec cp {} out/ \;
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: out/*
+
+      - name: 挂到 Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload "v${{ steps.ver.outputs.version }}" out/* --clobber

@@ -285,6 +285,26 @@ export async function catalogue() {
   )
 }
 
+export interface RuntimeStatus {
+  ready: boolean
+  installed: string | null
+  required: string
+  target: string
+  approx_mb: number
+}
+
+/** Whether the part of the app that does the work is installed yet. */
+export async function runtimeStatus(): Promise<RuntimeStatus> {
+  return invoke<RuntimeStatus>('runtime_status')
+}
+
+/** Download and install it, then connect to the backend it brings. */
+export async function installRuntime(): Promise<Connection> {
+  const next = await invoke<Connection>('install_runtime')
+  reconnect(next)
+  return next
+}
+
 export interface ModelPrefs {
   provider: string
   model: string

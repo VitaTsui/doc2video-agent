@@ -9,13 +9,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod prefs;
+mod runtime;
 mod secrets;
 mod sidecar;
 
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 use prefs::Prefs;
 use sidecar::{Backend, Paths};
@@ -69,6 +70,38 @@ fn save_key(
 
 #[tauri::command]
 fn restart_backend(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Connection, String> {
+    restart(&app, &state)
+}
+
+/// Whether the runtime this build needs is installed.
+#[tauri::command]
+fn runtime_status(app: tauri::AppHandle) -> Result<runtime::Status, String> {
+    Ok(runtime::status(&app_data(&app)?, app.package_info().version.to_string().as_str()))
+}
+
+/// Download and install the runtime, then start the backend.
+///
+/// Runs on a blocking thread and reports progress as events: four hundred
+/// megabytes with no sign of movement is indistinguishable from a hang, and
+/// this is the first thing a new user sees.
+#[tauri::command]
+async fn install_runtime(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Connection, String> {
+    let dir = app_data(&app)?;
+    let version = app.package_info().version.to_string();
+    let emitter = app.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime::install(&dir, &version, |done, total| {
+            let _ = emitter.emit("runtime://progress", (done, total));
+        })
+    })
+    .await
+    .map_err(|e| format!("安装被打断：{e}"))?
+    .map_err(|e| e.to_string())?;
+
     restart(&app, &state)
 }
 
@@ -162,23 +195,31 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             connection,
             configured_keys,
+            runtime_status,
+            install_runtime,
             save_key,
             model_prefs,
             save_model_prefs,
             restart_backend
         ])
         .setup(|app| {
-            // Started here rather than lazily on first use: the window's very
-            // first action is to ask where the backend is, and a failure at
-            // launch is far easier to explain than one halfway through a render.
             let handle = app.handle().clone();
-            let backend = start_backend(&handle)?;
-            app.state::<AppState>()
-                .backend
-                .lock()
-                .unwrap()
-                .replace(backend);
             stop_on_signal(&handle);
+
+            // With no runtime there is nothing to start; the window asks to
+            // download one. Starting the backend here otherwise, rather than
+            // lazily, means a failure is reported at launch instead of halfway
+            // through someone's first render.
+            let dir = app_data(&handle).map_err(std::io::Error::other)?;
+            let version = handle.package_info().version.to_string();
+            if runtime::status(&dir, &version).ready {
+                let backend = start_backend(&handle)?;
+                app.state::<AppState>()
+                    .backend
+                    .lock()
+                    .unwrap()
+                    .replace(backend);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

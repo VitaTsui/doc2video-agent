@@ -52,6 +52,10 @@ export function installDevMock() {
       switch (cmd) {
         case 'connection':
           return { base_url: 'http://127.0.0.1:1', token: 'dev' }
+        case 'runtime_status':
+          // The preview always has its runtime; the download screen is looked
+          // at by pointing this at `ready: false`.
+          return { ready: true, installed: '0.5.0', required: '0.5.0', target: 'macos-arm64', approx_mb: 400 }
         case 'model_prefs':
           return PREFS
         case 'save_model_prefs':

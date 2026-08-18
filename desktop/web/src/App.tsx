@@ -21,6 +21,7 @@ import type { ModelGroup } from './chat/Composer'
 import { MessageList } from './chat/MessageList'
 import type { Message, MessageDraft, MessagePatch } from './chat/types'
 import { SettingsDrawer } from './SettingsDrawer'
+import { Setup } from './Setup'
 
 let counter = 0
 const nextId = () => `m${++counter}`
@@ -36,6 +37,7 @@ const GREETING_WITHOUT_MODEL =
 export function App() {
   const [connection, setConnection] = useState<Connection | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
+  const [runtime, setRuntime] = useState<api.RuntimeStatus | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [projectId, setProjectId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -58,28 +60,6 @@ export function App() {
   const amend = useCallback((id: string, patch: MessagePatch) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? ({ ...m, ...patch } as Message) : m)))
   }, [])
-
-  useEffect(() => {
-    if (greeted.current) return
-    greeted.current = true
-    api
-      .connect()
-      .then(async (next) => {
-        setConnection(next)
-        const caps = await api.capabilities().catch(() => null)
-        setHasModel(Boolean(caps?.llm.available))
-        void loadModels()
-        say({
-          role: 'assistant',
-          kind: 'text',
-          text: caps?.llm.available
-            ? GREETING_WITH_MODEL(caps.llm.provider)
-            : GREETING_WITHOUT_MODEL,
-        })
-      })
-      .catch((error: Error) => setFailure(error.message))
-    return () => abort.current?.abort()
-  }, [say])
 
   /** Everything the picker offers: no model, then each provider's entries. */
   const loadModels = useCallback(async () => {
@@ -138,6 +118,34 @@ export function App() {
     },
     [say],
   )
+
+  /** Connect, learn what the backend can do, and open the conversation. */
+  const begin = useCallback(async () => {
+    const next = await api.connect()
+    setConnection(next)
+    const caps = await api.capabilities().catch(() => null)
+    setHasModel(Boolean(caps?.llm.available))
+    void loadModels()
+    say({
+      role: 'assistant',
+      kind: 'text',
+      text: caps?.llm.available ? GREETING_WITH_MODEL(caps.llm.provider) : GREETING_WITHOUT_MODEL,
+    })
+  }, [loadModels, say])
+
+  useEffect(() => {
+    if (greeted.current) return
+    greeted.current = true
+    // Nothing can start before the runtime is there, so that question comes
+    // first — and its answer decides whether this is a chat or a download.
+    api
+      .runtimeStatus()
+      .then((status) => {
+        setRuntime(status)
+        return status.ready ? begin() : undefined
+      })
+      .catch((error: Error) => setFailure(error.message))
+  }, [begin])
 
   /** Follow one job, keeping its message updated, then show what came out. */
   const follow = useCallback(
@@ -251,6 +259,18 @@ export function App() {
     },
     [amend, follow, projectId, say],
   )
+
+  if (runtime && !runtime.ready) {
+    return (
+      <Setup
+        status={runtime}
+        onReady={() => {
+          setRuntime({ ...runtime, ready: true })
+          void begin()
+        }}
+      />
+    )
+  }
 
   if (failure) {
     return (

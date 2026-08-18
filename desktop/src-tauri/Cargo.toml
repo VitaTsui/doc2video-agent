@@ -25,6 +25,11 @@ anyhow = "1"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 rand = "0.8"
 ureq = "2"
+# The runtime arrives as a tar.gz with a checksum beside it: unpack it here
+# rather than shelling out to tar, which Windows does not have.
+flate2 = "1"
+tar = "0.4"
+sha2 = "0.10"
 
 [target."cfg(unix)".dependencies]
 # The window's own close path runs Drop; a signal does not, and a backend left
