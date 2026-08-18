@@ -17,14 +17,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from ...core.config import which
+from ...core.config import Settings, get_settings, which
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
 from .model import SlideDeck
 
 log = get_logger(__name__)
 
-RENDERER_DIR = Path(__file__).resolve().parents[3] / "renderer"
 COMPOSITION_ID = "Slides"
 RENDER_TIMEOUT = 1800
 
@@ -32,8 +31,10 @@ RENDER_TIMEOUT = 1800
 class ChromiumSlideRenderer:
     name = "chromium"
 
-    def __init__(self, renderer_dir: Path | None = None) -> None:
-        self.renderer_dir = renderer_dir or RENDERER_DIR
+    def __init__(self, settings: Settings | None = None) -> None:
+        settings = settings or get_settings()
+        self.renderer_dir = settings.node_dir
+        self.work_root = settings.render_work_dir
 
     def available(self) -> bool:
         return (
@@ -46,7 +47,7 @@ class ChromiumSlideRenderer:
         if which("npx") is None:
             return "未安装 Node.js / npx"
         if not (self.renderer_dir / "node_modules").exists():
-            return "Remotion 依赖未安装，请在 renderer/ 下执行 pnpm install"
+            return f"Remotion 依赖未安装，请在 {self.renderer_dir} 下执行 pnpm install"
         return "不可用"
 
     def render(self, deck: SlideDeck, assets_dir: Path) -> list[str]:
@@ -55,7 +56,7 @@ class ChromiumSlideRenderer:
             return []
 
         staged_deck = self._stage(deck, assets_dir)
-        work_dir = self.renderer_dir / "out" / "slides"
+        work_dir = self.work_root / "slides"
         if work_dir.exists():
             shutil.rmtree(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -71,6 +72,7 @@ class ChromiumSlideRenderer:
             "src/index.ts", COMPOSITION_ID,
             str(work_dir.resolve()),
             f"--props={props_path.resolve()}",
+            f"--public-dir={(self.work_root / 'public').resolve()}",
             "--sequence",
             "--image-format=png",
             "--log=error",
@@ -98,7 +100,7 @@ class ChromiumSlideRenderer:
     def _stage(self, deck: SlideDeck, assets_dir: Path) -> SlideDeck:
         """Copy embedded images where the browser can load them via staticFile."""
         staged = deck.model_copy(deep=True)
-        public_dir = self.renderer_dir / "public" / "slides"
+        public_dir = self.work_root / "public" / "slides"
         public_dir.mkdir(parents=True, exist_ok=True)
 
         for slide in staged.slides:

@@ -38,7 +38,7 @@ def select_adapter(
         adapter_cls = REGISTRY.get(preference)
         if adapter_cls is None:
             raise DependencyMissing(f"未知的渲染器：{preference}")
-        adapter = adapter_cls()
+        adapter = adapter_cls(settings)
         if not adapter.available():
             raise DependencyMissing(
                 f"渲染器 {preference} 不可用：{adapter.unavailable_reason()}",
@@ -53,7 +53,7 @@ def select_adapter(
 
     reasons: dict[str, str] = {}
     for adapter_cls in order:
-        adapter = adapter_cls()
+        adapter = adapter_cls(settings)
         if adapter.available():
             log.info("使用渲染器：%s", adapter.name)
             return adapter
@@ -62,10 +62,11 @@ def select_adapter(
     raise DependencyMissing("没有可用的渲染器", detail={"reasons": reasons})
 
 
-def renderer_status() -> dict[str, dict[str, object]]:
+def renderer_status(settings: Settings | None = None) -> dict[str, dict[str, object]]:
+    settings = settings or get_settings()
     status: dict[str, dict[str, object]] = {}
     for name, adapter_cls in REGISTRY.items():
-        adapter = adapter_cls()
+        adapter = adapter_cls(settings)
         ok = adapter.available()
         status[name] = {"available": ok, "reason": "" if ok else adapter.unavailable_reason()}
     return status

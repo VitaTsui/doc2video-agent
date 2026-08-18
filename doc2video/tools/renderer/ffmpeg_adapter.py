@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...core.config import Settings
 from ...core.logging import get_logger
 from ...schemas import ActionType
 from .. import ffmpeg, media_binaries
-from ..parsers.slide_raster import FONT_CANDIDATES
+from ..parsers.slide_raster import font_candidates
 from .base import PlanAction, RendererAdapter, ScenePlan
 
 log = get_logger(__name__)
@@ -27,6 +28,11 @@ BOX_BORDER = 16
 
 class FFmpegAdapter(RendererAdapter):
     name = "ffmpeg"
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        # Accepted for a uniform constructor across adapters; this one needs
+        # nothing from settings.
+        self.settings = settings
 
     def available(self) -> bool:
         return ffmpeg.available()
@@ -178,7 +184,12 @@ class FFmpegAdapter(RendererAdapter):
 
 
 def _find_font() -> str | None:
-    for candidate in FONT_CANDIDATES:
+    """The same list the rasteriser uses — including anything the runtime ships.
+
+    Returning None here costs the subtitles and nothing else, which is why a
+    platform missing from the list went unnoticed for so long.
+    """
+    for candidate in font_candidates():
         if Path(candidate).exists():
             return candidate
     return None

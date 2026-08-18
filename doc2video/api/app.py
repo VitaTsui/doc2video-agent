@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from ..core import version as core_version
 from ..core.config import get_settings
 from ..core.errors import Doc2VideoError
 from ..core.logging import get_logger, setup_logging
@@ -39,7 +40,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Doc2Video Agent",
         description=DESCRIPTION,
-        version="0.3.0",
+        version=core_version(),
         lifespan=_lifespan if settings.mcp_enabled else None,
     )
     # Same-origin by default: a token is only as safe as the origins allowed to

@@ -9,7 +9,8 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from ..schemas import DocumentPage, ElementKind, PageType, Section
-from .base import Skill
+from ..tools.llm import model_schema
+from .base import Skill, load_prompt
 
 # Pages per LLM call: large enough for cross-page context, small enough that one
 # bad page does not cost the whole deck.
@@ -92,7 +93,15 @@ class DocumentSkill(Skill):
             self.log.warning("文档没有可分析的页面")
             return
 
+        # The heuristics run first either way: they fill every field with
+        # something defensible, so a model that answers for six pages out of
+        # twenty leaves the other fourteen classified rather than blank.
         self._understand_heuristically()
+        self.try_llm(
+            self._understand_with_model,
+            lambda: None,
+            what="文档理解",
+        )
 
         if not document.presentation_order:
             document.presentation_order = [
@@ -102,7 +111,99 @@ class DocumentSkill(Skill):
             "文档理解完成：%d 页，%d 个章节", len(document.pages), len(document.sections)
         )
 
-    # -- LLM path ------------------------------------------------------
+    # -- model path ----------------------------------------------------
+    def _understand_with_model(self) -> None:
+        """Overwrite the heuristics with what the model read, page by page.
+
+        Page renders ride along for the batches that need them: a chart or an
+        architecture diagram carries its meaning in the picture, and its
+        extracted text is a list of axis labels. Text-heavy pages send no image
+        — it would cost tokens to tell the model what it already read.
+
+        Applied field by field rather than by replacing the page, so anything
+        the model omits keeps its heuristic value instead of being blanked.
+        """
+        document = self.project.document
+        pages = document.pages
+        by_index = {p.index: p for p in pages}
+
+        for start in range(0, len(pages), BATCH_SIZE):
+            batch = pages[start : start + BATCH_SIZE]
+            result = DeckUnderstanding.model_validate(
+                self.llm.complete_json(
+                    self._prompt(batch),
+                    schema=model_schema(DeckUnderstanding),
+                    system=load_prompt("document_understanding"),
+                    images=self._images_for(batch),
+                )
+            )
+            for read in result.pages:
+                page = by_index.get(read.index)
+                if page is not None:
+                    self._apply_understanding(page, read)
+
+            # Deck-level fields come back with every batch; the first batch —
+            # which holds the cover — is the one that knows what the deck is.
+            if start == 0:
+                document.topic = result.topic or document.topic
+                document.summary = result.summary or document.summary
+                document.key_concepts = result.key_concepts or document.key_concepts
+                if result.sections:
+                    document.sections = result.sections
+                if result.presentation_order:
+                    known = {p.index for p in pages}
+                    document.presentation_order = [
+                        i for i in result.presentation_order if i in known
+                    ]
+
+    @staticmethod
+    def _apply_understanding(page: DocumentPage, read: PageUnderstanding) -> None:
+        page.page_type = read.page_type
+        page.title = read.title or page.title
+        page.summary = read.summary or page.summary
+        page.key_points = read.key_points or page.key_points
+        # Element ids are matched, never trusted: a score for an id the model
+        # invented would aim the camera at nothing.
+        by_id = {e.id: e for e in page.elements}
+        for score in read.elements:
+            element = by_id.get(score.id)
+            if element is not None:
+                element.importance = max(0.0, min(1.0, score.importance))
+
+    def _images_for(self, batch: list[DocumentPage]) -> list:
+        """Page renders for the most visual pages in this batch."""
+        if not self.llm.supports_images():
+            return []
+        ranked = sorted(batch, key=_visual_weight, reverse=True)
+        paths = []
+        for page in ranked[:MAX_IMAGES_PER_BATCH]:
+            path = self.ctx.asset_path(page.image_path)
+            if path is not None and path.exists():
+                paths.append(path)
+        return paths
+
+    def _prompt(self, batch: list[DocumentPage]) -> str:
+        document = self.project.document
+        lines = [
+            f"# 文档：{document.title or '未命名'}（共 {len(document.pages)} 页）",
+            "",
+            "# 本批页面",
+        ]
+        for page in batch:
+            lines.append(f"\n## 第 {page.index} 页｜解析出的标题：{page.title or '（空）'}")
+            if page.speaker_notes:
+                lines.append(f"演讲者备注：{_truncate(page.speaker_notes, 300)}")
+            elements = [e for e in page.elements if e.text]
+            if elements:
+                lines.append("元素：")
+                lines.extend(
+                    f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 150)}" for e in elements
+                )
+            else:
+                lines.append("（这一页没有可提取的文字，请看配图）")
+        return "\n".join(lines)
+
+    # -- heuristic path ------------------------------------------------
     def _understand_heuristically(self) -> None:
         document = self.project.document
         total = len(document.pages)

@@ -1,6 +1,6 @@
 [project]
 name = "doc2video-agent"
-version = "0.5.0"
+version = "0.6.0"
 description = "PDF / PPT intelligent explainer-video agent: document -> narration -> TTS -> director -> deterministic render -> MP4"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,8 +32,21 @@ dependencies = [
 # (burned-in subtitles) on Linux too — but it publishes no Linux/arm64 wheel,
 # which is the gap imageio-ffmpeg fills.
 bundled = [
+    # Neural TTS for the platforms that have no system voice. macOS keeps using
+    # `say`; this is what makes Windows and Linux produce sound at all.
+    "piper-tts>=1.7; platform_system != 'Darwin'",
     "ffmpeg-binaries>=1.1; platform_system == 'Darwin' or (platform_system == 'Linux' and platform_machine == 'x86_64') or (platform_system == 'Windows' and platform_machine == 'AMD64')",
     "imageio-ffmpeg>=0.6; platform_system == 'Linux' and platform_machine != 'x86_64'",
+]
+# Vendor SDKs for the optional model path. Optional because the service's
+# primary contract is unchanged — the caller writes the script — and a lean
+# install that never touches a model should not carry three SDKs. Each is
+# imported only when its provider is actually selected, so a partial install
+# degrades to the heuristic path instead of failing at import.
+llm = [
+    "anthropic>=0.40",
+    "openai>=1.60",
+    "google-genai>=1.0",
 ]
 dev = [
     "anyio>=4",

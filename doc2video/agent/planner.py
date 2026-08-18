@@ -89,6 +89,11 @@ class ExecutionPlan(BaseModel):
     scene_narrations: dict[str, str] = Field(default_factory=dict)
     # Seconds a scene was asked to become. Informational: nothing here writes to
     # a length any more, but the caller needs the number to rewrite against it.
+    # What the user asked for, per scene, in their own words. The script is
+    # theirs to write, so an instruction can only become new text when a model
+    # is configured; without one this is recorded as a degradation rather than
+    # quietly producing a run that changes nothing.
+    scene_instructions: dict[str, str] = Field(default_factory=dict)
     scene_durations: dict[str, float] = Field(default_factory=dict)
     intent: VideoIntent | None = None
     force_voice: bool = False
@@ -171,6 +176,7 @@ class Planner:
             summary=plan.summary or "按用户指令修改工程",
             stages=stages,
             scene_ids=scene_ids,
+            scene_instructions={e.scene_id: e.instruction for e in edits if e.instruction},
             scene_durations={
                 e.scene_id: e.target_duration for e in edits if e.target_duration
             },

@@ -11,6 +11,9 @@ importers:
       '@remotion/cli':
         specifier: 4.0.242
         version: 4.0.242(postcss@8.5.26)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)(supports-color@8.1.1)
+      agent-virtualization:
+        specifier: 0.1.2
+        version: 0.1.2(zod@4.4.3)
       react:
         specifier: 19.0.0
         version: 19.0.0
@@ -29,6 +32,11 @@ importers:
         version: 5.7.2
 
 packages:
+
+  '@agentclientprotocol/sdk@0.25.1':
+    resolution: {integrity: sha512-jx2rF3bdpGwZ75Q/meyEDLLbYmbtxk82Uh9hDCdxDvcEedBnNSF5hZAnL/kJR5VNz56JqwOmqnAqasC84MwwkQ==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   '@babel/helper-string-parser@7.29.7':
     resolution: {integrity: sha512-Pb5ijPrZ89GDH8223L4UP8i6QApWxs04RbPQJTeWDV0/keR2E36MeKnyr6LYmUUvqRRI+Iv87SuF1W6ErINzYw==}
@@ -367,6 +375,11 @@ packages:
   acorn@8.18.0:
     resolution: {integrity: sha512-lGq+9yr1/GuAWaVYIHRjvvySG5/4VfKIvC8EWxStPdcDh/Ka7FG3twP6v4d5BkravUilhIAsG4Qj83t02LWUPQ==}
     engines: {node: '>=0.4.0'}
+    hasBin: true
+
+  agent-virtualization@0.1.2:
+    resolution: {integrity: sha512-Fw8gOg+68FHCwKS7fVtBMTQTxyi19QJxPe0RCA2fTkxUkP9DsEHC/4nX4Ww4VsdOgXjj55gJoYaUpmt+t0in9A==}
+    engines: {node: ^22.19.0 || >=24.0.0}
     hasBin: true
 
   ajv-formats@2.1.1:
@@ -939,7 +952,14 @@ packages:
   yauzl@2.10.0:
     resolution: {integrity: sha512-p4a9I6X6nu6IhoGmBqAcbJy1mlC4j27vEPZX9F4L4/vZT3Lyq1VkFHw/V/PUcB9Buo+DG3iHkT0x3Qya58zc3g==}
 
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
 snapshots:
+
+  '@agentclientprotocol/sdk@0.25.1(zod@4.4.3)':
+    dependencies:
+      zod: 4.4.3
 
   '@babel/helper-string-parser@7.29.7': {}
 
@@ -1332,6 +1352,13 @@ snapshots:
   '@xtuc/long@4.2.2': {}
 
   acorn@8.18.0: {}
+
+  agent-virtualization@0.1.2(zod@4.4.3):
+    dependencies:
+      '@agentclientprotocol/sdk': 0.25.1(zod@4.4.3)
+      ajv: 8.20.0
+    transitivePeerDependencies:
+      - zod
 
   ajv-formats@2.1.1(ajv@8.20.0):
     optionalDependencies:
@@ -1844,3 +1871,5 @@ snapshots:
     dependencies:
       buffer-crc32: 0.2.13
       fd-slicer: 1.1.0
+
+  zod@4.4.3: {}

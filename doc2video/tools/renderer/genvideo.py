@@ -10,11 +10,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...core.config import Settings
 from .base import RendererAdapter, ScenePlan
 
 
 class GenerativeVideoAdapter(RendererAdapter):
     name = "genvideo"
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        # Accepted for a uniform constructor across adapters; this one needs
+        # nothing from settings.
+        self.settings = settings
 
     def available(self) -> bool:
         # No provider is configured by default; MVP does not ship one.

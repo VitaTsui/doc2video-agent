@@ -59,3 +59,8 @@ renderer/.remotion/
 docs/*.docx
 # codebase-memory-mcp 本机索引排除（个人偏好，不入库）
 .cbmignore
+
+# 桌面壳
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/web/dist/

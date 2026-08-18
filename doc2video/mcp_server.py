@@ -31,6 +31,7 @@ from mcp.server import MCPServer
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 from .agent import JobRequest
+from .core import version as core_version
 from .core.config import Settings, get_settings
 from .core.errors import Doc2VideoError
 from .core.logging import get_logger
@@ -89,7 +90,7 @@ def build_server(settings: Settings | None = None) -> MCPServer:
         "doc2video",
         title="Doc2Video Agent",
         instructions=INSTRUCTIONS,
-        version="0.5.0",
+        version=core_version(),
     )
 
     @mcp.tool()

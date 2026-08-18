@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
+import re
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -32,6 +33,13 @@ log = get_logger(__name__)
 # Reachable before authenticating: liveness only, no project data.
 PUBLIC_PATHS = frozenset({"/health"})
 
+# Routes a media element loads directly. ``<video src>`` and ``<img src>``
+# cannot carry an Authorization header, so for these — and only these, and only
+# for GET — the token may ride in the query string instead. Everything else
+# still requires the header, so a leaked URL cannot start a render or read a
+# project's JSON.
+MEDIA_PATH = re.compile(r"^/projects/[^/]+/(video|assets/.+)$")
+
 
 class BearerTokenMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, token: str) -> None:
@@ -42,8 +50,19 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         if request.url.path in PUBLIC_PATHS:
             return await call_next(request)
 
+        # A CORS preflight carries no credentials — by specification, the
+        # browser strips them — so rejecting it for having no token rejects
+        # every cross-origin request the app ever makes, before it is made.
+        # This middleware runs outside the CORS one (add_middleware prepends),
+        # so nothing else would get the chance to answer. The response reveals
+        # only which methods and headers are allowed.
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         header = request.headers.get("authorization", "")
         scheme, _, presented = header.partition(" ")
+        if not presented and request.method == "GET" and MEDIA_PATH.match(request.url.path):
+            scheme, presented = "bearer", request.query_params.get("token", "")
         # compare_digest keeps a wrong token from being narrowed down by timing.
         if scheme.lower() != "bearer" or not hmac.compare_digest(presented, self._token):
             return JSONResponse(

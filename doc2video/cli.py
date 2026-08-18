@@ -18,6 +18,7 @@ from .core.errors import Doc2VideoError
 from .core.flags import report as flag_report
 from .core.logging import setup_logging
 from .storage.run_log import RunLog, summarize
+from .tools.llm import llm_status
 from .tools.renderer import renderer_status
 from .tools.tts import TTSTool
 
@@ -51,6 +52,12 @@ def main(argv: list[str] | None = None) -> int:
     metrics.add_argument("--limit", type=int, default=500, help="参与统计的最近运行条数")
     metrics.set_defaults(func=cmd_metrics)
 
+    voices = sub.add_parser("voices", help="下载 Piper 语音模型（Windows / Linux 的声音来源）")
+    voices.add_argument(
+        "name", nargs="?", default="", help="音色名，默认 zh_CN-huayan-medium（约 61MB）"
+    )
+    voices.set_defaults(func=cmd_voices)
+
     serve = sub.add_parser("serve", help="启动 API 服务")
     serve.add_argument("--host", default=None)
     serve.add_argument("--port", type=int, default=None)
@@ -78,14 +85,49 @@ def main(argv: list[str] | None = None) -> int:
 # --------------------------------------------------------------------------
 
 
+def cmd_voices(args) -> int:
+    """Fetch a voice model. A separate command on purpose.
+
+    Downloading 61MB in the middle of a render looks exactly like a hang, so
+    the provider reports itself unavailable and points here instead of fetching
+    on demand.
+    """
+    from .tools.tts.piper import DEFAULT_VOICE, PiperProvider, download_voice
+
+    settings = get_settings()
+    directory = settings.storage_dir / "voices"
+    name = args.name.strip() or DEFAULT_VOICE
+
+    path = download_voice(name, directory)
+    print(f"已下载：{path}")
+
+    provider = PiperProvider(settings)
+    if provider.available():
+        print("Piper 现在可用")
+    else:
+        print(f"仍不可用：{provider.unavailable_reason()}")
+    return 0
+
+
 def cmd_doctor(_args) -> int:
     settings = get_settings()
 
     print("== 能力体检 ==")
+    llm = llm_status(settings)
+    if llm["available"]:
+        print(f"模型       : {llm['provider']}｜{llm['model']}")
+    else:
+        configured = llm["configured"]
+        note = (
+            "未配置（讲稿由调用方提供）"
+            if configured in ("", "mock")
+            else f"{configured} 不可用"
+        )
+        print(f"模型       : {note}")
     print(f"TTS        : {TTSTool(settings).provider_name}")
 
     print("\n渲染器：")
-    for name, info in renderer_status().items():
+    for name, info in renderer_status(settings).items():
         mark = "✓" if info["available"] else "✗"
         reason = "" if info["available"] else f"  ({info['reason']})"
         print(f"  {mark} {name}{reason}")
@@ -258,8 +300,14 @@ def cmd_export_schemas(_args) -> int:
 # --------------------------------------------------------------------------
 
 
-def _print_progress(stage: str, message: str) -> None:
-    print(f"  · [{stage}] {message}", file=sys.stderr)
+def _print_progress(stage: str, message: str, done: int = 0, total: int = 0) -> None:
+    """One line per step, on stderr so stdout stays pipeable.
+
+    ``done``/``total`` only exist for the stages that loop over scenes; showing
+    "0/0" for the rest would be noise.
+    """
+    counter = f" {done}/{total}" if total else ""
+    print(f"  · [{stage}]{counter} {message}", file=sys.stderr)
 
 
 def _print_result(result) -> None:

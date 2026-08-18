@@ -5,9 +5,11 @@ layer rather than a logging concern: a run record is persisted, served over the
 API, and compared across rollout arms, so it needs the same versioned shape as
 everything else the project stores.
 
-There is no cost here on purpose. This service holds no model, so the only
-spend it could report would be a constant zero — and the time a render takes is
-the number that actually varies.
+Tokens are recorded; money is not. A price table has to be maintained against
+every vendor's changes and is wrong the moment one of them moves, whereas token
+counts are reported by the API itself and stay true. Anyone who wants a number
+in currency can multiply — with today's prices rather than the ones that were
+current when this shipped.
 """
 
 from __future__ import annotations
@@ -38,6 +40,23 @@ class Degradation(BaseModel):
 
     what: str
     reason: str
+
+
+class LLMCall(BaseModel):
+    """One model call, as the vendor reported it.
+
+    Recorded even when the call failed or was refused: it was billed, and a run
+    that spent tokens without producing anything is exactly what monitoring
+    should be able to see.
+    """
+
+    provider: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    duration_s: float = 0.0
 
 
 class QualityDimension(BaseModel):
@@ -72,6 +91,7 @@ class RunRecord(BaseModel):
     message: str = ""
     stages: list[StageRun] = Field(default_factory=list)
     degradations: list[Degradation] = Field(default_factory=list)
+    llm_calls: list[LLMCall] = Field(default_factory=list)
     # Which arm of each rollout this run took, so cost and quality compare.
     flags: dict[str, bool] = Field(default_factory=dict)
     quality: QualityReport | None = None

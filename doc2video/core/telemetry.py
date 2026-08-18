@@ -18,10 +18,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from ..schemas.telemetry import Degradation, RunRecord, StageRun
+from ..schemas.telemetry import Degradation, LLMCall, RunRecord, StageRun
 from .logging import get_logger
 
 log = get_logger(__name__)
+
+# The providers construct this; it is the schema type under a name that reads
+# better at a call site ("record_llm(LLMUsage(...))").
+LLMUsage = LLMCall
 
 _current: ContextVar[RunTelemetry | None] = ContextVar("doc2video_run_telemetry", default=None)
 
@@ -65,6 +69,9 @@ class RunTelemetry:
     def record_degradation(self, what: str, reason: str) -> None:
         self.record.degradations.append(Degradation(what=what, reason=reason[:200]))
 
+    def record_llm(self, usage: LLMCall) -> None:
+        self.record.llm_calls.append(usage)
+
     def finish(self, *, status: str, message: str = "", error: str = "") -> RunRecord:
         self.record.duration_s = time.monotonic() - self._started
         self.record.status = status
@@ -94,5 +101,13 @@ def record_degradation(what: str, reason: str) -> None:
     telemetry = _current.get()
     if telemetry is not None:
         telemetry.record_degradation(what, reason)
+
+
+def record_llm(usage: LLMCall) -> None:
+    """Report one model call. A no-op outside a run, so providers can call it
+    unconditionally rather than checking whether they are inside a pipeline."""
+    telemetry = _current.get()
+    if telemetry is not None:
+        telemetry.record_llm(usage)
 
 

@@ -16,6 +16,7 @@ from ...core.config import which
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
 from .base import TTSProvider, audio_duration, estimate_duration
+from .piper import PiperProvider
 
 log = get_logger(__name__)
 
@@ -77,10 +78,18 @@ class SilentProvider(TTSProvider):
         return duration
 
 
+# What ``auto`` tries, in order. `say` first where it exists: it is instant,
+# needs no model on disk, and is the reason macOS never noticed this project had
+# no cross-platform voice. Piper is what every other platform gets — before it,
+# a run off macOS produced a correctly timed, correctly subtitled, silent video.
+AUTO_ORDER: tuple[type[TTSProvider], ...] = (MacOSSayProvider, PiperProvider, SilentProvider)
+
+
 def resolve_provider(preference: str) -> TTSProvider:
     """Pick a provider by name, or the best available one for ``auto``."""
     registry: dict[str, type[TTSProvider]] = {
         MacOSSayProvider.name: MacOSSayProvider,
+        PiperProvider.name: PiperProvider,
         SilentProvider.name: SilentProvider,
         "mock": SilentProvider,
     }
@@ -93,9 +102,14 @@ def resolve_provider(preference: str) -> TTSProvider:
             provider = provider_cls()
             if provider.available():
                 return provider
-            log.warning("TTS provider '%s' 当前不可用，回退到 auto", preference)
+            reason = getattr(provider, "unavailable_reason", lambda: "")()
+            log.warning(
+                "TTS provider '%s' 当前不可用%s，回退到 auto",
+                preference,
+                f"（{reason}）" if reason else "",
+            )
 
-    for provider_cls in (MacOSSayProvider, SilentProvider):
+    for provider_cls in AUTO_ORDER:
         provider = provider_cls()
         if provider.available():
             return provider

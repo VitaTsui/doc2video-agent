@@ -14,7 +14,7 @@ from ..core.logging import get_logger
 from ..schemas import Scene
 from ..tools.tts import TTSTool
 from ..tools.tts.base import pad_silence
-from .base import Skill, SkillContext
+from .base import ProgressFn, Skill, SkillContext
 
 log = get_logger(__name__)
 
@@ -27,11 +27,14 @@ class VoiceSkill(Skill):
         super().__init__(ctx)
         self.tts = tts or TTSTool(ctx.settings)
 
-    def run(self, *, force: bool = False) -> None:
+    def run(self, *, force: bool = False, progress: ProgressFn | None = None) -> None:
         audio_dir = self.ctx.store.audio_dir(self.project.project_id)
         synthesized = skipped = 0
+        total = len(self.project.scenes)
 
-        for scene in self.project.scenes:
+        for done, scene in enumerate(self.project.scenes):
+            if progress is not None:
+                progress("voice", f"配音 {scene.scene_id}", done, total)
             fingerprint = self._fingerprint(scene)
             existing = self.ctx.asset_path(scene.audio.path)
             if (

@@ -31,7 +31,11 @@ from .planner import ExecutionPlan, Stage
 
 log = get_logger(__name__)
 
-ProgressFn = Callable[[str, str], None]
+# (stage, detail, done, total). ``total`` is 0 when a stage has no countable
+# unit of work; a stage that does report one — voicing and rendering both loop
+# over scenes — is the only way a client can draw a bar instead of a spinner
+# through the minutes that rendering takes.
+ProgressFn = Callable[[str, str, int, int], None]
 
 
 @contextmanager
@@ -64,7 +68,7 @@ STAGE_STATUS = {
 class Executor:
     def __init__(self, ctx: SkillContext, *, progress: ProgressFn | None = None) -> None:
         self.ctx = ctx
-        self._progress = progress or (lambda stage, message: None)
+        self._progress = progress or (lambda stage, detail, done, total: None)
 
     @property
     def project(self) -> VideoProject:
@@ -79,11 +83,11 @@ class Executor:
         try:
             for stage in plan.stages:
                 self.project.status = STAGE_STATUS.get(stage, self.project.status)
-                self._progress(stage.value, f"开始 {stage.value}")
+                self._progress(stage.value, f"开始 {stage.value}", 0, 0)
                 with _timed(stage.value):
                     self._run_stage(stage, plan)
                 self.ctx.store.save(self.project)
-                self._progress(stage.value, f"完成 {stage.value}")
+                self._progress(stage.value, f"完成 {stage.value}", 0, 0)
             self.project.status = ProjectStatus.READY
         except Doc2VideoError:
             self.project.status = ProjectStatus.FAILED
@@ -129,6 +133,7 @@ class Executor:
             source_path,
             self.ctx.store.assets_dir(self.project.project_id),
             target_width=self.ctx.settings.video_width,
+            settings=self.ctx.settings,
         )
         # Preserve the title the user's file already implies.
         document.title = document.title or self.project.source.file
@@ -146,12 +151,19 @@ class Executor:
         """
         skill = NarrationSkill(self.ctx)
         if plan.scene_ids:
-            # Targeted edit: replace only the named scenes.
+            # Targeted edit: replace only the named scenes. New text wins; an
+            # instruction ("压到 20 秒") needs a model to become text.
             for scene_id in plan.scene_ids:
                 scene = self.project.scene(scene_id)
+                if scene is None:
+                    continue
                 text = plan.scene_narrations.get(scene_id)
-                if scene is not None and text:
+                if text:
                     skill.rewrite_scene(scene, text)
+                elif instruction := plan.scene_instructions.get(scene_id):
+                    skill.revise_scene(
+                        scene, instruction, plan.scene_durations.get(scene_id, 0.0)
+                    )
             return
         if plan.narrations:
             skill.apply(plan.narrations)
@@ -159,7 +171,7 @@ class Executor:
             skill.run()
 
     def _stage_voice(self, plan: ExecutionPlan) -> None:
-        VoiceSkill(self.ctx).run(force=plan.force_voice)
+        VoiceSkill(self.ctx).run(force=plan.force_voice, progress=self._progress)
 
     def _stage_direct(self, plan: ExecutionPlan) -> None:  # noqa: ARG002
         DirectorSkill(self.ctx).run()
@@ -204,11 +216,11 @@ class Executor:
 
         clips_dir = self.ctx.store.clips_dir(project.project_id)
 
-        for scene in dirty:
+        for done, scene in enumerate(dirty):
             scene_plan = plans.get(scene.scene_id)
             if scene_plan is None:
                 continue
-            self._progress("render", f"渲染场景 {scene.scene_id}")
+            self._progress("render", f"渲染场景 {scene.scene_id}", done, len(dirty))
             clip_path = clips_dir / f"{scene.scene_id}.mp4"
             adapter.render_scene(scene_plan, clip_path)
             project.render.scene_clips[scene.scene_id] = self.ctx.store.relativize(
@@ -241,7 +253,7 @@ class Executor:
             if audio is not None and audio.exists():
                 audio_paths.append(audio)
 
-        self._progress("render", "合成成片")
+        self._progress("render", "合成成片", len(scenes), len(scenes))
         video_only = ffmpeg.concat(clip_paths, out_dir / "video.mp4", work_dir=out_dir)
 
         final = out_dir / "final.mp4"

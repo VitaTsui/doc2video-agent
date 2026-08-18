@@ -16,7 +16,7 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Emu
 
-from ...core.config import which
+from ...core.config import Settings, which
 from ...core.errors import UnsupportedSource
 from ...core.ids import element_id
 from ...core.logging import get_logger
@@ -28,7 +28,13 @@ log = get_logger(__name__)
 SOFFICE_TIMEOUT = 180
 
 
-def parse_ppt(path: Path, assets_dir: Path, *, target_width: int = 1920) -> DocumentModel:
+def parse_ppt(
+    path: Path,
+    assets_dir: Path,
+    *,
+    target_width: int = 1920,
+    settings: Settings | None = None,
+) -> DocumentModel:
     source = path
     if path.suffix.lower() == ".ppt":
         source = _convert_legacy_ppt(path, assets_dir)
@@ -54,7 +60,7 @@ def parse_ppt(path: Path, assets_dir: Path, *, target_width: int = 1920) -> Docu
             )
         )
 
-    _render_pages(source, pages, assets_dir, target_width=target_width)
+    _render_pages(source, pages, assets_dir, target_width=target_width, settings=settings)
 
     log.info("解析 PPT 完成：%s，共 %d 页", path.name, len(pages))
     return DocumentModel(
@@ -268,7 +274,12 @@ def _notes(slide) -> str:
 
 
 def _render_pages(
-    source: Path, pages: list[DocumentPage], assets_dir: Path, *, target_width: int
+    source: Path,
+    pages: list[DocumentPage],
+    assets_dir: Path,
+    *,
+    target_width: int,
+    settings: Settings | None = None,
 ) -> None:
     """Rasterize slides, in descending order of fidelity.
 
@@ -280,7 +291,9 @@ def _render_pages(
     if _render_with_libreoffice(source, pages, assets_dir, target_width=target_width):
         return
 
-    if _render_with_chromium(source, pages, assets_dir, target_width=target_width):
+    if _render_with_chromium(
+        source, pages, assets_dir, target_width=target_width, settings=settings
+    ):
         return
 
     log.warning("LibreOffice 与 Chromium 均不可用，使用内置栅格化器（样式为简版）")
@@ -291,11 +304,16 @@ def _render_pages(
 
 
 def _render_with_chromium(
-    source: Path, pages: list[DocumentPage], assets_dir: Path, *, target_width: int
+    source: Path,
+    pages: list[DocumentPage],
+    assets_dir: Path,
+    *,
+    target_width: int,
+    settings: Settings | None = None,
 ) -> bool:
     from ..slides import ChromiumSlideRenderer, extract_deck
 
-    renderer = ChromiumSlideRenderer()
+    renderer = ChromiumSlideRenderer(settings)
     if not renderer.available():
         log.info("Chromium 幻灯片渲染不可用：%s", renderer.unavailable_reason())
         return False

@@ -78,3 +78,21 @@ def test_runtime_directories_stay_ignored():
         text=True,
     )
     assert set(paths) <= set(result.stdout.split())
+
+
+def test_every_surface_reports_the_same_version():
+    """Four hard-coded copies is how the API came to report 0.3.0 while the
+    project was on 0.6.0 — nothing fails when they disagree."""
+    import tomllib
+    from pathlib import Path
+
+    from doc2video.api.app import create_app
+    from doc2video.core import version
+    from doc2video.mcp_server import build_server
+
+    root = Path(__file__).parent.parent
+    declared = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["project"]["version"]
+
+    assert version() == declared
+    assert create_app().version == declared
+    assert build_server().version == declared
