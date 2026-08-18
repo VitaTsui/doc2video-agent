@@ -63,7 +63,14 @@ def target() -> str:
 
 def run(*args: str, cwd: Path | None = None, env: dict | None = None) -> None:
     print(f"  $ {' '.join(str(a) for a in args)}")
-    subprocess.run([str(a) for a in args], cwd=cwd, check=True, env=env)
+    command = [str(a) for a in args]
+    # On Windows `pnpm`, `npx` and `uv` are .cmd shims, which CreateProcess
+    # will not execute by that bare name — it reports "cannot find the file"
+    # for a command that is plainly on PATH.
+    resolved = shutil.which(command[0])
+    if resolved:
+        command[0] = resolved
+    subprocess.run(command, cwd=cwd, check=True, env=env)
 
 
 def build_python(out: Path) -> None:
