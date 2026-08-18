@@ -12,10 +12,21 @@ pnpm dev      # 开发：自动拉起 Vite 和壳，界面热更新
 pnpm build    # 出安装包
 ```
 
-**不要直接 `cargo run`**：不带 `custom-protocol` 特性时 Tauri 走开发模式、
-去加载 `devUrl`（localhost:5273），而那个端口上没有东西，窗口就是全白的。
-要绕过 Tauri CLI 的话得用 `cargo run --features custom-protocol`，那样加载的
-是已经构建好的 `web/dist`。
+**不要直接 `cargo run`。** 两种错法，症状完全不同：
+
+* 不带 `custom-protocol` 时 Tauri 走开发模式去加载 `devUrl`（localhost:5273），
+  那个端口上没东西，窗口**全白**。
+* 带上 `custom-protocol` 时前端产物是在**编译期**嵌进二进制的。所以
+  `pnpm --dir web build` 之后直接跑旧二进制，窗口里是**上一次编译时**的界面——
+  改了半天看不到任何变化，而且看起来像是改坏了。改完前端必须重新
+  `cargo build`，或者干脆用 `pnpm dev` / `pnpm build`。
+
+### 怎么看界面
+
+窗口截不了图（macOS 要录屏权限），所以界面问题只能靠肉眼描述来回猜——除非
+在普通浏览器里打开它。`src/devMock.ts` 就是干这个的：开发模式下、且检测不到
+Tauri 外壳时，桩掉 `invoke` 和几个健康检查请求，于是 `pnpm --dir web dev` 起来
+的页面能正常渲染，可以用任何浏览器（或 Playwright）直接看。
 
 后端怎么找：优先用应用数据目录里下载好的运行时，没有就回落到源码仓库
 （`uv run --project <repo> doc2video`）。所以开发时改 Python，重启壳就生效。

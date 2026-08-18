@@ -17,8 +17,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from './api'
 import type { Connection, JobState } from './api'
 import { Composer } from './chat/Composer'
+import type { ModelGroup } from './chat/Composer'
 import { MessageList } from './chat/MessageList'
-import { ModelPicker } from './chat/ModelPicker'
 import type { Message, MessageDraft, MessagePatch } from './chat/types'
 import { SettingsDrawer } from './SettingsDrawer'
 
@@ -41,8 +41,13 @@ export function App() {
   const [busy, setBusy] = useState(false)
   const [hasModel, setHasModel] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [groups, setGroups] = useState<ModelGroup[]>([])
+  const [model, setModel] = useState('')
 
   const abort = useRef<AbortController | null>(null)
+  // StrictMode runs effects twice in development; without this the opening
+  // message is said twice, which is also what a retry would look like.
+  const greeted = useRef(false)
 
   const say = useCallback((message: MessageDraft) => {
     const id = nextId()
@@ -55,12 +60,15 @@ export function App() {
   }, [])
 
   useEffect(() => {
+    if (greeted.current) return
+    greeted.current = true
     api
       .connect()
       .then(async (next) => {
         setConnection(next)
         const caps = await api.capabilities().catch(() => null)
         setHasModel(Boolean(caps?.llm.available))
+        void loadModels()
         say({
           role: 'assistant',
           kind: 'text',
@@ -72,6 +80,64 @@ export function App() {
       .catch((error: Error) => setFailure(error.message))
     return () => abort.current?.abort()
   }, [say])
+
+  /** Everything the picker offers: no model, then each provider's entries. */
+  const loadModels = useCallback(async () => {
+    const [catalogue, prefs] = await Promise.all([api.catalogue(), api.modelPrefs()])
+    // Two groups, because that is the choice being made: a CLI already on this
+    // machine costs nothing per run, an API key does. Within a group the
+    // model's own name carries the vendor — "Claude Opus 5" says whose it is.
+    const pick = (needsKey: boolean) =>
+      catalogue.providers
+        .filter((provider) => provider.needs_key === needsKey)
+        .flatMap((provider) =>
+          (catalogue.models[provider.id] ?? []).map((entry) => ({
+            value: `${provider.id}/${entry.id}`,
+            // The vendor is already in the model's name — "Claude Opus 5",
+            // "GPT-5", "Gemini 2.5 Pro" — and the group heading carries what
+            // actually differs. Prefixing the provider only truncates.
+            label: entry.label,
+          })),
+        )
+
+    setGroups([
+      { label: '不用模型', models: [{ value: '', label: '讲稿我自己写' }] },
+      { label: '本机 CLI · 不要 Key', models: pick(false) },
+      { label: '需要 API Key', models: pick(true) },
+    ])
+    setModel(prefs.provider ? `${prefs.provider}/${prefs.model}` : '')
+  }, [])
+
+  /** Switching model restarts the backend — its settings are frozen per process. */
+  const switchModel = useCallback(
+    async (value: string) => {
+      const [provider, model_id = ''] = value ? value.split('/') : ['']
+      setModel(value)
+      setBusy(true)
+      try {
+        const next = await api.saveModelPrefs({
+          provider,
+          model: model_id,
+          base_url: '',
+        })
+        setConnection(next)
+        const caps = await api.capabilities().catch(() => null)
+        setHasModel(Boolean(caps?.llm.available))
+        say({
+          role: 'assistant',
+          kind: 'text',
+          text: caps?.llm.available
+            ? `换成 ${caps.llm.provider}｜${caps.llm.model} 了，之后留空的页我来写。`
+            : '好，讲稿由你来写。留空的页会是占位文本。',
+        })
+      } catch (error) {
+        say({ role: 'assistant', kind: 'text', text: `切换失败：${(error as Error).message}` })
+      } finally {
+        setBusy(false)
+      }
+    },
+    [say],
+  )
 
   /** Follow one job, keeping its message updated, then show what came out. */
   const follow = useCallback(
@@ -216,17 +282,10 @@ export function App() {
         onSend={acceptMessage}
         onDeck={acceptDeck}
         hint={projectId ? '想改哪里就直接说' : '说说你想要什么样的视频，并附上文档'}
-      >
-        <ModelPicker
-          disabled={busy}
-          onSwitched={async (next, describe) => {
-            setConnection(next)
-            const caps = await api.capabilities().catch(() => null)
-            setHasModel(Boolean(caps?.llm.available))
-            say({ role: 'assistant', kind: 'text', text: describe })
-          }}
-        />
-      </Composer>
+        groups={groups}
+        model={model}
+        onModel={(value) => void switchModel(value)}
+      />
 
       <SettingsDrawer
         open={settingsOpen}

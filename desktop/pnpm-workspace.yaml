@@ -2,6 +2,18 @@ packages:
   - web
 
 # esbuild must run its install script — it fetches its own platform binary and
-# Vite cannot start without it.
+# Vite cannot start without it. The rest are denied and nothing is lost:
+# @parcel/watcher is sass's optional file watcher (we only ever build once) and
+# the others are transitive dependencies of the component library whose scripts
+# set up polyfills and demo assets we never load.
 allowBuilds:
   esbuild: true
+  '@parcel/watcher': false
+  core-js: false
+  es5-ext: false
+  x-data-spreadsheet: false
+
+# Our own package, published from the hsu-ui repo. The release-age policy exists
+# to keep a freshly-published stranger out of the tree, not a package we cut.
+minimumReleaseAgeExclude:
+  - '@hsu-react/ui'

@@ -1,122 +1,92 @@
-/** The input line: a message, optionally with a deck attached. */
+/**
+ * The input line — the component library's, not ours.
+ *
+ * `Chat.Input` already is what this needs: a message box, file attachment, a
+ * busy/stop state, and a model selector built into the same row. Hand-rolling
+ * those was a mistake worth undoing — the picker in particular, which is the
+ * whole reason this file used to be two files.
+ *
+ * The transcript above is still ours. `Chat.List` renders an assistant turn as
+ * markdown with no escape hatch for arbitrary React (`userRenderContent` exists
+ * only for the user's side), and every interesting turn here is interactive: a
+ * per-page script editor with a button that starts a render, a live progress
+ * bar, a video player. Those cannot survive being flattened into a string.
+ */
 
-import { useRef, useState } from 'react'
+// The input alone, not the Chat barrel. Reaching one level up pulls ChatList
+// with it, and ChatList's markdown renderer drags in mermaid, cytoscape and
+// pdf.js — six megabytes of diagram engines for a text box.
+import ChatInput from '@hsu-react/ui/es/components/Chat/ChatInput'
+import type { ModelConfig } from '@hsu-react/ui/es/components/Chat/ChatInput'
+import type { UploadFile } from 'antd'
+import { useState } from 'react'
+
+export interface ModelChoice {
+  /** `provider/model`, or empty for "no model". */
+  value: string
+  label: string
+}
+
+export interface ModelGroup {
+  label: string
+  models: ModelChoice[]
+}
 
 export function Composer({
   disabled,
   hint,
+  groups,
+  model,
+  onModel,
   onSend,
   onDeck,
-  children,
 }: {
   disabled: boolean
   hint: string
+  groups: ModelGroup[]
+  model: string
+  onModel: (value: string) => void
   onSend: (text: string) => void | Promise<void>
   onDeck: (file: File, brief: string) => void | Promise<void>
-  /** The model picker: a per-conversation choice, so it lives with the input. */
-  children?: React.ReactNode
 }) {
-  const [text, setText] = useState('')
-  const [file, setFile] = useState<File | null>(null)
-  const picker = useRef<HTMLInputElement>(null)
-  const input = useRef<HTMLTextAreaElement>(null)
+  const [files, setFiles] = useState<UploadFile[]>([])
 
-  function submit() {
-    if (disabled) return
-    if (file) {
-      void onDeck(file, text.trim())
-      setFile(null)
-      setText('')
-      return
-    }
-    if (!text.trim()) return
-    void onSend(text.trim())
-    setText('')
-  }
+  // antd's Select reads an entry with an `options` array as a group heading,
+  // and the library hands `modelList` straight through to it. The declared
+  // type is a flat list — it has an index signature, so a group fits, but the
+  // cast is what says so out loud. Grouping is worth it: "runs on this machine,
+  // costs nothing" and "calls an API you pay for" is the distinction that
+  // actually decides which of these a person wants.
+  const modelList = groups.map((group) => ({
+    label: group.label,
+    options: group.models.map((choice) => ({ label: choice.label, value: choice.value })),
+  })) as unknown as ModelConfig[]
 
   return (
     <div className="composer">
       <div className="column">
-        {file && (
-          <div className="composer__attachment">
-            {file.name}
-            <button type="button" onClick={() => setFile(null)} aria-label="移除">
-              ✕
-            </button>
-          </div>
-        )}
-        <div className="composer__box">
-          <input
-            ref={picker}
-            type="file"
-            accept=".pdf,.ppt,.pptx"
-            hidden
-            // Held until send rather than uploaded on pick, so the file and the
-            // sentence describing what to do with it arrive in the same turn.
-            onChange={(e) => {
-              const picked = e.target.files?.[0]
-              if (picked) setFile(picked)
-              e.target.value = ''
-              input.current?.focus()
-            }}
-          />
-          <button
-            type="button"
-            className="composer__icon"
-            disabled={disabled}
-            title="附加 PPT / PDF"
-            onClick={() => picker.current?.click()}
-          >
-            <Clip />
-          </button>
-          <textarea
-            ref={input}
-            className="composer__input"
-            rows={1}
-            value={text}
-            disabled={disabled}
-            placeholder={hint}
-            onChange={(e) => {
-              setText(e.target.value)
-              // Reset before measuring, or the box only ever grows.
-              e.target.style.height = 'auto'
-              e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`
-            }}
-            onKeyDown={(e) => {
-              // Enter sends; Shift+Enter is a newline, as everywhere else.
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                submit()
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="composer__send"
-            disabled={disabled || (!text.trim() && !file)}
-            onClick={submit}
-            aria-label="发送"
-          >
-            <Arrow />
-          </button>
-        </div>
-        <div className="composer__footer">
-          {children}
-          <span className="muted">Enter 发送，Shift+Enter 换行</span>
-        </div>
+        <ChatInput
+          placeholder={hint}
+          assistanting={disabled}
+          fileList={files}
+          onFileListChange={setFiles}
+          uploadConfig={{ accept: '.pdf,.ppt,.pptx' }}
+          modelConfig={{ modelList, modelType: model, setModelType: onModel }}
+          onSend={(text) => {
+            // A deck and the sentence describing what to do with it arrive in
+            // the same turn: the file is held here until send, not uploaded on
+            // pick, so the brief can still be typed after choosing it.
+            // One deck per turn; a second attachment would have nowhere to go.
+            const picked = files[0]?.originFileObj as File | undefined
+            if (picked) {
+              void onDeck(picked, text.trim())
+              setFiles([])
+              return
+            }
+            if (text.trim()) void onSend(text.trim())
+          }}
+        />
       </div>
     </div>
   )
 }
-
-const Clip = () => (
-  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.67 3.67 0 1 1 5.18 5.18l-9.2 9.2a1.83 1.83 0 1 1-2.59-2.6l8.5-8.49" />
-  </svg>
-)
-
-const Arrow = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-    <path d="M12 19V5M5 12l7-7 7 7" />
-  </svg>
-)
