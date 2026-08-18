@@ -35,6 +35,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Windows consoles default to a legacy code page, and every message here is in
+# Chinese: without this the script dies on its first print rather than on
+# anything to do with building a runtime.
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 NODE_VERSION = "22.14.0"
 PYTHON_VERSION = "3.12"
 FONT_URL = (
@@ -56,7 +63,14 @@ def target() -> str:
 
 def run(*args: str, cwd: Path | None = None, env: dict | None = None) -> None:
     print(f"  $ {' '.join(str(a) for a in args)}")
-    subprocess.run([str(a) for a in args], cwd=cwd, check=True, env=env)
+    command = [str(a) for a in args]
+    # On Windows `pnpm`, `npx` and `uv` are .cmd shims, which CreateProcess
+    # will not execute by that bare name — it reports "cannot find the file"
+    # for a command that is plainly on PATH.
+    resolved = shutil.which(command[0])
+    if resolved:
+        command[0] = resolved
+    subprocess.run(command, cwd=cwd, check=True, env=env)
 
 
 def build_python(out: Path) -> None:
@@ -141,7 +155,16 @@ def build_node(out: Path) -> None:
     node_dir = out / "node"
     node_dir.mkdir(parents=True, exist_ok=True)
 
-    for name in ("package.json", "pnpm-lock.yaml", "tsconfig.json", "remotion.config.ts"):
+    # pnpm-workspace.yaml comes too: it is where esbuild is allowed to run its
+    # install script, and pnpm treats a blocked script as a hard error — the
+    # copied directory would fail to install without it.
+    for name in (
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.json",
+        "remotion.config.ts",
+    ):
         source = ROOT / "renderer" / name
         if source.exists():
             shutil.copy2(source, node_dir / name)

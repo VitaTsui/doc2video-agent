@@ -77,3 +77,28 @@ def test_the_cli_progress_printer_matches_what_the_pipeline_sends(capsys):
 
     # Every emission point passes four; the printer must accept four.
     assert len(inspect.signature(_print_progress).parameters) == 4
+
+
+def test_output_streams_are_made_utf8_before_anything_prints(monkeypatch):
+    """Windows consoles default to a legacy code page, and every message this
+    project writes is in Chinese — so `doctor` did not print mangled text on
+    Windows, it crashed on its first line."""
+    import io
+    import sys
+
+    from doc2video.core.logging import use_utf8
+
+    class Legacy(io.StringIO):
+        encoding = "cp1252"
+        reconfigured: dict = {}
+
+        def reconfigure(self, **kwargs):
+            Legacy.reconfigured = kwargs
+
+    monkeypatch.setattr(sys, "stdout", Legacy())
+    use_utf8()
+    assert Legacy.reconfigured.get("encoding") == "utf-8"
+    # Never raise on a stream that cannot be reconfigured: losing the message
+    # is bad, taking the process down with it is worse.
+    monkeypatch.setattr(sys, "stdout", object())
+    use_utf8()

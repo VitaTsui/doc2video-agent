@@ -29,8 +29,9 @@ jobs:
         include:
           - os: macos-14
             target: macos-arm64
-          - os: macos-13
-            target: macos-x64
+          # Intel macOS 暂缺：macos-13 的 runner 已经排不到队，而一个永远不
+          # 开始的 job 会让整个 run 结束不了，别的平台的产物也发不出去。等换到
+          # 可用的 Intel 标签再加回来。
           - os: ubuntu-22.04
             target: linux-x64
           - os: windows-latest
@@ -74,11 +75,15 @@ jobs:
         shell: bash
         run: |
           # 必须能在不依赖仓库、不依赖构建机 Python 的情况下跑起来——这正是
-          # 上一版用虚拟环境时会悄悄坏掉的地方。
+          # 上一版用虚拟环境时会悄悄坏掉的地方。env -i 清空环境，只留一个可写
+          # 的 storage 目录：没有它 storage_dir 会落到 cwd 下，而 cwd 是 /。
+          work="$RUNNER_TEMP/selfcheck"
+          mkdir -p "$work"
           if [ "${{ runner.os }}" = "Windows" ]; then
-            ./dist/runtime/python/python.exe -m doc2video.cli doctor
+            D2V_STORAGE_DIR="$work" ./dist/runtime/python/python.exe -m doc2video.cli doctor
           else
-            (cd / && env -i "$GITHUB_WORKSPACE/dist/runtime/python/bin/python3" -m doc2video.cli doctor)
+            (cd / && env -i "D2V_STORAGE_DIR=$work" \
+              "$GITHUB_WORKSPACE/dist/runtime/python/bin/python3" -m doc2video.cli doctor)
           fi
 
       - name: 构建安装包
