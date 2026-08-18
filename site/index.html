@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Doc2Video Agent · 把 PPT / PDF 变成讲解视频</title>
+    <meta
+      name="description"
+      content="把 PDF / PPT 变成带讲稿、配音和镜头调度的讲解视频。确定性引擎，可作为 MCP 工具给模型调用，也可以本机跑。"
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23c96442'/%3E%3Cpath d='M40 32v36l28-18z' fill='%23fff'/%3E%3C/svg%3E" />
+    <style>
+      :root {
+        --bg: #faf9f5;
+        --surface: #fff;
+        --line: #e8e5dd;
+        --ink: #1f1e1d;
+        --soft: #6b6862;
+        --accent: #c96442;
+        --code-bg: #2b2a27;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font: 16px/1.75 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+          "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 52rem; margin: 0 auto; padding: 0 24px; }
+      header { padding: 72px 0 40px; }
+      h1 { font-size: 40px; line-height: 1.25; margin: 0 0 16px; letter-spacing: -0.01em; }
+      h2 { font-size: 22px; margin: 56px 0 12px; }
+      h3 { font-size: 16px; margin: 28px 0 8px; }
+      p { margin: 0 0 14px; }
+      .lede { font-size: 19px; color: #3a3835; }
+      .soft { color: var(--soft); }
+      a { color: var(--accent); }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13.5px;
+        background: #f0eee6;
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+      pre {
+        background: var(--code-bg);
+        color: #f2f0ec;
+        padding: 14px 16px;
+        border-radius: 10px;
+        overflow-x: auto;
+        font-size: 13.5px;
+        line-height: 1.6;
+        margin: 0 0 14px;
+      }
+      pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 20px 22px;
+        margin: 0 0 16px;
+      }
+      .card h3 { margin-top: 0; }
+      .tag {
+        display: inline-block;
+        font-size: 12px;
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--soft);
+        margin-left: 8px;
+        vertical-align: 2px;
+      }
+      .tag--soon { border-color: #e0c7a8; background: #fdf5ea; color: #8a6a3e; }
+      .tag--ok { border-color: #cfe3cf; background: #f2f8f2; color: #4a7a4a; }
+      table { border-collapse: collapse; width: 100%; font-size: 14.5px; margin: 0 0 14px; }
+      th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--soft); font-weight: 500; }
+      footer { margin: 72px 0 48px; padding-top: 24px; border-top: 1px solid var(--line); color: var(--soft); font-size: 14px; }
+      .note { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; color: #4a4744; margin: 0 0 16px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>把 PPT / PDF 变成讲解视频</h1>
+        <p class="lede">
+          解析幻灯片、分配时长、写稿、配音、设计镜头、渲染合成、质检——整条流水线是确定性的代码，
+          不是一次性的模型输出。改一页只重做一页。
+        </p>
+        <p class="soft">
+          MIT ·
+          <a href="https://github.com/VitaTsui/doc2video-agent">GitHub</a> ·
+          Python 3.11+ · macOS / Linux / Windows
+        </p>
+      </header>
+
+      <div class="note">
+        产出的核心资产不是 MP4，而是可持续修改、可增量渲染的工程。
+        「第 7 页太长了，压到 20 秒」只会重写那一页的讲稿、重配那一段音、重渲那一个片段。
+      </div>
+
+      <h2>安装</h2>
+
+      <div class="card">
+        <h3>一行试用 <span class="tag tag--ok">已验证</span></h3>
+        <p class="soft">不装到系统里，直接跑一次。需要 <a href="https://docs.astral.sh/uv/">uv</a>。</p>
+        <pre><code>uvx --from "doc2video-agent[bundled] @ git+https://github.com/VitaTsui/doc2video-agent" \
+  doc2video run 你的文档.pptx "做一个 3 分钟的产品讲解视频"</code></pre>
+        <p class="soft">
+          <code>[bundled]</code> 会把 ffmpeg / ffprobe 一起装进环境，不用系统预装。
+          这条路走的是 ffmpeg 渲染器——能出片，但幻灯片是简版样式；要原样保真见下一条。
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>完整安装 <span class="tag tag--ok">已验证</span></h3>
+        <p class="soft">源码安装，带上 Remotion 渲染器，幻灯片按原样渲染。</p>
+        <pre><code>git clone https://github.com/VitaTsui/doc2video-agent
+cd doc2video-agent
+
+uv sync --all-extras          # Python 侧
+cd renderer && pnpm install   # Remotion 渲染器（可选，但画质差别很大）
+
+uv run doc2video doctor       # 看看少了什么</code></pre>
+        <p class="soft">
+          <code>doctor</code> 会逐项报告 ffmpeg、渲染器、语音、模型的可用性，以及缺了它会损失什么。
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>桌面版 <span class="tag tag--soon">尚未发布安装包</span></h3>
+        <p class="soft">
+          对话式界面：丢一份文档、说一句要求，出片后接着说「第 3 页太长了」就能改。
+          目前只能自行构建，三端预编译安装包还没做（缺 Windows / Linux 的语音与字体）。
+        </p>
+        <pre><code>cd desktop
+pnpm install
+pnpm dev      # 开发模式
+pnpm build    # 出本平台的安装包</code></pre>
+      </div>
+
+      <div class="card">
+        <h3>Docker <span class="tag tag--ok">已验证命令</span></h3>
+        <pre><code>docker build -t doc2video .
+docker run -p 8400:8400 \
+  -e D2V_API_TOKEN="$(openssl rand -hex 32)" \
+  -v "$PWD/storage:/app/storage" doc2video</code></pre>
+        <p class="soft">
+          <strong>令牌不能省</strong>：监听非回环地址却没有令牌时，服务会拒绝启动——
+          容器里正是这种情况。
+        </p>
+      </div>
+
+      <h2>三种用法</h2>
+
+      <div class="card">
+        <h3>给模型用（MCP）</h3>
+        <p class="soft">这是它最初的形态：模型读完你的文档、按预算写好讲稿，剩下的交给它。</p>
+        <pre><code>uv run doc2video serve      # 起服务，MCP 在 /mcp
+
+claude mcp add --transport http doc2video http://127.0.0.1:8400/mcp \
+  --header "Authorization: Bearer $D2V_API_TOKEN"</code></pre>
+        <table>
+          <tr><th>工具</th><th>做什么</th></tr>
+          <tr><td><code>prepare_project</code></td><td>解析文档，返回逐页内容和每页的时长/字数预算</td></tr>
+          <tr><td><code>render_video</code></td><td>拿着你写的逐页讲稿，配音 → 镜头 → 渲染 → 质检</td></tr>
+          <tr><td><code>project_summary</code></td><td>质量分与质检结果</td></tr>
+          <tr><td><code>revise_scenes</code></td><td>只重做指定的几个场景</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <h3>命令行</h3>
+        <pre><code>uv run doc2video run deck.pptx "做一个 5 分钟的讲解视频，面向工程师"
+uv run doc2video show &lt;project_id&gt;    # 质量分、逐页讲稿、镜头
+uv run doc2video metrics               # 跨运行的耗时与质量统计</code></pre>
+      </div>
+
+      <div class="card">
+        <h3>HTTP</h3>
+        <p class="soft">上传、解析、提交讲稿、订阅进度（SSE）、取成片，都是普通的 HTTP。</p>
+        <pre><code>POST /uploads                          上传文档
+POST /agent/prepare                    解析，返回逐页内容与预算
+POST /projects/{id}/narrations         提交逐页讲稿，返回 job_id
+GET  /jobs/{id}/events                 订阅进度（SSE）
+GET  /projects/{id}/video              下载成片</code></pre>
+      </div>
+
+      <h2>讲稿从哪来</h2>
+      <p>
+        默认<strong>不持有模型、不需要任何 Key</strong>——讲稿由调用方（Claude、ChatGPT、你自己的 Agent）写好传进来。
+        如果调用方自己没有模型（比如桌面版），可以给它配一个：
+      </p>
+      <table>
+        <tr><th>方式</th><th>说明</th></tr>
+        <tr>
+          <td><strong>本机 CLI Agent</strong></td>
+          <td>机器上装了 Claude Code 或 Codex 就能直接用，<strong>不要 API Key</strong>。经
+            <a href="https://github.com/VitaTsui/agent-virtualization">agent-virtualization</a>
+            接入，声明空动作集——要的是模型，不是让它在你机器上动手。</td>
+        </tr>
+        <tr><td><strong>Anthropic / OpenAI / Gemini</strong></td><td>各自的官方接口</td></tr>
+        <tr><td><strong>OpenAI 兼容通道</strong></td><td>DeepSeek、通义、月之暗面、自建网关，填 base_url 即可</td></tr>
+      </table>
+      <p class="soft">
+        任何一步拿不到模型答复——没配、调用失败、返回不合法——都会落到确定性的启发式规则上，
+        并在运行记录里留下降级原因。片子照出，只是那部分会平一些。
+      </p>
+
+      <h2>现在还缺什么</h2>
+      <table>
+        <tr><th>事项</th><th>状态</th></tr>
+        <tr><td>三端桌面安装包</td><td>未发布。非 macOS 还没有可用语音，Windows 缺中文字体路径</td></tr>
+        <tr><td>PyPI 包</td><td>未发布，目前从 git 安装</td></tr>
+        <tr><td>旧版 <code>.ppt</code></td><td>需要本机装有 LibreOffice；<code>.pptx</code> / PDF 不需要</td></tr>
+        <tr><td>内置 ffmpeg 的许可</td><td><code>[bundled]</code> 装的是 GPL 构建，闭源分发前请自行替换</td></tr>
+      </table>
+
+      <footer>
+        MIT · <a href="https://github.com/VitaTsui/doc2video-agent">github.com/VitaTsui/doc2video-agent</a>
+      </footer>
+    </div>
+  </body>
+</html>

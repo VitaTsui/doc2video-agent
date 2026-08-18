@@ -1,0 +1,35 @@
+# 官网：site/ 下的一张静态页，随 main 更新。
+#
+# 没有构建步骤是有意的：这一页要说的东西——怎么装、装完能干什么、现在还缺
+# 什么——不需要框架，也不该因为某个构建工具升级而变得发不出去。
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
