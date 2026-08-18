@@ -19,20 +19,62 @@ TITLE_COLOR = (24, 28, 38)
 BODY_COLOR = (55, 62, 76)
 ACCENT = (196, 106, 70)
 
-# macOS / common Linux CJK-capable fonts, best first.
+# CJK-capable fonts, best first. This list is read twice — here, and by the
+# ffmpeg renderer to burn in subtitles — so a platform missing from it loses its
+# subtitles *silently*, which is how Windows shipped without any: there was not
+# one Windows path here, `_find_font()` returned None, and drawtext was skipped
+# with a warning nobody reads.
 FONT_CANDIDATES = [
+    # macOS
     "/System/Library/Fonts/PingFang.ttc",
     "/System/Library/Fonts/STHeiti Medium.ttc",
     "/System/Library/Fonts/Supplemental/Songti.ttc",
+    # Windows. Yahei first: it is the system UI font since Vista, so a deck made
+    # on Windows most likely used it.
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/msyh.ttf",
+    "C:/Windows/Fonts/msyhbd.ttc",
+    "C:/Windows/Fonts/simhei.ttf",
+    "C:/Windows/Fonts/simsun.ttc",
+    # Linux
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+    # No CJK coverage; a last resort that at least draws latin text.
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ]
 
 
+def bundled_fonts_dir() -> Path | None:
+    """A font shipped with the runtime, which outranks anything system-wide.
+
+    A packaged app cannot assume the machine has a CJK font at all — a clean
+    Windows or a slim Linux container may have none — and tofu is worse than
+    any styling difference.
+    """
+    from ...core.config import get_settings
+
+    directory = get_settings().node_dir.parent / "fonts"
+    return directory if directory.is_dir() else None
+
+
+def font_candidates() -> list[str]:
+    """Every font to try, bundled first."""
+    bundled = bundled_fonts_dir()
+    if bundled is None:
+        return FONT_CANDIDATES
+    packaged = sorted(
+        str(path)
+        for suffix in ("*.ttc", "*.ttf", "*.otf")
+        for path in bundled.glob(suffix)
+    )
+    return packaged + FONT_CANDIDATES
+
+
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
-    for candidate in FONT_CANDIDATES:
+    for candidate in font_candidates():
         if Path(candidate).exists():
             try:
                 return ImageFont.truetype(candidate, size)
