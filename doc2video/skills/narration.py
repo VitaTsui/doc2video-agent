@@ -192,6 +192,57 @@ class NarrationSkill(Skill):
         scene.segments = self._split_into_segments(text, scene.scene_id)
         scene.duration = estimate_duration(text, self.ctx.settings.tts_speech_rate)
 
+    def revise_scene(self, scene: Scene, instruction: str, target_seconds: float = 0.0) -> None:
+        """Rewrite one scene from an instruction rather than from new text.
+
+        This is what "第 3 页太长了，压到 20 秒" has to go through. The
+        instruction is not narration — turning it into narration needs a model,
+        and without one the honest outcome is to leave the scene alone and say
+        so. Silently re-voicing the same words would report success for a run
+        that changed nothing.
+        """
+        target = target_seconds or scene.duration
+        budget = self._char_budget(max(target - self._page_silence(), MIN_SCENE_SECONDS))
+        page = self.project.document.page(scene.source_page)
+
+        def fallback() -> None:
+            self.log.warning("没有模型，无法按「%s」改写场景 %s", instruction, scene.scene_id)
+
+        def rewrite() -> None:
+            result = self.llm.complete_json(
+                self._revise_prompt(scene, page, instruction, budget),
+                schema=model_schema(PageNarration),
+                system=load_prompt("narration"),
+            )
+            revised = PageNarration.model_validate(result)
+            if revised.narration.strip():
+                self.rewrite_scene(scene, revised.narration.strip())
+
+        self.try_llm(rewrite, fallback, what=f"修改第 {scene.source_page} 页")
+
+    def _revise_prompt(
+        self, scene: Scene, page: DocumentPage | None, instruction: str, budget: int
+    ) -> str:
+        lines = [
+            f"# 修改第 {scene.source_page} 页的讲稿",
+            f"用户的要求：{instruction}",
+            f"改完后这一页的讲稿控制在 {budget} 字左右（正负 15%）。",
+            "",
+            "# 现在的讲稿",
+            scene.narration,
+        ]
+        if page is not None:
+            lines += ["", f"# 这一页的内容（标题：{page.title or '无'}）"]
+            if page.key_points:
+                lines.append("关键点：" + "；".join(page.key_points))
+            lines.extend(
+                f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 120)}"
+                for e in page.elements
+                if e.text
+            )
+        lines += ["", f"只返回这一页，index 用 {scene.source_page}。"]
+        return "\n".join(lines)
+
     def _page_silence(self) -> float:
         """Seconds each page holds without speech, at its head and its tail."""
         return self.ctx.settings.scene_lead_seconds + self.ctx.settings.scene_tail_seconds

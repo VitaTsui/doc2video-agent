@@ -137,3 +137,32 @@ def test_media_may_authenticate_by_query_but_nothing_else_can(monkeypatch):
     assert (
         guarded.post("/projects/proj_1/narrations?token=s3cret", json={}).status_code == 401
     )
+
+
+def test_a_preflight_is_not_rejected_for_having_no_token(monkeypatch):
+    """Without this the desktop UI cannot make a single request.
+
+    Every cross-origin call carrying an Authorization header is preceded by an
+    OPTIONS the browser strips credentials from. This middleware runs outside
+    the CORS one, so a 401 here is final — the request never happens.
+    """
+    from doc2video.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "api_token", "s3cret")
+    monkeypatch.setattr(settings, "cors_origins", ["tauri://localhost"])
+    guarded = TestClient(create_app())
+
+    preflight = guarded.options(
+        "/uploads",
+        headers={
+            "Origin": "tauri://localhost",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "tauri://localhost"
+    # The real request still needs the token.
+    assert guarded.post("/uploads").status_code == 401

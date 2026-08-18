@@ -50,6 +50,15 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         if request.url.path in PUBLIC_PATHS:
             return await call_next(request)
 
+        # A CORS preflight carries no credentials — by specification, the
+        # browser strips them — so rejecting it for having no token rejects
+        # every cross-origin request the app ever makes, before it is made.
+        # This middleware runs outside the CORS one (add_middleware prepends),
+        # so nothing else would get the chance to answer. The response reveals
+        # only which methods and headers are allowed.
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         header = request.headers.get("authorization", "")
         scheme, _, presented = header.partition(" ")
         if not presented and request.method == "GET" and MEDIA_PATH.match(request.url.path):

@@ -151,12 +151,19 @@ class Executor:
         """
         skill = NarrationSkill(self.ctx)
         if plan.scene_ids:
-            # Targeted edit: replace only the named scenes.
+            # Targeted edit: replace only the named scenes. New text wins; an
+            # instruction ("压到 20 秒") needs a model to become text.
             for scene_id in plan.scene_ids:
                 scene = self.project.scene(scene_id)
+                if scene is None:
+                    continue
                 text = plan.scene_narrations.get(scene_id)
-                if scene is not None and text:
+                if text:
                     skill.rewrite_scene(scene, text)
+                elif instruction := plan.scene_instructions.get(scene_id):
+                    skill.revise_scene(
+                        scene, instruction, plan.scene_durations.get(scene_id, 0.0)
+                    )
             return
         if plan.narrations:
             skill.apply(plan.narrations)
