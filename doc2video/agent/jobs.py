@@ -17,6 +17,7 @@ useful as an error than as a promise.
 
 from __future__ import annotations
 
+import queue
 import threading
 import uuid
 from collections import OrderedDict
@@ -68,8 +69,15 @@ class Job:
     error: dict[str, Any] | None = None
     result: AgentRunResult | None = None
     attempts: int = 0
+    # Countable work inside the current stage. Rendering and voicing both loop
+    # over scenes; everything else reports 0/0 and the client shows a spinner.
+    done: int = 0
+    total: int = 0
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
+    # Live listeners. Jobs run on threads and the SSE endpoint is async, so the
+    # handoff is a thread-safe queue rather than shared mutable state.
+    watchers: list[queue.SimpleQueue] = field(default_factory=list, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +85,8 @@ class Job:
             "status": self.status,
             "stage": self.stage,
             "detail": self.detail,
+            "done": self.done,
+            "total": self.total,
             "attempts": self.attempts,
             "project_id": self.result.project_id if self.result else self.request.project_id,
             "error": self.error,
@@ -127,6 +137,51 @@ class JobManager:
         threading.Thread(target=self._execute, args=(job,), daemon=True).start()
         return job
 
+    # -- live progress ---------------------------------------------------
+    def watch(self, job_id: str) -> queue.SimpleQueue | None:
+        """Subscribe to one job's progress. ``None`` if there is no such job.
+
+        A job that has already finished still gets a queue — seeded with its
+        final state and closed — so a client that subscribes late is told the
+        outcome instead of waiting for an event that will never come.
+        """
+        job = self.get(job_id)
+        if job is None:
+            return None
+        channel: queue.SimpleQueue = queue.SimpleQueue()
+        with self._lock:
+            if job.status in ("succeeded", "failed"):
+                channel.put(job.as_dict())
+                channel.put(None)
+            else:
+                channel.put(job.as_dict())
+                job.watchers.append(channel)
+        return channel
+
+    def unwatch(self, job_id: str, channel: queue.SimpleQueue) -> None:
+        job = self.get(job_id)
+        if job is None:
+            return
+        with self._lock:
+            if channel in job.watchers:
+                job.watchers.remove(channel)
+
+    def _publish(self, job: Job, *, final: bool = False) -> None:
+        """Hand the job's current state to every listener.
+
+        Never blocks and never raises: a stalled or vanished client must not be
+        able to hold up the render it is watching.
+        """
+        with self._lock:
+            watchers = list(job.watchers)
+            if final:
+                job.watchers.clear()
+        payload = job.as_dict()
+        for channel in watchers:
+            channel.put(payload)
+            if final:
+                channel.put(None)
+
     def get(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
@@ -148,10 +203,12 @@ class JobManager:
         job.attempts += 1
         job.updated_at = _now()
 
-        def progress(stage: str, detail: str) -> None:
+        def progress(stage: str, detail: str, done: int = 0, total: int = 0) -> None:
             job.stage = stage
             job.detail = detail
+            job.done, job.total = done, total
             job.updated_at = _now()
+            self._publish(job)
 
         try:
             result = self._agent.run(
@@ -166,6 +223,7 @@ class JobManager:
             job.status = "succeeded"
             job.stage = "done"
             job.detail = result.summary
+            job.done = job.total = 0
         except Exception as exc:
             log.exception("任务 %s 失败", job.id)
             job.status = "failed"
@@ -173,4 +231,5 @@ class JobManager:
             job.detail = job.error.get("message", "")
         finally:
             job.updated_at = _now()
+            self._publish(job, final=True)
             self._slots.release()

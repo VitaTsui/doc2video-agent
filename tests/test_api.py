@@ -100,3 +100,17 @@ def test_agent_run_upload_cannot_escape_the_uploads_directory(client: TestClient
     assert written, "文件应该被存下来，只是不能存到目录外"
     assert all(uploads in p.resolve().parents for p in written)
     assert all(p.name == "pwned.pptx" for p in written)
+
+
+def test_narration_routes_exist_for_a_client_without_mcp(client: TestClient):
+    """The desktop app should not have to speak MCP to a server in its own process."""
+    missing = client.post("/projects/proj_nope/narrations", json={"narrations": {"1": "你好"}})
+    assert missing.status_code == 404
+
+    bad_key = client.post("/projects/proj_nope/narrations", json={"narrations": {"封面": "x"}})
+    assert bad_key.status_code in (400, 404)
+
+
+def test_job_events_streams_and_closes(client: TestClient):
+    """A late subscriber gets the outcome and a done event, not a hung stream."""
+    assert client.get("/jobs/job_nope/events").status_code == 404

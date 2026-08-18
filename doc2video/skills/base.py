@@ -30,6 +30,10 @@ from ..tools.llm import LLMTool, get_llm
 
 T = TypeVar("T")
 
+# (stage, detail, done, total) — see agent/executor.py. Declared here too so a
+# skill that reports per-item progress does not have to import the executor.
+ProgressFn = Callable[[str, str, int, int], None]
+
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 
