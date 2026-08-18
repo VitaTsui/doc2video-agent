@@ -73,7 +73,7 @@ export function SettingsDrawer({
       onReconnected(await api.saveModelPrefs(next))
       setCaps(await api.capabilities())
     } catch (e) {
-      setError((e as Error).message)
+      setError(api.describeError(e))
     } finally {
       setSaving(null)
     }
@@ -88,7 +88,7 @@ export function SettingsDrawer({
       setConfigured(await api.configuredKeys())
       setCaps(await api.capabilities())
     } catch (e) {
-      setError((e as Error).message)
+      setError(api.describeError(e))
     } finally {
       setSaving(null)
     }

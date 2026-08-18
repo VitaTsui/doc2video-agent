@@ -111,7 +111,7 @@ export function App() {
             : '好，讲稿由你来写。留空的页会是占位文本。',
         })
       } catch (error) {
-        say({ role: 'assistant', kind: 'text', text: `切换失败：${(error as Error).message}` })
+        say({ role: 'assistant', kind: 'text', text: `切换失败：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
@@ -158,7 +158,7 @@ export function App() {
       try {
         final = await api.watchJob(jobId, (state) => amend(id, { job: state }), abort.current.signal)
       } catch (error) {
-        amend(id, { kind: 'text', text: `没能跟上进度：${(error as Error).message}` })
+        amend(id, { kind: 'text', text: `没能跟上进度：${api.describeError(error)}` })
         return
       }
       amend(id, { job: final })
@@ -209,7 +209,7 @@ export function App() {
           hasModel,
         })
       } catch (error) {
-        amend(thinking, { kind: 'text', text: `解析失败：${(error as Error).message}` })
+        amend(thinking, { kind: 'text', text: `解析失败：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
@@ -234,7 +234,7 @@ export function App() {
         const { job_id } = await api.runAgent(projectId, text)
         await follow(job_id, '好，我来改。')
       } catch (error) {
-        say({ role: 'assistant', kind: 'text', text: `没能开始：${(error as Error).message}` })
+        say({ role: 'assistant', kind: 'text', text: `没能开始：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
@@ -252,7 +252,7 @@ export function App() {
         await follow(job_id, '开始了，渲染要几分钟。')
       } catch (error) {
         amend(id, { locked: false })
-        say({ role: 'assistant', kind: 'text', text: `没能开始：${(error as Error).message}` })
+        say({ role: 'assistant', kind: 'text', text: `没能开始：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }

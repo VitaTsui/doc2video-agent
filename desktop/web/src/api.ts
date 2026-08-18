@@ -68,6 +68,24 @@ export interface Quality {
   dimensions: { name: string; score: number; weight: number; detail: string }[]
 }
 
+/**
+ * Whatever was thrown, as something worth showing someone.
+ *
+ * Tauri's `invoke` rejects with the raw value its command returned — a plain
+ * string, not an Error — so reading `.message` off it yields `undefined`. A UI
+ * that then renders `error && <card>` shows nothing at all: the install
+ * appeared to "just go back to the button" with no explanation, which is the
+ * worst way for a 400MB download to fail.
+ */
+export function describeError(thrown: unknown): string {
+  if (typeof thrown === 'string') return thrown
+  if (thrown instanceof Error) return thrown.message
+  if (thrown && typeof thrown === 'object' && 'message' in thrown) {
+    return String((thrown as { message: unknown }).message)
+  }
+  return String(thrown)
+}
+
 export class ApiError extends Error {
   constructor(readonly code: string, message: string) {
     super(message)

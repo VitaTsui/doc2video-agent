@@ -45,7 +45,7 @@ export function Setup({
       await api.installRuntime()
       onReady()
     } catch (e) {
-      setError((e as Error).message)
+      setError(api.describeError(e))
       setInstalling(false)
     }
   }
