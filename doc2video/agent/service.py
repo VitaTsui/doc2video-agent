@@ -21,6 +21,7 @@ from ..storage import ProjectStore
 from ..storage.run_log import RunLog
 from ..tools.parsers import detect_source_type
 from .executor import Executor, ProgressFn
+from .loop import Outcome
 from .planner import REVISION_STAGES as _REVISION_STAGES
 from .planner import ExecutionPlan, Planner
 
@@ -155,6 +156,48 @@ class Doc2VideoAgent:
             self._persist_run(project, record)
 
         return AgentRunResult.from_project(project, plan)
+
+    def chat(
+        self,
+        *,
+        project_id: str,
+        message: str,
+        progress: ProgressFn | None = None,
+    ) -> Outcome:
+        """One turn of conversation, with the model deciding what to do.
+
+        The alternative — and what this replaces — was a regex guessing at the
+        message and a fixed pipeline running whatever it guessed. Here the model
+        sees the deck, the current script and the last quality report, and picks
+        among the operations that already existed. It gains no new powers over
+        the machine; it gains the ability to look at the result and decide the
+        next thing.
+        """
+        from ..tools.llm import get_llm
+        from .loop import AgentLoop
+        from .session import SESSION_FILE, SessionStore
+
+        project = self.store.load(project_id)
+        llm = get_llm(self.settings, rollout_key=project_id)
+        sessions = SessionStore(self.store.project_dir(project_id) / SESSION_FILE)
+
+        def render_all(narrations: dict[int, str]) -> None:
+            self.run(message=message, project_id=project_id, narrations=narrations,
+                     progress=progress)
+
+        def render_scene(scene_id: str, narration: str) -> None:
+            self.run(message=message, project_id=project_id,
+                     scene_narrations={scene_id: narration}, progress=progress)
+
+        loop = AgentLoop(
+            project,
+            llm,
+            sessions,
+            render_all=render_all,
+            render_scene=render_scene,
+            reload=lambda: self.store.load(project_id),
+        )
+        return loop.run(message)
 
     def _ledger_path(self, project: VideoProject) -> Path:
         return self.store.project_dir(project.project_id) / ledger.LEDGER_FILE
