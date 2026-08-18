@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -12,6 +11,7 @@ from ...core.config import get_settings
 from ...core.errors import Doc2VideoError, InvalidRequest
 from ...core.logging import get_logger
 from ..deps import get_agent, get_jobs
+from .uploads import resolve_upload, store_upload
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 log = get_logger(__name__)
@@ -72,17 +72,21 @@ async def run(request: Request) -> dict:
 
 
 def _save_uploads(files) -> list[Path]:
+    """Store multipart uploads through the same door as ``POST /uploads``.
+
+    This route used to join ``upload.filename`` onto the uploads directory
+    directly: a name of ``../../etc/x`` escaped it, and neither the size cap
+    nor the "is this even a deck" check applied, both of which the other upload
+    path has had all along. One function now owns all three.
+    """
     settings = get_settings()
     saved: list[Path] = []
     for upload in files:
         filename = getattr(upload, "filename", None)
         if not filename:
             continue
-        target = settings.uploads_dir / filename
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("wb") as handle:
-            shutil.copyfileobj(upload.file, handle)
-        saved.append(target)
+        stored = store_upload(filename, upload.file)
+        saved.append(resolve_upload(settings, stored["upload_id"]))
     if not saved and files:
         raise InvalidRequest("上传的文件为空")
     return saved
