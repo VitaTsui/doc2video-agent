@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from ...agent import JobRequest
 from ...core.config import get_settings
@@ -17,6 +18,49 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 log = get_logger(__name__)
 
 TRUTHY = {"1", "true", "yes", "on"}
+
+
+class PrepareIn(BaseModel):
+    upload_id: str
+    brief: str = ""
+
+
+@router.post("/prepare")
+def prepare(body: PrepareIn) -> dict:
+    """Parse a deck and stop, returning what a script has to be written against.
+
+    The same work ``prepare_project`` does over MCP. Synchronous on purpose: no
+    rendering happens here, so it takes seconds, and a client that has to poll
+    for a page list cannot show the user their deck while they wait.
+    """
+    settings = get_settings()
+    try:
+        source = resolve_upload(settings, body.upload_id)
+        project = get_agent().prepare(source, body.brief)
+    except Doc2VideoError as exc:
+        raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
+
+    return {
+        "project_id": project.project_id,
+        "title": project.document.title,
+        "topic": project.document.topic,
+        "intent": project.intent.model_dump(mode="json"),
+        "pages": [
+            {
+                "index": page.index,
+                "title": page.title,
+                "page_type": page.page_type.value,
+                "summary": page.summary,
+                "image": page.image_path,
+                "elements": [
+                    {"id": e.id, "kind": e.kind.value, "text": e.text}
+                    for e in page.elements
+                    if e.text
+                ],
+            }
+            for page in project.document.ordered_pages()
+        ],
+    }
 
 
 @router.post("/run")

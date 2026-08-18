@@ -114,3 +114,26 @@ def test_narration_routes_exist_for_a_client_without_mcp(client: TestClient):
 def test_job_events_streams_and_closes(client: TestClient):
     """A late subscriber gets the outcome and a done event, not a hung stream."""
     assert client.get("/jobs/job_nope/events").status_code == 404
+
+
+def test_media_may_authenticate_by_query_but_nothing_else_can(monkeypatch):
+    """`<video src>` cannot send a header; every other route still must."""
+    from doc2video.core.config import get_settings
+
+    # create_app() reads the cached settings; patching the instance is what a
+    # token-protected deployment looks like from inside the process.
+    monkeypatch.setattr(get_settings(), "api_token", "s3cret")
+    guarded = TestClient(create_app())
+
+    # A media GET is reachable with the token in the query — 404 here means it
+    # got past the middleware and found no such project, which is the point.
+    assert guarded.get("/projects/proj_1/video?token=s3cret").status_code == 404
+    assert guarded.get("/projects/proj_1/video?token=wrong").status_code == 401
+    assert guarded.get("/projects/proj_1/video").status_code == 401
+
+    # Everything else still needs the header, however the URL is dressed up.
+    assert guarded.get("/projects/proj_1?token=s3cret").status_code == 401
+    assert guarded.get("/jobs/job_1/events?token=s3cret").status_code == 401
+    assert (
+        guarded.post("/projects/proj_1/narrations?token=s3cret", json={}).status_code == 401
+    )
