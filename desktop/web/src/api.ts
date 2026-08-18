@@ -158,6 +158,20 @@ export async function reviseScene(projectId: string, sceneId: string, narration:
   })
 }
 
+/**
+ * Say something about an existing project and let the planner work out what to
+ * do — the route this API was built around: one message handles creation and
+ * every later edit. It understands page references, durations, and asks to
+ * re-voice or re-direct; anything it cannot map confidently it treats as the
+ * cheapest safe change rather than rewriting the video.
+ */
+export async function runAgent(projectId: string, message: string) {
+  return request<{ job_id: string }>('/agent/run', {
+    method: 'POST',
+    body: JSON.stringify({ project_id: projectId, message }),
+  })
+}
+
 export async function scenes(projectId: string) {
   const body = await request<{ items: Scene[] }>(`/projects/${projectId}/scenes`)
   return body.items

@@ -1,0 +1,7 @@
+packages:
+  - web
+
+# esbuild must run its install script — it fetches its own platform binary and
+# Vite cannot start without it.
+allowBuilds:
+  esbuild: true

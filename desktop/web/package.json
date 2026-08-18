@@ -9,25 +9,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ant-design/icons": "^6.0.0",
-    "@hsu-react/ui": "^2.4.4",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2",
-    "antd": "^6.0.0",
-    "mobx": "^6",
-    "mobx-react-lite": "^4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "react-intl": "^6",
-    "react-router": "^6.30.0"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "less": "^4.9.0",
-    "sass": "^1.102.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.0"
   }

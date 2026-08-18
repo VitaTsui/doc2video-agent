@@ -7,16 +7,15 @@ Tauri 2 的壳 + 后端进程 + React 界面。壳里没有业务逻辑：流水
 ## 跑起来
 
 ```bash
-cd desktop/web && pnpm install     # 界面依赖
-cd ../src-tauri && cargo run       # 起壳（会自己拉起后端）
+cd desktop && pnpm install
+pnpm dev      # 开发：自动拉起 Vite 和壳，界面热更新
+pnpm build    # 出安装包
 ```
 
-开发模式（界面热更新）：
-
-```bash
-cd desktop && pnpm --dir web dev &
-cd src-tauri && cargo run
-```
+**不要直接 `cargo run`**：不带 `custom-protocol` 特性时 Tauri 走开发模式、
+去加载 `devUrl`（localhost:5273），而那个端口上没有东西，窗口就是全白的。
+要绕过 Tauri CLI 的话得用 `cargo run --features custom-protocol`，那样加载的
+是已经构建好的 `web/dist`。
 
 后端怎么找：优先用应用数据目录里下载好的运行时，没有就回落到源码仓库
 （`uv run --project <repo> doc2video`）。所以开发时改 Python，重启壳就生效。

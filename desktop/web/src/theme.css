@@ -1,0 +1,294 @@
+/*
+ * A reading surface, not a control panel.
+ *
+ * The window is one column of conversation and one input at the bottom. Warm
+ * off-white rather than grey-white, because the page spends its life next to
+ * slide renders and pure white makes them look washed out; a narrow measure,
+ * because the assistant's replies are prose and prose set 1200px wide is hard
+ * to read.
+ *
+ * The assistant's turns have no bubble around them — they are the page. Only
+ * the user's own words get a container, which is what makes the transcript
+ * scannable: everything indented right is something you said.
+ */
+
+:root {
+  --bg: #faf9f5;
+  --surface: #ffffff;
+  --line: #e8e5dd;
+  --ink: #1f1e1d;
+  --ink-soft: #6b6862;
+  --accent: #c96442;
+  --accent-ink: #ffffff;
+  --user-bg: #f0eee6;
+  --radius: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* -- header ------------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  flex-shrink: 0;
+}
+
+.topbar__name {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.topbar__button {
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.topbar__button:hover {
+  background: var(--user-bg);
+}
+
+/* -- transcript --------------------------------------------------------- */
+
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 20px 24px;
+}
+
+.column {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.turn {
+  margin-bottom: 28px;
+}
+
+.turn--user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.turn--user .turn__body {
+  background: var(--user-bg);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  max-width: 85%;
+}
+
+/* The assistant's turn is unadorned: no bubble, no border, just text. */
+.turn--assistant .turn__body {
+  white-space: pre-wrap;
+}
+
+.turn__file {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 8px;
+}
+
+.card {
+  margin-top: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+.muted {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+/* -- composer ----------------------------------------------------------- */
+
+.composer {
+  flex-shrink: 0;
+  padding: 0 20px 20px;
+}
+
+.composer__box {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 8px 8px 12px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 4%);
+}
+
+.composer__box:focus-within {
+  border-color: #d6d1c4;
+}
+
+.composer__input {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  max-height: 180px;
+  padding: 6px 0;
+}
+
+.composer__icon {
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.composer__icon:hover:not(:disabled) {
+  background: var(--user-bg);
+}
+
+.composer__send {
+  border: none;
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.composer__send:disabled,
+.composer__icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.composer__attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  background: var(--user-bg);
+  border-radius: 8px;
+  padding: 3px 10px;
+  margin-bottom: 8px;
+}
+
+.composer__attachment button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  padding: 0;
+  line-height: 1;
+}
+
+.composer__hint {
+  text-align: center;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 8px;
+}
+
+/* -- pieces inside cards ------------------------------------------------ */
+
+.page-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.page-row img {
+  width: 200px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.bar {
+  height: 4px;
+  background: var(--user-bg);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.bar__fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 99px;
+  transition: width 0.3s ease;
+}
+
+.bar__fill--pulse {
+  width: 40%;
+  animation: sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+video {
+  width: 100%;
+  border-radius: 10px;
+  background: #000;
+  display: block;
+}
