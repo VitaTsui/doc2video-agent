@@ -131,6 +131,10 @@ class NarrationSkill(Skill):
 
         Without this the caller is guessing at length, and a script that misses
         the requested duration cannot be fixed after the audio exists.
+
+        ``target_seconds`` is time *spoken*; ``page_seconds`` is how long the
+        page is on screen. They differ by the silence held at each end of a
+        page, which is part of the video but not of the script.
         """
         pages = self._pages()
         budgets = self._allocate_budget(pages)
@@ -141,6 +145,7 @@ class NarrationSkill(Skill):
                 "page_type": page.page_type.value,
                 "target_seconds": round(budgets[page.index], 1),
                 "target_chars": self._char_budget(budgets[page.index]),
+                "page_seconds": round(budgets[page.index] + self._page_silence(), 1),
             }
             for page in pages
         ]
@@ -166,8 +171,23 @@ class NarrationSkill(Skill):
         scene.segments = self._split_into_segments(text, scene.scene_id)
         scene.duration = estimate_duration(text, self.ctx.settings.tts_speech_rate)
 
+    def _page_silence(self) -> float:
+        """Seconds each page holds without speech, at its head and its tail."""
+        return self.ctx.settings.scene_lead_seconds + self.ctx.settings.scene_tail_seconds
+
     def _allocate_budget(self, pages: list[DocumentPage]) -> dict[int, float]:
+        """Seconds of *speech* per page, summing to the requested duration.
+
+        The silence around each page is a fixed cost that has to come off the
+        top: it is on screen but nobody is talking, so budgeting it as writing
+        time would make every page's script overrun by that much — a 16-page
+        deck would run 24 seconds long against its target.
+        """
         intent = self.project.intent
+        silence = self._page_silence() * len(pages)
+        # Never let the reservation eat the whole request: a very short target
+        # on a long deck should still produce a script, just a terse one.
+        speech_total = max(intent.duration - silence, intent.duration * 0.4)
         weights: dict[int, float] = {}
         for page in pages:
             weight = TYPE_WEIGHT.get(page.page_type, 1.0)
@@ -181,7 +201,7 @@ class NarrationSkill(Skill):
         total_weight = sum(weights.values()) or 1.0
         budgets: dict[int, float] = {}
         for index, weight in weights.items():
-            seconds = intent.duration * weight / total_weight
+            seconds = speech_total * weight / total_weight
             budgets[index] = max(MIN_SCENE_SECONDS, min(MAX_SCENE_SECONDS, seconds))
         return budgets
 
