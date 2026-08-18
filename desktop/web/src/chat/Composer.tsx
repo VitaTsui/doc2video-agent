@@ -7,11 +7,14 @@ export function Composer({
   hint,
   onSend,
   onDeck,
+  children,
 }: {
   disabled: boolean
   hint: string
   onSend: (text: string) => void | Promise<void>
   onDeck: (file: File, brief: string) => void | Promise<void>
+  /** The model picker: a per-conversation choice, so it lives with the input. */
+  children?: React.ReactNode
 }) {
   const [text, setText] = useState('')
   const [file, setFile] = useState<File | null>(null)
@@ -75,6 +78,7 @@ export function Composer({
             placeholder={hint}
             onChange={(e) => {
               setText(e.target.value)
+              // Reset before measuring, or the box only ever grows.
               e.target.style.height = 'auto'
               e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`
             }}
@@ -96,7 +100,10 @@ export function Composer({
             <Arrow />
           </button>
         </div>
-        <div className="composer__hint">Enter 发送，Shift+Enter 换行</div>
+        <div className="composer__footer">
+          {children}
+          <span className="muted">Enter 发送，Shift+Enter 换行</span>
+        </div>
       </div>
     </div>
   )

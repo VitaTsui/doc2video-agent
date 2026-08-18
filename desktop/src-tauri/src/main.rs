@@ -125,6 +125,35 @@ fn start_backend(app: &tauri::AppHandle) -> Result<Backend, String> {
     Backend::start(&paths, env).map_err(|e| e.to_string())
 }
 
+/// Stop the backend when the process is signalled.
+///
+/// Closing the window runs `Drop`; `kill` does not, and neither does anything
+/// that takes the process down without unwinding. The next launch would clear
+/// the orphan, but "next launch" can be hours of a spinning fan away.
+#[cfg(unix)]
+fn stop_on_signal(app: &tauri::AppHandle) {
+    use signal_hook::consts::{SIGINT, SIGTERM};
+    use signal_hook::iterator::Signals;
+
+    let handle = app.clone();
+    let Ok(mut signals) = Signals::new([SIGTERM, SIGINT]) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        if signals.forever().next().is_some() {
+            if let Some(state) = handle.try_state::<AppState>() {
+                if let Ok(mut guard) = state.backend.lock() {
+                    *guard = None; // Drop stops the whole process group.
+                }
+            }
+            std::process::exit(0);
+        }
+    });
+}
+
+#[cfg(not(unix))]
+fn stop_on_signal(_app: &tauri::AppHandle) {}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -149,6 +178,7 @@ fn main() {
                 .lock()
                 .unwrap()
                 .replace(backend);
+            stop_on_signal(&handle);
             Ok(())
         })
         .run(tauri::generate_context!())

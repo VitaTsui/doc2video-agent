@@ -12,8 +12,12 @@ import { useEffect, useState } from 'react'
 import * as api from './api'
 import type { Connection } from './api'
 
-/** One height for every control in this panel, so nothing sits a pixel off. */
 const FIELD_HEIGHT = 34
+
+/** The save button is deliberately shorter than the field it sits beside: a
+ *  button matched to a text input's height reads as a second input. Centred
+ *  against it rather than stretched, so the input keeps its own size. */
+const BUTTON_HEIGHT = 26
 
 const FIELD: React.CSSProperties = {
   height: FIELD_HEIGHT,
@@ -145,81 +149,28 @@ export function SettingsDrawer({
           </div>
         )}
 
-        {catalogue && (
+        {/* Only what the picker under the composer cannot express: a gateway's
+            address, and a model id newer than this build's list. */}
+        {chosen?.needs_base_url && (
           <div style={{ marginTop: 20 }}>
-            <label style={{ display: 'block', marginBottom: 6 }}>用哪个模型</label>
-            <select
+            <label style={{ display: 'block', marginBottom: 6 }}>网关地址</label>
+            <input
               style={{ ...FIELD, width: '100%' }}
-              value={prefs.provider}
+              value={prefs.base_url}
+              placeholder="https://api.deepseek.com"
               disabled={saving === 'model'}
-              onChange={(e) =>
-                // Switching provider clears the model: an id from one vendor
-                // means nothing to another, and silently carrying it over
-                // produces a request that fails on the far side.
-                void saveModel({ ...prefs, provider: e.target.value, model: '' })
-              }
-            >
-              <option value="">不用模型（讲稿我自己写）</option>
-              {catalogue.providers.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.label}
-                  {provider.needs_key ? '' : '（不要 Key）'}
-                </option>
-              ))}
-            </select>
-            {chosen?.note && (
-              <div className="muted" style={{ marginTop: 4 }}>
-                {chosen.note}
-              </div>
-            )}
-
-            {chosen && (
-              <div style={{ marginTop: 10 }}>
-                <label style={{ display: 'block', marginBottom: 6 }}>
-                  {chosen.model_label ?? '模型'}
-                </label>
-                <input
-                  list={`models-${chosen.id}`}
-                  style={{ ...FIELD, width: '100%' }}
-                  value={prefs.model}
-                  placeholder={
-                    chosen.needs_base_url
-                      ? '网关上的模型名，必填'
-                      : chosen.model_label
-                        ? '留空用 Claude Code'
-                        : '留空用这家的默认'
-                  }
-                  disabled={saving === 'model'}
-                  onChange={(e) => setPrefs({ ...prefs, model: e.target.value })}
-                  onBlur={() => void saveModel(prefs)}
-                />
-                {/* A datalist, not a select: model ids change faster than a
-                    shipped app updates, so the list is a suggestion and any id
-                    can be typed in. */}
-                <datalist id={`models-${chosen.id}`}>
-                  {(catalogue.models[chosen.id] ?? []).map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.label}
-                      {model.note ? ` — ${model.note}` : ''}
-                    </option>
-                  ))}
-                </datalist>
-              </div>
-            )}
-
-            {chosen?.needs_base_url && (
-              <div style={{ marginTop: 10 }}>
-                <label style={{ display: 'block', marginBottom: 6 }}>接口地址</label>
-                <input
-                  style={{ ...FIELD, width: '100%' }}
-                  value={prefs.base_url}
-                  placeholder="https://api.deepseek.com"
-                  disabled={saving === 'model'}
-                  onChange={(e) => setPrefs({ ...prefs, base_url: e.target.value })}
-                  onBlur={() => void saveModel(prefs)}
-                />
-              </div>
-            )}
+              onChange={(e) => setPrefs({ ...prefs, base_url: e.target.value })}
+              onBlur={() => void saveModel(prefs)}
+            />
+            <label style={{ display: 'block', margin: '10px 0 6px' }}>模型名</label>
+            <input
+              style={{ ...FIELD, width: '100%' }}
+              value={prefs.model}
+              placeholder="网关上的模型名"
+              disabled={saving === 'model'}
+              onChange={(e) => setPrefs({ ...prefs, model: e.target.value })}
+              onBlur={() => void saveModel(prefs)}
+            />
           </div>
         )}
 
@@ -241,7 +192,7 @@ export function SettingsDrawer({
                 <button
                   type="button"
                   className="composer__send"
-                  style={{ width: 'auto', height: FIELD_HEIGHT, padding: '0 16px', borderRadius: 8 }}
+                  style={{ width: 'auto', height: BUTTON_HEIGHT, padding: '0 14px', borderRadius: 7, fontSize: 13 }}
                   disabled={saving === vendor}
                   onClick={() => save(vendor)}
                 >

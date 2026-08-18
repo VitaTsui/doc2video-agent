@@ -18,6 +18,7 @@ import * as api from './api'
 import type { Connection, JobState } from './api'
 import { Composer } from './chat/Composer'
 import { MessageList } from './chat/MessageList'
+import { ModelPicker } from './chat/ModelPicker'
 import type { Message, MessageDraft, MessagePatch } from './chat/types'
 import { SettingsDrawer } from './SettingsDrawer'
 
@@ -215,7 +216,17 @@ export function App() {
         onSend={acceptMessage}
         onDeck={acceptDeck}
         hint={projectId ? '想改哪里就直接说' : '说说你想要什么样的视频，并附上文档'}
-      />
+      >
+        <ModelPicker
+          disabled={busy}
+          onSwitched={async (next, describe) => {
+            setConnection(next)
+            const caps = await api.capabilities().catch(() => null)
+            setHasModel(Boolean(caps?.llm.available))
+            say({ role: 'assistant', kind: 'text', text: describe })
+          }}
+        />
+      </Composer>
 
       <SettingsDrawer
         open={settingsOpen}

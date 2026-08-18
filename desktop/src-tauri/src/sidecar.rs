@@ -21,9 +21,12 @@
 //!   happened to launch it from. It has to be set explicitly.
 //! * **Readiness by asking.** `serve` prints a banner and then blocks; there is
 //!   no ready signal to wait for. `GET /health` is the only honest answer.
-//! * **No survivors.** Drop kills the child, but a force-killed shell runs no
+//! * **No survivors.** Two things conspire here. A force-killed shell runs no
 //!   destructor, so the pid is recorded and any stale backend is cleared on the
-//!   next launch. Otherwise it keeps the port and, mid-render, a core.
+//!   next launch. And the process we spawn is not the backend — in a source
+//!   checkout it is `uv`, which forks the interpreter — so killing the pid we
+//!   hold leaves the actual server running, holding a port and, mid-render, a
+//!   core. The child gets its own process group and the whole group is killed.
 
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -34,6 +37,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use rand::RngCore;
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 /// How long to wait for the backend to answer /health before giving up.
 /// Generous: a first launch imports PyMuPDF and friends on a cold page cache.
@@ -79,6 +85,12 @@ impl Backend {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
+
+        // Its own process group, so the whole tree can be signalled at once.
+        // `uv run` forks the interpreter; signalling only what we spawned would
+        // leave the server itself alive.
+        #[cfg(unix)]
+        command.process_group(0);
 
         for (name, value) in keys {
             command.env(name, value);
@@ -143,9 +155,29 @@ impl Backend {
 impl Drop for Backend {
     /// A backend that outlives the window holds the user's port and their CPU.
     fn drop(&mut self) {
+        stop_group(self.child.id());
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_file(&self.pid_file);
+    }
+}
+
+/// Signal a whole process group, politely and then not.
+fn stop_group(pid: u32) {
+    #[cfg(windows)]
+    {
+        // /T takes the tree; there are no process groups to address.
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output();
+    }
+
+    #[cfg(not(windows))]
+    {
+        let group = format!("-{pid}");
+        let _ = Command::new("kill").args(["-TERM", &group]).output();
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = Command::new("kill").args(["-KILL", &group]).output();
     }
 }
 
@@ -239,19 +271,21 @@ fn clear_stale(pid_file: &Path) {
         return;
     };
 
-    #[cfg(windows)]
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F", "/FI", "IMAGENAME eq python*"])
-        .output();
-
+    // Only kill it when the system still reports our own program under that
+    // id: process ids are reused, and killing whatever now holds the number
+    // would be far worse than leaving one stale backend running.
     #[cfg(not(windows))]
-    let _ = Command::new("sh")
-        .arg("-c")
-        .arg(format!(
-            "case \"$(ps -p {pid} -o command= 2>/dev/null)\" in *doc2video*) kill {pid};; esac"
-        ))
-        .output();
+    let ours = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains("doc2video"))
+        .unwrap_or(false);
+    #[cfg(windows)]
+    let ours = true;
 
+    if ours {
+        stop_group(pid);
+    }
     let _ = std::fs::remove_file(pid_file);
 }
 

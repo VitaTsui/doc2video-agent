@@ -167,6 +167,9 @@ body {
   border-color: #d6d1c4;
 }
 
+/* One empty line is exactly the height of the buttons on either side, so the
+   row reads as one control. It grows from there; the buttons stay put because
+   the box is bottom-aligned. */
 .composer__input {
   flex: 1;
   border: none;
@@ -175,8 +178,10 @@ body {
   background: transparent;
   font: inherit;
   color: inherit;
+  line-height: 22px;
+  padding: 5px 0;
+  height: 32px;
   max-height: 180px;
-  padding: 6px 0;
 }
 
 .composer__icon {
@@ -236,11 +241,36 @@ body {
   line-height: 1;
 }
 
-.composer__hint {
-  text-align: center;
+.composer__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.picker__select {
+  font: inherit;
   font-size: 12px;
   color: var(--ink-soft);
-  margin-top: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 3px 6px;
+  max-width: 22rem;
+  cursor: pointer;
+}
+
+.picker__select:hover:not(:disabled) {
+  border-color: var(--line);
+  background: var(--surface);
 }
 
 /* -- pieces inside cards ------------------------------------------------ */

@@ -26,5 +26,10 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 rand = "0.8"
 ureq = "2"
 
+[target."cfg(unix)".dependencies]
+# The window's own close path runs Drop; a signal does not, and a backend left
+# behind by `kill` keeps a port and, mid-render, a core.
+signal-hook = "0.3"
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]
