@@ -8,6 +8,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod prefs;
 mod secrets;
 mod sidecar;
 
@@ -16,6 +17,7 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{Manager, State};
 
+use prefs::Prefs;
 use sidecar::{Backend, Paths};
 
 /// What the window needs to talk to the backend.
@@ -70,6 +72,32 @@ fn restart_backend(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<
     restart(&app, &state)
 }
 
+/// The model this app is configured to use, as last chosen.
+#[tauri::command]
+fn model_prefs(app: tauri::AppHandle) -> Result<Prefs, String> {
+    Ok(prefs::load(&app_data(&app)?))
+}
+
+/// Choose a model, and restart the backend so it takes effect.
+#[tauri::command]
+fn save_model_prefs(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    prefs: Prefs,
+) -> Result<Connection, String> {
+    prefs::save(&app_data(&app)?, &prefs)?;
+    restart(&app, &state)
+}
+
+fn app_data(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("找不到数据目录：{e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建数据目录：{e}"))?;
+    Ok(dir)
+}
+
 fn restart(app: &tauri::AppHandle, state: &State<'_, AppState>) -> Result<Connection, String> {
     let mut guard = state.backend.lock().map_err(|_| "状态锁损坏")?;
     // Dropped before the new one starts: two backends would race for the same
@@ -86,14 +114,15 @@ fn restart(app: &tauri::AppHandle, state: &State<'_, AppState>) -> Result<Connec
 }
 
 fn start_backend(app: &tauri::AppHandle) -> Result<Backend, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("找不到数据目录：{e}"))?;
-    std::fs::create_dir_all(&app_data).map_err(|e| format!("无法创建数据目录：{e}"))?;
+    let dir = app_data(app)?;
+    let paths = Paths::resolve(&dir).map_err(|e| e.to_string())?;
 
-    let paths = Paths::resolve(&app_data).map_err(|e| e.to_string())?;
-    Backend::start(&paths, secrets::as_env()).map_err(|e| e.to_string())
+    // Keys from the keychain, the model choice from disk — both only reach the
+    // backend as environment variables at spawn, which is why changing either
+    // means starting a new one.
+    let mut env = secrets::as_env();
+    env.extend(prefs::load(&dir).as_env());
+    Backend::start(&paths, env).map_err(|e| e.to_string())
 }
 
 fn main() {
@@ -105,6 +134,8 @@ fn main() {
             connection,
             configured_keys,
             save_key,
+            model_prefs,
+            save_model_prefs,
             restart_backend
         ])
         .setup(|app| {

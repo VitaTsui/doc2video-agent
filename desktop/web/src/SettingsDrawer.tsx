@@ -12,6 +12,19 @@ import { useEffect, useState } from 'react'
 import * as api from './api'
 import type { Connection } from './api'
 
+/** One height for every control in this panel, so nothing sits a pixel off. */
+const FIELD_HEIGHT = 34
+
+const FIELD: React.CSSProperties = {
+  height: FIELD_HEIGHT,
+  border: '1px solid var(--line)',
+  borderRadius: 8,
+  padding: '0 10px',
+  font: 'inherit',
+  background: 'var(--surface)',
+  color: 'inherit',
+}
+
 const VENDORS: [string, string][] = [
   ['ANTHROPIC_API_KEY', 'Anthropic（Claude）'],
   ['OPENAI_API_KEY', 'OpenAI'],
@@ -29,6 +42,8 @@ export function SettingsDrawer({
   onReconnected: (connection: Connection) => void
 }) {
   const [configured, setConfigured] = useState<string[]>([])
+  const [catalogue, setCatalogue] = useState<Awaited<ReturnType<typeof api.catalogue>> | null>(null)
+  const [prefs, setPrefs] = useState<api.ModelPrefs>({ provider: '', model: '', base_url: '' })
   const [caps, setCaps] = useState<Awaited<ReturnType<typeof api.capabilities>> | null>(null)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState<string | null>(null)
@@ -38,9 +53,27 @@ export function SettingsDrawer({
     if (!open) return
     void api.configuredKeys().then(setConfigured)
     void api.capabilities().then(setCaps).catch(() => setCaps(null))
+    void api.catalogue().then(setCatalogue).catch(() => setCatalogue(null))
+    void api.modelPrefs().then(setPrefs)
   }, [open])
 
   if (!open) return null
+
+  const chosen = catalogue?.providers.find((p) => p.id === prefs.provider)
+
+  async function saveModel(next: api.ModelPrefs) {
+    setPrefs(next)
+    setSaving('model')
+    setError(null)
+    try {
+      onReconnected(await api.saveModelPrefs(next))
+      setCaps(await api.capabilities())
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setSaving(null)
+    }
+  }
 
   async function save(vendor: string) {
     setSaving(vendor)
@@ -112,6 +145,78 @@ export function SettingsDrawer({
           </div>
         )}
 
+        {catalogue && (
+          <div style={{ marginTop: 20 }}>
+            <label style={{ display: 'block', marginBottom: 6 }}>用哪个模型</label>
+            <select
+              style={{ ...FIELD, width: '100%' }}
+              value={prefs.provider}
+              disabled={saving === 'model'}
+              onChange={(e) =>
+                // Switching provider clears the model: an id from one vendor
+                // means nothing to another, and silently carrying it over
+                // produces a request that fails on the far side.
+                void saveModel({ ...prefs, provider: e.target.value, model: '' })
+              }
+            >
+              <option value="">不用模型（讲稿我自己写）</option>
+              {catalogue.providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.label}
+                  {provider.needs_key ? '' : '（不要 Key）'}
+                </option>
+              ))}
+            </select>
+            {chosen?.note && (
+              <div className="muted" style={{ marginTop: 4 }}>
+                {chosen.note}
+              </div>
+            )}
+
+            {chosen && (
+              <div style={{ marginTop: 10 }}>
+                <label style={{ display: 'block', marginBottom: 6 }}>模型</label>
+                <input
+                  list={`models-${chosen.id}`}
+                  style={{ ...FIELD, width: '100%' }}
+                  value={prefs.model}
+                  placeholder={
+                    chosen.needs_base_url ? '网关上的模型名，必填' : '留空用这家的默认'
+                  }
+                  disabled={saving === 'model'}
+                  onChange={(e) => setPrefs({ ...prefs, model: e.target.value })}
+                  onBlur={() => void saveModel(prefs)}
+                />
+                {/* A datalist, not a select: model ids change faster than a
+                    shipped app updates, so the list is a suggestion and any id
+                    can be typed in. */}
+                <datalist id={`models-${chosen.id}`}>
+                  {(catalogue.models[chosen.id] ?? []).map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label}
+                      {model.note ? ` — ${model.note}` : ''}
+                    </option>
+                  ))}
+                </datalist>
+              </div>
+            )}
+
+            {chosen?.needs_base_url && (
+              <div style={{ marginTop: 10 }}>
+                <label style={{ display: 'block', marginBottom: 6 }}>接口地址</label>
+                <input
+                  style={{ ...FIELD, width: '100%' }}
+                  value={prefs.base_url}
+                  placeholder="https://api.deepseek.com"
+                  disabled={saving === 'model'}
+                  onChange={(e) => setPrefs({ ...prefs, base_url: e.target.value })}
+                  onBlur={() => void saveModel(prefs)}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ marginTop: 20 }}>
           {VENDORS.map(([vendor, label]) => (
             <div key={vendor} style={{ marginBottom: 16 }}>
@@ -119,29 +224,18 @@ export function SettingsDrawer({
                 {label}
                 {configured.includes(vendor) && <span className="muted">已配置</span>}
               </label>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input
                   type="password"
                   value={drafts[vendor] ?? ''}
                   placeholder={configured.includes(vendor) ? '重新填写可覆盖，留空清除' : '粘贴 API Key'}
                   onChange={(e) => setDrafts((prev) => ({ ...prev, [vendor]: e.target.value }))}
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    border: '1px solid var(--line)',
-                    borderRadius: 8,
-                    padding: '6px 10px',
-                    font: 'inherit',
-                    background: 'var(--surface)',
-                  }}
+                  style={{ ...FIELD, flex: 1, minWidth: 0 }}
                 />
                 <button
                   type="button"
                   className="composer__send"
-                  // Stretch rather than the icon button's fixed 32px: the input
-                  // is a couple of pixels taller once its border and padding
-                  // are counted, and a fixed height leaves the two misaligned.
-                  style={{ width: 'auto', height: 'auto', padding: '0 16px', borderRadius: 8 }}
+                  style={{ width: 'auto', height: FIELD_HEIGHT, padding: '0 16px', borderRadius: 8 }}
                   disabled={saving === vendor}
                   onClick={() => save(vendor)}
                 >

@@ -261,6 +261,45 @@ export async function jobState(jobId: string) {
 
 // -- settings --------------------------------------------------------------
 
+export interface ProviderInfo {
+  id: string
+  label: string
+  needs_key: boolean
+  needs_base_url: boolean
+  note?: string
+}
+
+export interface ModelInfo {
+  id: string
+  label: string
+  vision: boolean
+  note: string
+}
+
+/** Which providers this build can reach, and a starting list of model ids. */
+export async function catalogue() {
+  return request<{ providers: ProviderInfo[]; models: Record<string, ModelInfo[]> }>(
+    '/health/models',
+  )
+}
+
+export interface ModelPrefs {
+  provider: string
+  model: string
+  base_url: string
+}
+
+export async function modelPrefs(): Promise<ModelPrefs> {
+  return invoke<ModelPrefs>('model_prefs')
+}
+
+/** Choosing a model restarts the backend, which is why this returns a connection. */
+export async function saveModelPrefs(prefs: ModelPrefs): Promise<Connection> {
+  const next = await invoke<Connection>('save_model_prefs', { prefs })
+  reconnect(next)
+  return next
+}
+
 export async function configuredKeys(): Promise<string[]> {
   return invoke<string[]>('configured_keys')
 }
