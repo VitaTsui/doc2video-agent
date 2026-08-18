@@ -371,6 +371,50 @@
       "title": "HistoryEntry",
       "type": "object"
     },
+    "LLMCall": {
+      "description": "One model call, as the vendor reported it.\n\nRecorded even when the call failed or was refused: it was billed, and a run\nthat spent tokens without producing anything is exactly what monitoring\nshould be able to see.",
+      "properties": {
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "input_tokens": {
+          "default": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "cache_read_tokens": {
+          "default": 0,
+          "title": "Cache Read Tokens",
+          "type": "integer"
+        },
+        "cache_write_tokens": {
+          "default": 0,
+          "title": "Cache Write Tokens",
+          "type": "integer"
+        },
+        "duration_s": {
+          "default": 0.0,
+          "title": "Duration S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "title": "LLMCall",
+      "type": "object"
+    },
     "NarrationSegment": {
       "description": "A sentence-sized chunk of narration, bound to the elements it talks about.\n\nThe binding is what makes the director deterministic: the model decides\n*what* is being talked about, the timing comes from TTS timestamps.",
       "properties": {
@@ -638,6 +682,13 @@
             "$ref": "#/$defs/Degradation"
           },
           "title": "Degradations",
+          "type": "array"
+        },
+        "llm_calls": {
+          "items": {
+            "$ref": "#/$defs/LLMCall"
+          },
+          "title": "Llm Calls",
           "type": "array"
         },
         "flags": {
