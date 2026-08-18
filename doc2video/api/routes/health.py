@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ...core.config import dependency_report, filter_report, get_settings
+from ...tools.llm import llm_status
 from ...tools.renderer import renderer_status
 from ...tools.tts import TTSTool
 
@@ -25,6 +26,7 @@ def health() -> dict:
 def capabilities() -> dict:
     settings = get_settings()
     return {
+        "llm": llm_status(settings),
         "tts": {"provider": TTSTool(settings).provider_name},
         "renderers": renderer_status(),
         "binaries": dependency_report(),

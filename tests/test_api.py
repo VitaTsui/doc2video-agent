@@ -20,10 +20,15 @@ def test_health(client: TestClient):
 
 def test_capabilities_reports_every_layer(client: TestClient):
     body = client.get("/health/capabilities").json()
-    assert set(body) >= {"tts", "renderers", "binaries", "video"}
-    assert "llm" not in body  # 这个服务不持有模型
+    assert set(body) >= {"llm", "tts", "renderers", "binaries", "video"}
     assert "remotion" in body["renderers"]
     assert "ffmpeg" in body["binaries"]
+    # The model layer is reported but empty by default: holding no model is
+    # still the service's contract, and a caller has to be able to tell
+    # "nothing configured" from "configured and broken" before it decides
+    # whether to write the script itself.
+    assert body["llm"]["available"] is False
+    assert body["llm"]["configured"] == "mock"
 
 
 def test_agent_run_requires_a_message(client: TestClient):

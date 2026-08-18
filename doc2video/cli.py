@@ -18,6 +18,7 @@ from .core.errors import Doc2VideoError
 from .core.flags import report as flag_report
 from .core.logging import setup_logging
 from .storage.run_log import RunLog, summarize
+from .tools.llm import llm_status
 from .tools.renderer import renderer_status
 from .tools.tts import TTSTool
 
@@ -82,6 +83,17 @@ def cmd_doctor(_args) -> int:
     settings = get_settings()
 
     print("== 能力体检 ==")
+    llm = llm_status(settings)
+    if llm["available"]:
+        print(f"模型       : {llm['provider']}｜{llm['model']}")
+    else:
+        configured = llm["configured"]
+        note = (
+            "未配置（讲稿由调用方提供）"
+            if configured in ("", "mock")
+            else f"{configured} 不可用"
+        )
+        print(f"模型       : {note}")
     print(f"TTS        : {TTSTool(settings).provider_name}")
 
     print("\n渲染器：")
