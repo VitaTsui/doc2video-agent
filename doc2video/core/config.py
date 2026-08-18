@@ -6,7 +6,7 @@ import shutil
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +15,48 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_file=".env", env_prefix="D2V_", extra="ignore", case_sensitive=False
+    )
+
+    # --- LLM ---
+    # "mock" is the default on purpose: this service's contract is that the
+    # caller writes the script, and an install that suddenly started calling a
+    # model because a key happened to be in the environment would be a
+    # surprise. The desktop app sets this explicitly; MCP callers never do.
+    # Also accepts "auto" | "anthropic" | "openai" | "gemini" | "compatible".
+    llm_provider: str = "mock"
+    # Empty means "the provider's own default"; the compatible channel has no
+    # default and must be told, since a gateway serves whatever it serves.
+    llm_model: str = ""
+    # Required by "compatible", optional elsewhere (a proxy in front of a vendor).
+    llm_base_url: str = ""
+    llm_max_tokens: int = 16000
+    llm_effort: str = "high"  # anthropic only: low | medium | high | xhigh | max
+
+    # --- Local CLI Agent as a model (agent-virtualization) ---
+    # A machine with Claude Code or Codex installed already has a model on it.
+    # The package wraps that CLI behind a bridge process; these point at it.
+    agent_cli_path: str = ""  # explicit bin; empty means PATH, then the Node workspace
+    agent_cli_config: str = ""  # its config file; empty generates a default one
+    agent_cli_runtime: str = "claude-code"  # which CLI that default drives: claude-code | codex
+    # A CLI Agent thinks for as long as it wants to; this is a ceiling, not a target.
+    agent_cli_timeout: int = 900
+
+    # Vendor keys keep their conventional names — a machine that already has
+    # ANTHROPIC_API_KEY exported should not need it copied under a D2V_ alias.
+    anthropic_api_key: str = Field(
+        default="", validation_alias=AliasChoices("ANTHROPIC_API_KEY", "D2V_ANTHROPIC_API_KEY")
+    )
+    openai_api_key: str = Field(
+        default="", validation_alias=AliasChoices("OPENAI_API_KEY", "D2V_OPENAI_API_KEY")
+    )
+    gemini_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "GEMINI_API_KEY", "GOOGLE_API_KEY", "D2V_GEMINI_API_KEY"
+        ),
+    )
+    compatible_api_key: str = Field(
+        default="", validation_alias=AliasChoices("D2V_COMPATIBLE_API_KEY")
     )
 
     # --- TTS ---
@@ -51,6 +93,11 @@ class Settings(BaseSettings):
 
     # --- Storage ---
     storage_dir: Path = Path("./storage")
+    # The Node workspace: the Remotion project and the agent-virtualization
+    # bridge both live in its node_modules. Defaults to the copy in a source
+    # checkout; a packaged install (the desktop app) points it at the runtime
+    # it downloaded, since `renderer/` is not part of the Python wheel.
+    node_dir: Path = Path(__file__).resolve().parents[2] / "renderer"
 
     # --- Server ---
     # Shared secret for every route, MCP included. Empty means no auth, which

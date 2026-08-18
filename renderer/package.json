@@ -2,7 +2,7 @@
   "name": "doc2video-renderer",
   "version": "0.1.0",
   "private": true,
-  "description": "Deterministic scene renderer for Doc2Video Agent, built on Remotion",
+  "description": "Node-side toolchain for Doc2Video Agent: the Remotion scene renderer, and the agent-virtualization bridge that exposes a local CLI Agent as a model",
   "scripts": {
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts Scene out/scene.mp4",
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@remotion/cli": "4.0.242",
+    "agent-virtualization": "0.1.2",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "remotion": "4.0.242"
