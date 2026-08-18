@@ -25,9 +25,12 @@ from pydantic import BaseModel
 from ..core import telemetry
 from ..core.ids import scene_id
 from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisual, VisualType
+from ..tools.llm import model_schema
 from ..tools.tts import estimate_duration
-from .base import Skill
+from .base import Skill, load_prompt
 
+# Pages per model call. Small enough that a long deck cannot overrun the
+# output budget, large enough that each page can see its neighbours.
 BATCH_SIZE = 4
 
 # Per-page-type weights for splitting the total duration budget.
@@ -80,15 +83,33 @@ class NarrationSkill(Skill):
     description = "生成适合目标受众和时长的讲稿"
 
     def run(self) -> None:
-        """Build scenes from a placeholder script — the no-caller-input path."""
+        """Write the script ourselves — the path taken when nobody supplied one.
+
+        With a model configured this is a real script. Without one it is
+        placeholder text: renderable, correctly timed, and meaningless — which
+        is why it is recorded as a degradation rather than passed off as a
+        result. The caller-written path (``apply``) remains the primary one.
+        """
         pages = self._pages()
         if not pages:
             return
-        telemetry.record_degradation(
-            "讲稿", "调用方未提供讲稿，使用占位文本；成片可渲染但内容无意义"
+        budgets = self._allocate_budget(pages)
+        drafts = self.try_llm(
+            lambda: self._write_with_model(pages, budgets),
+            lambda: self._placeholder(pages, budgets),
+            what="讲稿",
         )
-        self._build_scenes(pages, self._write_heuristically(pages, self._allocate_budget(pages)))
-        self.log.warning("使用占位讲稿：%d 个场景", len(self.project.scenes))
+        self._build_scenes(pages, drafts)
+        self.log.info("讲稿完成：%d 个场景", len(self.project.scenes))
+
+    def _placeholder(
+        self, pages: list[DocumentPage], budgets: dict[int, float]
+    ) -> dict[int, PageNarration]:
+        # No degradation recorded here: try_llm already logged one, with the
+        # reason attached. A second record for the same event would double the
+        # count that cross-run metrics compare.
+        self.log.warning("使用占位讲稿（成片可渲染但内容无意义）：%d 页", len(pages))
+        return self._write_heuristically(pages, budgets)
 
     def apply(self, narrations: dict[int, str]) -> list[int]:
         """Adopt caller-written narration, keyed by page index.
@@ -210,7 +231,78 @@ class NarrationSkill(Skill):
         # Mirrors the TTS estimator so the written script and the spoken clip agree.
         return int(seconds * 4.6)
 
-    # -- LLM path -------------------------------------------------------
+    # -- model path -----------------------------------------------------
+    def _write_with_model(
+        self, pages: list[DocumentPage], budgets: dict[int, float]
+    ) -> dict[int, PageNarration]:
+        """Write the whole deck in batches, then keep only what fits.
+
+        Batched rather than per-page because a script's job is to connect: a
+        page written without sight of its neighbours opens with a transition
+        from nothing. Batched rather than all-at-once because a long deck
+        overruns the output budget, and a truncated reply loses whole pages.
+
+        Whatever the model does not return is filled in heuristically. A model
+        that skips page 7 must not cost page 7 its narration.
+        """
+        drafts: dict[int, PageNarration] = {}
+        for start in range(0, len(pages), BATCH_SIZE):
+            batch = pages[start : start + BATCH_SIZE]
+            result = self.llm.complete_json(
+                self._prompt(batch, budgets, position=start),
+                schema=model_schema(NarrationResult),
+                system=load_prompt("narration"),
+                max_tokens=self.ctx.settings.llm_max_tokens,
+            )
+            for page in NarrationResult.model_validate(result).pages:
+                if page.narration.strip():
+                    drafts[page.index] = page
+
+        wanted = {p.index for p in pages}
+        missing = sorted(wanted - drafts.keys())
+        if missing:
+            telemetry.record_degradation("讲稿", f"模型漏掉第 {missing} 页，改用占位文本")
+            self.log.warning("模型未覆盖 %s，这几页使用占位讲稿", missing)
+            drafts.update(
+                self._write_heuristically([p for p in pages if p.index in set(missing)], budgets)
+            )
+        return {index: drafts[index] for index in sorted(wanted)}
+
+    def _prompt(
+        self, batch: list[DocumentPage], budgets: dict[int, float], *, position: int
+    ) -> str:
+        document = self.project.document
+        intent = self.project.intent
+        lines = [
+            f"# 文档：{document.title or '未命名'}",
+            f"主题：{document.topic or '未知'}",
+            f"整体摘要：{document.summary or '（无）'}",
+            "",
+            f"# 观众与风格\n受众：{intent.audience}\n语气：{intent.tone}\n"
+            f"额外要求：{intent.instructions or '（无）'}",
+            "",
+            f"# 需要写讲稿的页面（全文第 {position + 1} 页起，共 {len(budgets)} 页）",
+        ]
+        for page in batch:
+            lines.append(
+                f"\n## 第 {page.index} 页｜{page.page_type.value}｜{page.title or '无标题'}"
+            )
+            lines.append(f"字数预算：{self._char_budget(budgets[page.index])} 字（正负 15%）")
+            if page.summary:
+                lines.append(f"页面摘要：{page.summary}")
+            if page.key_points:
+                lines.append("关键点：" + "；".join(page.key_points))
+            if page.speaker_notes:
+                lines.append(f"演讲者备注：{_truncate(page.speaker_notes, 300)}")
+            elements = [e for e in page.elements if e.text]
+            if elements:
+                lines.append("元素：")
+                lines.extend(
+                    f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 120)}" for e in elements
+                )
+        return "\n".join(lines)
+
+    # -- heuristic path -------------------------------------------------
     def _write_heuristically(
         self, pages: list[DocumentPage], budgets: dict[int, float]
     ) -> dict[int, PageNarration]:
@@ -321,3 +413,8 @@ class NarrationSkill(Skill):
             NarrationSegment(id=f"{prefix}_s{i:02d}", text=part)
             for i, part in enumerate(parts, start=1)
         ]
+
+
+def _truncate(text: str, limit: int) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
