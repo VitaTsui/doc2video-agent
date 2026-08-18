@@ -16,7 +16,7 @@ from .api.security import check_exposure
 from .core.config import dependency_report, filter_report, get_settings
 from .core.errors import Doc2VideoError
 from .core.flags import report as flag_report
-from .core.logging import setup_logging
+from .core.logging import setup_logging, use_utf8
 from .storage.run_log import RunLog, summarize
 from .tools.llm import llm_status
 from .tools.renderer import renderer_status
@@ -24,6 +24,7 @@ from .tools.tts import TTSTool
 
 
 def main(argv: list[str] | None = None) -> int:
+    use_utf8()
     parser = argparse.ArgumentParser(prog="doc2video", description="PDF / PPT 智能讲解视频 Agent")
     parser.add_argument("--log-level", default=None, help="DEBUG / INFO / WARNING")
     sub = parser.add_subparsers(dest="command", required=True)

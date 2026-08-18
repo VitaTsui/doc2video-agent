@@ -29,8 +29,9 @@ jobs:
         include:
           - os: macos-14
             target: macos-arm64
-          - os: macos-13
-            target: macos-x64
+          # Intel macOS 暂缺：macos-13 的 runner 已经排不到队，而一个永远不
+          # 开始的 job 会让整个 run 结束不了，别的平台的产物也发不出去。等换到
+          # 可用的 Intel 标签再加回来。
           - os: ubuntu-22.04
             target: linux-x64
           - os: windows-latest
