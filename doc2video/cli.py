@@ -97,7 +97,7 @@ def cmd_doctor(_args) -> int:
     print(f"TTS        : {TTSTool(settings).provider_name}")
 
     print("\n渲染器：")
-    for name, info in renderer_status().items():
+    for name, info in renderer_status(settings).items():
         mark = "✓" if info["available"] else "✗"
         reason = "" if info["available"] else f"  ({info['reason']})"
         print(f"  {mark} {name}{reason}")

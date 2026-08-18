@@ -126,6 +126,18 @@ class Settings(BaseSettings):
     def uploads_dir(self) -> Path:
         return self.storage_dir / "uploads"
 
+    @property
+    def render_work_dir(self) -> Path:
+        """Scratch the renderers write into, kept out of the Node workspace.
+
+        Remotion resolves browser-loadable assets from a ``public/`` directory
+        and writes its image sequences somewhere; both used to land inside
+        ``renderer/``. That is fine in a source checkout and impossible in an
+        installed app, where the program directory is read-only. ``--public-dir``
+        lets the location move, so it moves here.
+        """
+        return self.storage_dir / "render-work"
+
     def ensure_dirs(self) -> None:
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.uploads_dir.mkdir(parents=True, exist_ok=True)

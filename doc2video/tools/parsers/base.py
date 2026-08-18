@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...core.config import Settings
 from ...core.errors import UnsupportedSource
 from ...schemas import DocumentModel, SourceType
 
@@ -29,10 +30,18 @@ def detect_source_type(path: Path) -> SourceType:
     )
 
 
-def parse(path: Path, assets_dir: Path, *, target_width: int = 1920) -> DocumentModel:
+def parse(
+    path: Path,
+    assets_dir: Path,
+    *,
+    target_width: int = 1920,
+    settings: Settings | None = None,
+) -> DocumentModel:
     """Parse a source document into a structural DocumentModel.
 
     ``assets_dir`` receives one rendered PNG per page plus any extracted images.
+    ``settings`` reaches the slide rasteriser, which needs to know where the
+    Node workspace is and where it may write.
     """
     source_type = detect_source_type(path)
     assets_dir.mkdir(parents=True, exist_ok=True)
@@ -44,4 +53,4 @@ def parse(path: Path, assets_dir: Path, *, target_width: int = 1920) -> Document
 
     from .ppt_parser import parse_ppt
 
-    return parse_ppt(path, assets_dir, target_width=target_width)
+    return parse_ppt(path, assets_dir, target_width=target_width, settings=settings)

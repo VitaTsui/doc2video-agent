@@ -129,6 +129,7 @@ class Executor:
             source_path,
             self.ctx.store.assets_dir(self.project.project_id),
             target_width=self.ctx.settings.video_width,
+            settings=self.ctx.settings,
         )
         # Preserve the title the user's file already implies.
         document.title = document.title or self.project.source.file

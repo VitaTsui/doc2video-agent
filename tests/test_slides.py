@@ -207,7 +207,9 @@ def test_table_is_extracted_with_a_default_style(deck):
 
 
 def test_chromium_renderer_reports_why_it_is_unavailable(tmp_path: Path):
-    renderer = ChromiumSlideRenderer(renderer_dir=tmp_path / "no-renderer")
+    from doc2video.core.config import Settings
+
+    renderer = ChromiumSlideRenderer(Settings(node_dir=tmp_path / "no-renderer"))
     assert renderer.available() is False
     assert renderer.unavailable_reason()
 

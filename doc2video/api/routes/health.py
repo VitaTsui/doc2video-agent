@@ -28,7 +28,7 @@ def capabilities() -> dict:
     return {
         "llm": llm_status(settings),
         "tts": {"provider": TTSTool(settings).provider_name},
-        "renderers": renderer_status(),
+        "renderers": renderer_status(settings),
         "binaries": dependency_report(),
         "filters": filter_report(),
         "video": {

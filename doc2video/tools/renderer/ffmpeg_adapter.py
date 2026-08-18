@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...core.config import Settings
 from ...core.logging import get_logger
 from ...schemas import ActionType
 from .. import ffmpeg, media_binaries
@@ -27,6 +28,11 @@ BOX_BORDER = 16
 
 class FFmpegAdapter(RendererAdapter):
     name = "ffmpeg"
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        # Accepted for a uniform constructor across adapters; this one needs
+        # nothing from settings.
+        self.settings = settings
 
     def available(self) -> bool:
         return ffmpeg.available()

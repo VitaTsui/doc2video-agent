@@ -12,15 +12,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from ...core.config import which
+from ...core.config import Settings, get_settings, which
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
 from .base import RendererAdapter, ScenePlan
 
 log = get_logger(__name__)
 
-# Repository root -> renderer/ (the Remotion project scaffolded alongside this package)
-RENDERER_DIR = Path(__file__).resolve().parents[3] / "renderer"
 COMPOSITION_ID = "Scene"
 RENDER_TIMEOUT = 3600
 
@@ -28,8 +26,12 @@ RENDER_TIMEOUT = 3600
 class RemotionAdapter(RendererAdapter):
     name = "remotion"
 
-    def __init__(self, renderer_dir: Path | None = None) -> None:
-        self.renderer_dir = renderer_dir or RENDERER_DIR
+    def __init__(self, settings: Settings | None = None) -> None:
+        settings = settings or get_settings()
+        # Read-only: the Remotion project. Writable: everything this render
+        # produces on the way to the clip.
+        self.renderer_dir = settings.node_dir
+        self.public_dir = settings.render_work_dir / "public"
 
     def available(self) -> bool:
         return (
@@ -43,7 +45,7 @@ class RemotionAdapter(RendererAdapter):
             return "未安装 Node.js / npx"
         if not (self.renderer_dir / "package.json").exists():
             return f"未找到 Remotion 工程：{self.renderer_dir}"
-        return "Remotion 依赖未安装，请在 renderer/ 下执行 pnpm install"
+        return f"Remotion 依赖未安装，请在 {self.renderer_dir} 下执行 pnpm install"
 
     def render_scene(self, plan: ScenePlan, out_path: Path) -> Path:
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,6 +64,10 @@ class RemotionAdapter(RendererAdapter):
             COMPOSITION_ID,
             str(out_path.resolve()),
             f"--props={props_path.resolve()}",
+            # Assets are staged outside the Remotion project so nothing is
+            # written into it — an installed app's program directory is
+            # read-only, and a render that needs to scribble there cannot run.
+            f"--public-dir={self.public_dir.resolve()}",
             "--log=error",
         ]
         log.debug("remotion: %s", " ".join(cmd))
@@ -86,14 +92,14 @@ class RemotionAdapter(RendererAdapter):
         return out_path
 
     def _stage_assets(self, plan: ScenePlan) -> ScenePlan:
-        """Copy assets into ``renderer/public`` and rewrite paths for staticFile.
+        """Copy assets into the public dir and rewrite paths for staticFile.
 
         Remotion resolves browser-loadable assets from ``public/``; project
         directories live elsewhere, so each scene's page image is staged under a
         content-addressed name (re-rendering the same scene reuses the file).
         """
         staged = plan.model_copy(deep=True)
-        public_dir = self.renderer_dir / "public" / "staged"
+        public_dir = self.public_dir / "staged"
         public_dir.mkdir(parents=True, exist_ok=True)
 
         if plan.image:
