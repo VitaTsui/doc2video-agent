@@ -86,6 +86,15 @@ impl Backend {
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
 
+        // The runtime ships its own node; without it on PATH the backend looks
+        // for `npx`, does not find one, and quietly renders through ffmpeg with
+        // plainer slides — a downgrade nobody asked for and nothing reports.
+        if let Some(bin) = paths.node_bin() {
+            let existing = std::env::var("PATH").unwrap_or_default();
+            let separator = if cfg!(windows) { ";" } else { ":" };
+            command.env("PATH", format!("{}{separator}{existing}", bin.display()));
+        }
+
         // Its own process group, so the whole tree can be signalled at once.
         // `uv run` forks the interpreter; signalling only what we spawned would
         // leave the server itself alive.
@@ -199,6 +208,12 @@ pub enum Program {
 }
 
 impl Paths {
+    /// The runtime's own `node`/`npx`, when it shipped with one.
+    fn node_bin(&self) -> Option<PathBuf> {
+        let bin = self.node_dir.join("bin");
+        bin.is_dir().then_some(bin)
+    }
+
     fn command(&self) -> Result<Command> {
         match &self.program {
             Program::Bundled { python } => {
