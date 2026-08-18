@@ -1,0 +1,30 @@
+# The desktop shell: a window over the backend's own HTTP API, the process that
+# serves it, and the user's keys. It carries no product logic — the pipeline is
+# in Python and stays there.
+[package]
+name = "doc2video-desktop"
+version = "0.5.0"
+description = "Doc2Video 桌面版：把 PPT / PDF 变成讲解视频"
+license = "MIT"
+repository = "https://github.com/VitaTsui/doc2video-agent"
+edition = "2021"
+rust-version = "1.82"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+# Keys live in the OS credential store, never on disk: macOS Keychain,
+# Windows Credential Manager, Linux Secret Service.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+rand = "0.8"
+ureq = "2"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
