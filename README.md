@@ -244,7 +244,7 @@ curl -X POST http://127.0.0.1:8400/agent/run \
 | GET | `/projects/{id}/timeline` | 绝对时间轴 |
 | GET | `/projects/{id}/review` | 质检结果 |
 | GET | `/projects/{id}/quality` | 质量分与各维度得分 |
-| GET | `/projects/{id}/telemetry` | 上次运行的分阶段耗时、模型调用与成本 |
+| GET | `/projects/{id}/telemetry` | 上次运行的分阶段耗时、模型调用与降级记录 |
 | GET | `/metrics`、`/metrics/runs` | 跨运行统计与灰度分支对照 |
 | GET | `/projects/{id}/video` | 下载成片 |
 | GET | `/projects/{id}/assets/{path}` | 预览页面渲染图、配音等资源 |
@@ -287,7 +287,7 @@ doc2video-agent/
 ├── doc2video/
 │   ├── agent/          # planner（意图→计划）、executor（分阶段执行）、jobs（任务）
 │   ├── skills/         # document / narration / voice / director / layout / motion / review
-│   ├── tools/          # parsers、slides、llm、tts、ffmpeg、renderer（adapter）
+│   ├── tools/          # parsers、slides、llm（多 provider）、tts、ffmpeg、renderer（adapter）
 │   ├── schemas/        # Document / Scene / Timeline / VideoProject
 │   ├── prompts/        # 各 Skill 的提示词
 │   ├── storage/        # 工程持久化
@@ -328,20 +328,20 @@ doc2video-agent/
 
 ## 运行可观测性
 
-每次 `agent.run` 都会留下一条**运行记录**：分阶段耗时、每次模型调用的 token 与花费、
+每次 `agent.run` 都会留下一条**运行记录**：分阶段耗时、每次模型调用的 token 数、
 哪些步骤降级了、这次走的是哪条灰度分支，以及最终的质量分。记录同时落在**工程里**
 （`project.telemetry`，回答「这支视频怎么样」）和 `storage/runs.jsonl` **总账**里
-（回答「最近是不是变慢了、一支视频要花多少钱」）。
+（回答「最近是不是变慢了」）。
 
 ```bash
-uv run doc2video metrics     # 跨运行的耗时 / 成本 / 质量 / 灰度对照
+uv run doc2video metrics     # 跨运行的耗时 / 质量 / 灰度对照
 uv run doc2video show <id>   # 单个工程的质量分与上次运行开销
 ```
 
 | 关注点 | 落地方式 |
 | --- | --- |
 | **监控** | 每个阶段计时并记录成败；**降级也计数**——链路降级后仍然「成功」，不数就跟正常跑完毫无区别 |
-| **成本统计** | 归因到发起调用的 stage 与 skill。API 路径按价目表折算，CLI 路径直接用它自己报的 `total_cost_usd`；模型没有公开价就报「未知」，不报 0 |
+| **用量统计** | 记 token 不记钱：价目表要跟着四家厂商改，改晚一天数字就是错的，而 token 数是 API 自己报的 |
 | **质量评估** | 从 review 已有的检查里折算出 0–100 分，分完整度/节奏/原创度/镜头/字幕五个维度。**按比例算而不是数条数**，所以分数不随页数漂移 |
 | **灰度** | 特性开关带放量比例，按 `flag:project_id` 哈希决定分支 |
 
