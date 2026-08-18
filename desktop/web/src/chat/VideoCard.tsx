@@ -3,6 +3,7 @@
 import { useState } from 'react'
 
 import * as api from '../api'
+import { LedgerCard } from './LedgerCard'
 import type { Message } from './types'
 
 export function VideoCard({ message }: { message: Extract<Message, { kind: 'video' }> }) {
@@ -25,6 +26,8 @@ export function VideoCard({ message }: { message: Extract<Message, { kind: 'vide
           {open ? '收起' : '逐页看看'}
         </button>
       </div>
+
+      <LedgerCard projectId={message.projectId} entries={message.ledger} />
 
       {open && (
         <div style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 10 }}>

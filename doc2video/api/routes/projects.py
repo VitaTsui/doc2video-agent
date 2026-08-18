@@ -127,6 +127,20 @@ def get_quality(project_id: str) -> dict:
     return quality.model_dump(mode="json")
 
 
+@router.get("/{project_id}/ledger")
+def get_ledger(project_id: str) -> dict:
+    """How this project got made, step by step, with what each step produced.
+
+    Separate from `/telemetry`, which answers an operator's questions (is it
+    slow, did something quietly degrade). This answers the one the person
+    watching a render actually has: what did that step make, and can I look at
+    it? File-backed artifacts carry a project-relative path, servable through
+    the same `/assets/` route the window already uses for slide thumbnails.
+    """
+    _load(project_id)
+    return {"items": [e.model_dump(mode="json") for e in get_agent().read_ledger(project_id)]}
+
+
 @router.get("/{project_id}/telemetry")
 def get_telemetry(project_id: str) -> dict:
     """The last run's stage timings and degradations."""

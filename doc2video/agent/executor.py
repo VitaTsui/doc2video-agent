@@ -11,10 +11,11 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
-from ..core import telemetry
+from ..core import ledger, telemetry
 from ..core.errors import Doc2VideoError, SkillFailed
 from ..core.logging import get_logger
 from ..schemas import HistoryEntry, ProjectStatus, Scene, VideoProject
+from ..schemas.ledger import Artifact, ArtifactKind
 from ..skills import (
     DirectorSkill,
     DocumentSkill,
@@ -53,6 +54,20 @@ def _timed(stage: str):
         yield
 
 
+# What each stage is called in the account a person reads. The enum values are
+# fine for logs and wrong for a UI: "motion" means nothing to someone watching
+# their deck become a video.
+STAGE_LABEL = {
+    Stage.PARSE: "解析文档",
+    Stage.UNDERSTAND: "理解结构",
+    Stage.NARRATE: "生成讲稿",
+    Stage.VOICE: "配音",
+    Stage.DIRECT: "设计镜头",
+    Stage.MOTION: "编排时间轴",
+    Stage.RENDER: "渲染合成",
+    Stage.REVIEW: "质检",
+}
+
 STAGE_STATUS = {
     Stage.PARSE: ProjectStatus.PARSING,
     Stage.UNDERSTAND: ProjectStatus.PARSING,
@@ -84,8 +99,15 @@ class Executor:
             for stage in plan.stages:
                 self.project.status = STAGE_STATUS.get(stage, self.project.status)
                 self._progress(stage.value, f"开始 {stage.value}", 0, 0)
-                with _timed(stage.value):
-                    self._run_stage(stage, plan)
+                label = STAGE_LABEL.get(stage, stage.value)
+                recorder = ledger.current()
+                if recorder is None:
+                    with _timed(stage.value):
+                        self._run_stage(stage, plan)
+                else:
+                    with recorder.stage(label) as artifacts, _timed(stage.value):
+                        self._run_stage(stage, plan)
+                        artifacts.extend(self._artifacts_of(stage))
                 self.ctx.store.save(self.project)
                 self._progress(stage.value, f"完成 {stage.value}", 0, 0)
             self.project.status = ProjectStatus.READY
@@ -108,6 +130,94 @@ class Executor:
         )
         self.ctx.store.save(self.project)
         return self.project
+
+    def _artifacts_of(self, stage: Stage) -> list[Artifact]:
+        """What this step made, as things a person can open.
+
+        Read off the project after the fact rather than threaded out of each
+        skill: the project is where every stage already records what it
+        produced, so this stays one place instead of eight.
+        """
+        project = self.project
+        if stage is Stage.PARSE:
+            return [
+                ledger.file_artifact(f"第 {page.index} 页", page.image_path, ArtifactKind.IMAGE)
+                for page in project.document.ordered_pages()
+                if page.image_path
+            ]
+        if stage is Stage.UNDERSTAND:
+            return [
+                ledger.text_artifact(
+                    f"第 {page.index} 页｜{page.page_type.value}",
+                    page.summary or "（无摘要）",
+                )
+                for page in project.document.ordered_pages()
+            ]
+        if stage is Stage.NARRATE:
+            return [
+                ledger.text_artifact(
+                    f"第 {scene.source_page} 页讲稿", scene.narration, scene.scene_id
+                )
+                for scene in project.scenes
+            ]
+        if stage is Stage.VOICE:
+            return [
+                ledger.file_artifact(
+                    f"第 {scene.source_page} 页配音（{scene.duration:.1f}s）",
+                    scene.audio.path,
+                    ArtifactKind.AUDIO,
+                    scene.scene_id,
+                )
+                for scene in project.scenes
+                if scene.audio.path
+            ]
+        if stage is Stage.DIRECT:
+            return [
+                ledger.text_artifact(
+                    f"第 {scene.source_page} 页镜头",
+                    "；".join(
+                        f"{a.type.value} @{a.at:.1f}s" + (f" → {a.target}" if a.target else "")
+                        for a in scene.actions
+                    )
+                    or "（这一页没有镜头动作）",
+                    scene.scene_id,
+                )
+                for scene in project.scenes
+            ]
+        if stage is Stage.MOTION:
+            timeline = project.timeline
+            return [
+                ledger.text_artifact(
+                    "时间轴",
+                    f"{len(timeline.video)} 段画面、{len(timeline.subtitles)} 条字幕、"
+                    f"共 {timeline.duration:.1f} 秒",
+                )
+            ]
+        if stage is Stage.RENDER:
+            artifacts = [
+                ledger.file_artifact(
+                    f"第 {scene.source_page} 页片段", clip, ArtifactKind.VIDEO, scene.scene_id
+                )
+                for scene in project.scenes
+                if (clip := project.render.scene_clips.get(scene.scene_id))
+            ]
+            if project.render.output_path:
+                artifacts.append(
+                    ledger.file_artifact("成片", project.render.output_path, ArtifactKind.VIDEO)
+                )
+            return artifacts
+        if stage is Stage.REVIEW:
+            quality = project.quality
+            findings = "\n".join(
+                f"[{f.severity}] {f.scene_id or '整体'}：{f.message}" for f in project.review
+            )
+            return [
+                ledger.text_artifact(
+                    f"质量分 {quality.score}" if quality else "质检",
+                    findings or "没有发现问题",
+                )
+            ]
+        return []
 
     def _run_stage(self, stage: Stage, plan: ExecutionPlan) -> None:
         handlers = {

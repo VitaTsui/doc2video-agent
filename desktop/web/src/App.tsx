@@ -172,9 +172,10 @@ export function App() {
         return
       }
 
-      const [scenes, quality] = await Promise.all([
+      const [scenes, quality, chain] = await Promise.all([
         api.scenes(final.project_id),
         api.quality(final.project_id).catch(() => null),
+        api.ledger(final.project_id).catch(() => []),
       ])
       say({
         role: 'assistant',
@@ -183,6 +184,7 @@ export function App() {
         projectId: final.project_id,
         scenes,
         quality,
+        ledger: chain,
       })
     },
     [amend, say],

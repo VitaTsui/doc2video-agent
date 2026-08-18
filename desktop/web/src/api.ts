@@ -61,6 +61,30 @@ export interface Scene {
   narration: string
 }
 
+export interface LedgerArtifact {
+  label: string
+  kind: 'image' | 'audio' | 'video' | 'text' | 'json'
+  path: string
+  text: string
+  scene_id: string
+}
+
+export interface LedgerEntry {
+  seq: number
+  kind: 'stage' | 'decision' | 'degradation' | 'note'
+  name: string
+  detail: string
+  status: string
+  duration_s: number
+  artifacts: LedgerArtifact[]
+}
+
+/** How this project got made, step by step, with what each step produced. */
+export async function ledger(projectId: string) {
+  const body = await request<{ items: LedgerEntry[] }>(`/projects/${projectId}/ledger`)
+  return body.items
+}
+
 export interface Quality {
   score: number
   errors: number

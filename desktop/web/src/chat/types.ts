@@ -1,4 +1,4 @@
-import type { GuideRow, JobState, PageView, Quality, Scene } from '../api'
+import type { GuideRow, JobState, LedgerEntry, PageView, Quality, Scene } from '../api'
 
 /**
  * One turn in the conversation.
@@ -25,7 +25,13 @@ export type Message = {
       locked?: boolean
     }
   | { kind: 'job'; job: JobState | null }
-  | { kind: 'video'; projectId: string; scenes: Scene[]; quality: Quality | null }
+  | {
+      kind: 'video'
+      projectId: string
+      scenes: Scene[]
+      quality: Quality | null
+      ledger: LedgerEntry[]
+    }
 )
 
 /**

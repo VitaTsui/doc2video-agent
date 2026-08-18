@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..core import flags, telemetry
+from ..core import flags, ledger, telemetry
 from ..core.config import Settings, get_settings
 from ..core.errors import InvalidRequest
 from ..core.ids import new_project_id
@@ -92,7 +92,10 @@ class Doc2VideoAgent:
         """
         project = self.create_project(source_file)
         plan = self.planner.prepare_plan(brief, project)
-        with telemetry.run(project.project_id, flags=self._flags(project)) as recorder:
+        with (
+            telemetry.run(project.project_id, flags=self._flags(project)) as recorder,
+            ledger.recording(self._ledger_path(project), recorder.record.run_id),
+        ):
             try:
                 ctx = SkillContext.build(project, store=self.store, settings=self.settings)
                 project = Executor(ctx).run(plan, message=brief)
@@ -123,7 +126,10 @@ class Doc2VideoAgent:
 
         active = self._flags(project)
 
-        with telemetry.run(project.project_id, flags=active) as recorder:
+        with (
+            telemetry.run(project.project_id, flags=active) as recorder,
+            ledger.recording(self._ledger_path(project), recorder.record.run_id),
+        ):
             try:
                 with recorder.stage_scope("plan"):
                     if narrations:
@@ -149,6 +155,13 @@ class Doc2VideoAgent:
             self._persist_run(project, record)
 
         return AgentRunResult.from_project(project, plan)
+
+    def _ledger_path(self, project: VideoProject) -> Path:
+        return self.store.project_dir(project.project_id) / ledger.LEDGER_FILE
+
+    def read_ledger(self, project_id: str) -> list:
+        """The account of how this project got made, oldest first."""
+        return ledger.read(self.store.project_dir(project_id) / ledger.LEDGER_FILE)
 
     def _flags(self, project: VideoProject) -> dict[str, bool]:
         return flags.active_flags(project.project_id, self.settings)
