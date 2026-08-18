@@ -175,13 +175,19 @@ export function SettingsDrawer({
 
             {chosen && (
               <div style={{ marginTop: 10 }}>
-                <label style={{ display: 'block', marginBottom: 6 }}>模型</label>
+                <label style={{ display: 'block', marginBottom: 6 }}>
+                  {chosen.model_label ?? '模型'}
+                </label>
                 <input
                   list={`models-${chosen.id}`}
                   style={{ ...FIELD, width: '100%' }}
                   value={prefs.model}
                   placeholder={
-                    chosen.needs_base_url ? '网关上的模型名，必填' : '留空用这家的默认'
+                    chosen.needs_base_url
+                      ? '网关上的模型名，必填'
+                      : chosen.model_label
+                        ? '留空用 Claude Code'
+                        : '留空用这家的默认'
                   }
                   disabled={saving === 'model'}
                   onChange={(e) => setPrefs({ ...prefs, model: e.target.value })}

@@ -267,6 +267,8 @@ export interface ProviderInfo {
   needs_key: boolean
   needs_base_url: boolean
   note?: string
+  /** What the second field is called — for the local CLI it is not a model. */
+  model_label?: string
 }
 
 export interface ModelInfo {

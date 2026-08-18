@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -47,6 +48,16 @@ log = get_logger(__name__)
 PROTOCOL = "agent-virtualization/model-provider/v1"
 PACKAGE = "agent-virtualization"
 
+# The CLIs this can drive, and the binary each needs on PATH. For this provider
+# the choice of "model" *is* the choice of runtime — there is nothing else to
+# pick — so `llm_model` names one of these.
+RUNTIMES = {"claude-code": "claude", "codex": "codex"}
+
+
+def runtime_of(settings: Settings) -> str:
+    """Which CLI answers. ``llm_model`` wins so the UI has one field per provider."""
+    return settings.llm_model.strip() or settings.agent_cli_runtime.strip() or "claude-code"
+
 JSON_INSTRUCTION = (
     "\n\n只输出一个 JSON 对象，不要加解释文字，也不要包在代码块里。"
     "它必须符合这个 JSON Schema：\n"
@@ -55,6 +66,12 @@ JSON_INSTRUCTION = (
 # The bridge streams the CLI's own events; a single line is bounded so a runaway
 # agent cannot exhaust memory here (the protocol doc asks hosts to do this).
 MAX_LINE_BYTES = 8 * 1024 * 1024
+
+# How much of the CLI's stderr, and how many bridge events, to keep for a turn
+# that failed. Neither carries the CLI's own message — it goes to the CLI's own
+# output, which the runtime consumes — but together they say how far it got.
+STDERR_LINES = 40
+EVENT_LINES = 12
 
 
 class VirtualizedCLILLM(LLMTool):
@@ -69,7 +86,9 @@ class VirtualizedCLILLM(LLMTool):
         self._config = _resolve_config(settings)
         self._workspace = settings.storage_dir / "agent-workspace"
         self._timeout = settings.agent_cli_timeout
-        self.model = settings.llm_model.strip() or _runtime_name(self._config)
+        self.model = _runtime_name(self._config)
+        self._stderr: list[str] = []
+        self._events: list[str] = []
 
     # -- public API ----------------------------------------------------
     def complete_json(
@@ -118,6 +137,12 @@ class VirtualizedCLILLM(LLMTool):
             text=True,
             encoding="utf-8",
         )
+        self._stderr, self._events = [], []
+        if process.stderr is not None:
+            # Drained on a thread: a full pipe would block the CLI itself, and
+            # this is where the reason for a failed turn is written.
+            threading.Thread(target=self._collect, args=(process.stderr,), daemon=True).start()
+
         try:
             output = self._exchange(process, request, request_id)
         finally:
@@ -133,6 +158,41 @@ class VirtualizedCLILLM(LLMTool):
             )
         )
         return output
+
+    def _collect(self, stream) -> None:
+        for line in stream:
+            if len(self._stderr) == STDERR_LINES:
+                self._stderr.pop(0)
+            self._stderr.append(line.rstrip())
+
+    def _output_of(self, result: dict) -> str:
+        """The CLI's answer, or the best explanation available for why there is none.
+
+        The bridge reports a failed turn as a status and a short message; the
+        reason the user can act on — hitting a plan's usage limit, being logged
+        out — is written by the CLI to stderr. Reporting only the status turns
+        every one of those into an unhelpful "failed".
+        """
+        status = result.get("status")
+        output = (result.get("output") or "").strip()
+        if status != "completed":
+            raise ToolFailed(
+                f"{self.model} 未正常结束（{status}）。"
+                f"它自己的报错不会经过这里——直接跑一次 `{RUNTIMES[self.model]}` 通常"
+                f"就能看到原因（没登录、额度用尽、网络不通）。",
+                detail={
+                    "error": str(result.get("error") or result.get("message") or "")[:300],
+                    "events": self._events[-4:],
+                    "stderr": self.diagnostics()[-400:],
+                },
+            )
+        if not output:
+            raise ToolFailed("CLI Agent 没有输出内容")
+        return output
+
+    def diagnostics(self) -> str:
+        """Recent stderr from the bridge and the CLI under it."""
+        return "\n".join(self._stderr)
 
     def _exchange(self, process: subprocess.Popen, request: dict, request_id: str) -> str:
         assert process.stdin is not None and process.stdout is not None
@@ -153,7 +213,7 @@ class VirtualizedCLILLM(LLMTool):
 
             kind = message.get("type")
             if kind == "model.result":
-                return _output_of(message.get("result") or {})
+                return self._output_of(message.get("result") or {})
             if kind == "model.error":
                 raise ToolFailed(
                     f"{PACKAGE} 报错", detail={"error": str(message.get("error"))[:300]}
@@ -173,10 +233,13 @@ class VirtualizedCLILLM(LLMTool):
                     },
                 )
             elif kind == "model.event":
-                log.debug("agent 事件：%s", str(message.get("event"))[:200])
+                event = str(message.get("event"))[:300]
+                log.debug("agent 事件：%s", event)
+                if len(self._events) == EVENT_LINES:
+                    self._events.pop(0)
+                self._events.append(event)
 
-        stderr = (process.stderr.read() if process.stderr else "") or ""
-        raise ToolFailed(f"{PACKAGE} 未返回结果", detail={"stderr": stderr[-400:]})
+        raise ToolFailed(f"{PACKAGE} 未返回结果", detail={"stderr": self.diagnostics()[-600:]})
 
 
 def _send(stream, message: dict) -> None:
@@ -184,17 +247,7 @@ def _send(stream, message: dict) -> None:
     stream.flush()
 
 
-def _output_of(result: dict) -> str:
-    status = result.get("status")
-    output = (result.get("output") or "").strip()
-    if status != "completed":
-        raise ToolFailed(
-            f"CLI Agent 未正常结束（{status}）",
-            detail={"error": str(result.get("error") or "")[:300]},
-        )
-    if not output:
-        raise ToolFailed("CLI Agent 没有输出内容")
-    return output
+
 
 
 def _terminate(process: subprocess.Popen) -> None:
@@ -252,12 +305,16 @@ def _resolve_config(settings: Settings) -> Path:
             raise RuntimeError(f"agent-virtualization 配置文件不存在：{path}")
         return path
 
-    runtime = settings.agent_cli_runtime.strip() or "claude-code"
-    binary = {"claude-code": "claude", "codex": "codex"}.get(runtime)
-    if binary and shutil.which(binary) is None:
-        raise RuntimeError(f"未安装 {binary}（{runtime} 运行时）")
+    runtime = runtime_of(settings)
+    if runtime not in RUNTIMES:
+        raise RuntimeError(f"不认识的 CLI 运行时：{runtime}（可选 {'、'.join(RUNTIMES)}）")
+    binary = RUNTIMES[runtime]
+    if shutil.which(binary) is None:
+        raise RuntimeError(f"未安装 {binary}（{runtime}）")
 
-    path = settings.storage_dir / "agent-virtualization.json"
+    # One file per runtime: switching between them must not silently reuse the
+    # other's config, which differs in how credentials are inherited.
+    path = settings.storage_dir / f"agent-virtualization.{runtime}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(_default_config(runtime, settings), ensure_ascii=False, indent=2),
@@ -267,16 +324,25 @@ def _resolve_config(settings: Settings) -> Path:
 
 
 def _default_config(runtime: str, settings: Settings) -> dict[str, Any]:
-    """No tools, no network, nothing writable that matters.
+    """No tools, no network restriction, nothing writable that matters.
 
     The CLI is being used as a model, so every capability it might be given is
     one it does not need. The workspace still has to exist and be writable —
     the runtimes put their own scratch state there — but nothing we care about
     lives in it.
+
+    Credential inheritance is the one thing the two runtimes disagree about,
+    and getting it wrong looks identical from the outside: a CLI the user is
+    logged into reports itself logged out. claude-code inherits by seeing the
+    real HOME; codex takes an explicit runtime flag.
     """
     workspace = (settings.storage_dir / "agent-workspace").resolve()
     return {
-        "runtime": {"type": runtime},
+        "runtime": (
+            {"type": runtime}
+            if runtime != "codex"
+            else {"type": "codex", "inheritHostCredentials": True}
+        ),
         "environment": {
             "instructions": "直接给出答案，不要使用任何工具。",
             "capabilities": [],
@@ -286,9 +352,9 @@ def _default_config(runtime: str, settings: Settings) -> dict[str, Any]:
             # means denying it its own backend. The filesystem is what is
             # confined here, and the workspace holds nothing but its scratch.
             "sandbox": {"mode": "workspace-write", "network": "inherit"},
-            # Without this the CLI cannot see the credentials it was logged in
-            # with, and reports itself as logged out.
-            "homeMode": "inherit",
+            # claude-code's half of the same problem: without the real HOME it
+            # cannot see the credentials it was logged in with.
+            **({"homeMode": "inherit"} if runtime == "claude-code" else {}),
             "timeoutMs": settings.agent_cli_timeout * 1000,
         },
     }

@@ -24,6 +24,12 @@ class ModelInfo:
 
 
 CATALOGUE: dict[str, list[ModelInfo]] = {
+    # For the local CLI provider the "model" is which CLI answers — there is
+    # nothing else to choose, and each one brings its own model.
+    "agent_cli": [
+        ModelInfo("claude-code", "Claude Code", vision=False, note="需要已登录的 claude"),
+        ModelInfo("codex", "Codex（ChatGPT）", vision=False, note="需要已登录的 codex"),
+    ],
     "anthropic": [
         ModelInfo("claude-opus-5", "Claude Opus 5", note="最强，讲稿质量最好"),
         ModelInfo("claude-sonnet-5", "Claude Sonnet 5", note="快且便宜，日常够用"),

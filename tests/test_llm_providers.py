@@ -165,3 +165,44 @@ def test_a_broken_bridge_degrades_the_whole_registry(tmp_path: Path):
     settings = _bridge_settings(tmp_path, "ok")
     settings.agent_cli_path = str(tmp_path / "nope")
     assert isinstance(get_llm(settings), MockLLM)
+
+
+# -- which CLI answers ----------------------------------------------------
+def test_the_model_field_chooses_the_cli(tmp_path: Path):
+    """For this provider there is nothing else to pick, so the model *is* the CLI."""
+    from doc2video.tools.llm.virtualized import runtime_of
+
+    base = {"storage_dir": tmp_path}
+    assert runtime_of(Settings(**base)) == "claude-code"
+    assert runtime_of(Settings(**base, llm_model="codex")) == "codex"
+    # The env-only knob still works, and the UI's field wins over it.
+    assert runtime_of(Settings(**base, agent_cli_runtime="codex")) == "codex"
+    assert runtime_of(Settings(**base, agent_cli_runtime="codex", llm_model="claude-code")) == (
+        "claude-code"
+    )
+
+
+def test_each_runtime_gets_the_credential_option_it_understands(tmp_path: Path):
+    """The two disagree here, and getting it wrong looks identical from outside:
+    a CLI the user is logged into reports itself logged out."""
+    from doc2video.tools.llm.virtualized import _default_config
+
+    settings = Settings(storage_dir=tmp_path)
+    claude = _default_config("claude-code", settings)
+    codex = _default_config("codex", settings)
+
+    assert claude["environment"]["homeMode"] == "inherit"
+    assert "inheritHostCredentials" not in claude["runtime"]
+
+    assert codex["runtime"]["inheritHostCredentials"] is True
+    assert "homeMode" not in codex["environment"]
+
+    # Neither is given a single tool: we want a model, not an agent.
+    for config in (claude, codex):
+        assert config["environment"]["capabilities"] == []
+        assert config["environment"]["policy"]["defaultDecision"] == "deny"
+
+
+def test_an_unknown_runtime_is_refused_by_name(tmp_path: Path):
+    settings = Settings(storage_dir=tmp_path, llm_provider="agent_cli", llm_model="emacs")
+    assert isinstance(get_llm(settings), MockLLM)
