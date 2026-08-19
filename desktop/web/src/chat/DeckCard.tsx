@@ -12,6 +12,7 @@
  * timing from, so it cannot be fixed afterwards.
  */
 
+import TextEllipsis from '@hsu-react/ui/es/components/TextEllipsis'
 import { useState } from 'react'
 
 import * as api from '../api'
@@ -68,12 +69,12 @@ export function DeckCard({
               }}
             >
               <span style={{ color: 'var(--ink-soft)', flexShrink: 0 }}>第 {page.index} 页</span>
-              {/* One line, clipped. A long title wrapped to three and pushed
-                  the budget around it, so a list of thirty pages stopped
-                  being a list you could run your eye down. */}
-              <span className="deck__title" title={page.title || '无标题'}>
-                {page.title || '无标题'}
-              </span>
+              {/* One line, clipped, with the full title on hover — the
+                  library's own component, which is where the tooltip comes
+                  from. A long title wrapped to three lines and pushed the
+                  budget around it, so a list of thirty pages stopped being a
+                  list you could run your eye down. */}
+              <TextEllipsis className="deck__title">{page.title || '无标题'}</TextEllipsis>
               <span className="muted" style={{ flexShrink: 0 }}>
                 {hasModel && !draft
                   ? `约 ${budget?.target_chars} 字`

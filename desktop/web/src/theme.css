@@ -1174,13 +1174,12 @@ body {
   cursor: default;
 }
 
-/* One line, clipped — see DeckCard. */
+/* The library's TextEllipsis does the clipping and the tooltip; this only
+   tells the flex row that it may shrink — without `min-width: 0` a flex item
+   refuses to go below its content width and nothing ever truncates. */
 .deck__title {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Stacked, not side by side. The panel is 400px wide; two columns there gave

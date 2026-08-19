@@ -113,6 +113,23 @@ export function App() {
       api.quality(projectId).catch(() => null),
       api.ledger(projectId).catch(() => []),
     ])
+    // What the model wrote goes into the boxes it wrote it for.
+    //
+    // Otherwise the script exists in two places that cannot see each other:
+    // read-only under 逐页, and an empty editor still saying 「留空则由模型
+    // 来写」 — so changing one page meant retyping it. Seeded here because
+    // this runs at the two moments the stored script is the truth: a turn
+    // just finished, or a project was just opened.
+    if (scenes.length > 0) {
+      setDrafts(
+        Object.fromEntries(
+          scenes
+            .filter((scene) => scene.source_page && scene.narration)
+            .map((scene) => [String(scene.source_page), scene.narration]),
+        ),
+      )
+    }
+
     // The deck is not re-fetched here; it belongs to the parse that produced
     // it, and dropping it would empty the tab someone is looking at.
     let carried: ArtifactSet['deck']
@@ -155,7 +172,25 @@ export function App() {
       }
       spoken.forEach(say)
 
+      // Its pages too, so the script has somewhere to be read and changed.
+      // Without this, reopening a project gave a panel with no 文档 tab and a
+      // script that existed only as read-only lines under 逐页.
+      const [deckPages, guide] = await Promise.all([
+        api.pages(summary.project_id).catch(() => []),
+        api.narrationGuide(summary.project_id).catch(() => []),
+      ])
       const set = await loadArtifacts(summary.project_id, Boolean(summary.output))
+      if (deckPages.length > 0) {
+        setArtifacts((current) =>
+          current?.projectId === summary.project_id
+            ? { ...current, deck: { pages: deckPages, guide, hasModel, locked: false } }
+            : current,
+        )
+        // Open on anything worth seeing, not only on a finished video: a
+        // project that was parsed and never rendered is exactly the one whose
+        // pages someone came back to look at.
+        setPanelOpen(true)
+      }
       if (summary.output) {
         say({
           role: 'assistant',
@@ -169,7 +204,7 @@ export function App() {
         setPanelOpen(true)
       }
     },
-    [loadArtifacts, say],
+    [hasModel, loadArtifacts, say],
   )
 
   /** Everything on this machine, newest first — the sidebar's whole content. */
@@ -257,6 +292,11 @@ export function App() {
       // A finished turn changes a project's duration, its output, and its
       // place in the list; the sidebar is stale until it is re-read.
       void loadProjects()
+      // And it releases the gate: without this the button says 「已开始」 for
+      // the rest of the session, so a second pass is impossible.
+      setArtifacts((current) =>
+        current?.deck ? { ...current, deck: { ...current.deck, locked: false } } : current,
+      )
 
       if (final.status !== 'succeeded' || !final.project_id) {
         say({
@@ -505,6 +545,9 @@ export function App() {
             deck={{
               written: Object.values(drafts).filter((text) => text.trim()).length,
               locked: Boolean(artifacts?.deck?.locked),
+              // A script that came out of a render, rather than out of the
+              // boxes: the same fields, a different sentence.
+              generated: (artifacts?.scenes.length ?? 0) > 0,
               onRender: () => void startRender(),
             }}
             onShow={(id) => {

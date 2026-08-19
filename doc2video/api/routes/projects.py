@@ -121,6 +121,19 @@ def chat(project_id: str, body: ChatIn) -> dict:
     return {"job_id": job.id, "status": job.status}
 
 
+@router.get("/{project_id}/pages")
+def get_pages(project_id: str) -> dict:
+    """The deck, for a project that was parsed at some point in the past.
+
+    The same list `POST /agent/prepare` returns. Without it the window can
+    only show the pages of a project it parsed in this session, so reopening
+    one from the sidebar left nowhere to read or edit its script.
+    """
+    from .agent import page_views
+
+    return {"items": page_views(_load(project_id))}
+
+
 @router.get("/{project_id}/narration-guide")
 def narration_guide(project_id: str) -> dict:
     """Per-page seconds and character budget to write the script against."""

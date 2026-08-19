@@ -257,3 +257,28 @@ def test_a_percent_encoded_filename_is_shown_as_the_person_wrote_it():
     # than decoded into one. The guarantee is "never a path", not "always
     # decoded" — and this is the direction to fail in.
     assert "/" not in readable_name("%2E%2E%2Fetc%2Fpasswd")
+
+
+def test_a_project_can_be_reopened_with_its_pages(client: TestClient):
+    """The window can only edit a script it can show the pages for.
+
+    Before this route the pages existed only in the answer to the parse that
+    produced them, so reopening a project from the sidebar gave a panel with
+    no document tab — and the script the model had written was visible but not
+    editable.
+    """
+    assert client.get("/projects/proj_nope/pages").status_code == 404
+
+
+def test_the_two_page_lists_are_one_list():
+    """`prepare` and `/pages` must not drift.
+
+    They render the same deck; a difference between them would be a project
+    that looks one way when parsed and another when reopened.
+    """
+    import inspect
+
+    from doc2video.api.routes import agent, projects
+
+    assert "page_views" in inspect.getsource(agent.prepare)
+    assert "page_views" in inspect.getsource(projects.get_pages)

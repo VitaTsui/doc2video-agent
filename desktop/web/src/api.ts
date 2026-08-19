@@ -225,6 +225,12 @@ export async function uploadSource(file: File): Promise<string> {
   return body.upload_id
 }
 
+/** A parsed project's pages, for one that was not parsed in this session. */
+export async function pages(projectId: string) {
+  const body = await request<{ items: PageView[] }>(`/projects/${projectId}/pages`)
+  return body.items
+}
+
 /** Parse a deck and stop — fast, and everything the script needs to be written. */
 export async function prepare(uploadId: string, brief: string) {
   return request<{ project_id: string; title: string; pages: PageView[] }>('/agent/prepare', {
