@@ -2,17 +2,14 @@
 
 import { useEffect, useRef } from 'react'
 
-import { DeckCard } from './DeckCard'
 import { JobCard } from './JobCard'
 import type { Message } from './types'
 
 export function MessageList({
   messages,
-  onRender,
   onShow,
 }: {
   messages: Message[]
-  onRender: (id: string, narrations: Record<string, string>) => void
   /** Open the artifacts panel on this project. */
   onShow: (projectId: string) => void
 }) {
@@ -37,8 +34,19 @@ export function MessageList({
                 </div>
               )}
 
+              {/* The parsed deck lives in the panel now, like the video:
+                  thirty page rows unrolled into the conversation pushed the
+                  sentence explaining them off the top of the screen. */}
               {message.kind === 'deck' && (
-                <DeckCard message={message} onRender={(n) => onRender(message.id, n)} />
+                <button
+                  type="button"
+                  className="turn__artifact"
+                  onClick={() => onShow(message.projectId)}
+                >
+                  {'文档 · '}
+                  {message.pages.length}
+                  {' 页'}
+                </button>
               )}
               {message.kind === 'job' && <JobCard job={message.job} />}
               {/* A reference, not the thing itself. Unrolling a player, a

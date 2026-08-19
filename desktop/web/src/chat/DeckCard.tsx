@@ -15,23 +15,32 @@
 import { useState } from 'react'
 
 import * as api from '../api'
-import type { Message } from './types'
+import type { GuideRow, PageView } from '../api'
 
 export function DeckCard({
-  message,
+  pages,
+  guide,
+  hasModel,
+  locked,
+  projectId,
   onRender,
 }: {
-  message: Extract<Message, { kind: 'deck' }>
+  pages: PageView[]
+  guide: GuideRow[]
+  hasModel: boolean
+  /** Set once generation starts, so the card stops accepting edits. */
+  locked: boolean
+  projectId: string
   onRender: (narrations: Record<string, string>) => void
 }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [open, setOpen] = useState<number | null>(message.hasModel ? null : message.pages[0]?.index)
-  const budgets = Object.fromEntries(message.guide.map((row) => [row.page, row]))
+  const [open, setOpen] = useState<number | null>(hasModel ? null : pages[0]?.index)
+  const budgets = Object.fromEntries(guide.map((row) => [row.page, row]))
   const written = Object.values(drafts).filter((t) => t.trim()).length
 
   return (
     <div className="card card--flush">
-      {message.pages.map((page) => {
+      {pages.map((page) => {
         const budget = budgets[page.index]
         const draft = drafts[page.index] ?? ''
         const over = budget && draft.length > budget.target_chars * 1.15
@@ -57,7 +66,7 @@ export function DeckCard({
               <span style={{ color: 'var(--ink-soft)', width: 44 }}>第 {page.index} 页</span>
               <span style={{ flex: 1 }}>{page.title || '无标题'}</span>
               <span className="muted">
-                {message.hasModel && !draft
+                {hasModel && !draft
                   ? `约 ${budget?.target_chars} 字`
                   : `${draft.length}/${budget?.target_chars}`}
               </span>
@@ -66,15 +75,15 @@ export function DeckCard({
             {expanded && (
               <div className="page-row" style={{ padding: '0 16px 14px' }}>
                 {page.image && (
-                  <img src={api.assetUrl(message.projectId, page.image)} alt={`第 ${page.index} 页`} />
+                  <img src={api.assetUrl(projectId, page.image)} alt={`第 ${page.index} 页`} />
                 )}
                 <div style={{ flex: 1 }}>
                   <textarea
                     rows={4}
                     value={draft}
-                    disabled={message.locked}
+                    disabled={locked}
                     placeholder={
-                      message.hasModel
+                      hasModel
                         ? '留空则由模型来写'
                         : `这一页讲 ${budget?.target_seconds} 秒左右，约 ${budget?.target_chars} 字`
                     }
@@ -112,20 +121,20 @@ export function DeckCard({
         }}
       >
         <span className="muted">
-          {message.hasModel
+          {hasModel
             ? written
               ? `你写了 ${written} 页，其余由模型补`
               : '全部由模型来写'
-            : `已写 ${written} / ${message.pages.length} 页，没写的会是占位文本`}
+            : `已写 ${written} / ${pages.length} 页，没写的会是占位文本`}
         </span>
         <button
           type="button"
           className="composer__send"
-          disabled={message.locked}
+          disabled={locked}
           onClick={() => onRender(drafts)}
           style={{ width: 'auto', padding: '6px 16px', borderRadius: 8 }}
         >
-          {message.locked ? '已开始' : '开始生成'}
+          {locked ? '已开始' : '开始生成'}
         </button>
       </div>
     </div>

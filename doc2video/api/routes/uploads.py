@@ -14,6 +14,7 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import BinaryIO
+from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, HTTPException, UploadFile
 
@@ -29,7 +30,7 @@ log = get_logger(__name__)
 @router.post("/uploads")
 async def upload(file: UploadFile) -> dict:
     """Store a PDF / PPT / PPTX and return the id the MCP tools expect."""
-    name = Path(file.filename or "").name
+    name = readable_name(file.filename or "")
     if not name:
         raise HTTPException(
             status_code=400, detail={"code": "invalid_request", "message": "缺少文件名"}
@@ -40,13 +41,37 @@ async def upload(file: UploadFile) -> dict:
         raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
 
 
+def readable_name(filename: str) -> str:
+    """The name as a person wrote it, not as a transport encoded it.
+
+    Some clients percent-encode a non-ASCII filename into the plain `filename`
+    parameter instead of using RFC 5987's `filename*`, and nothing downstream
+    unpicks that: the file lands as
+    `1786709904848_%E7%9F%B3%E5%8C%96AI…pdf`, and since a PDF's title falls
+    back to its stem, that string is what the person is then shown as the name
+    of their own deck.
+
+    Only undone when it round-trips: a name that genuinely contains a percent
+    sign must survive, so the decoded form is accepted only if re-encoding it
+    reproduces the original.
+    """
+    name = Path(filename).name
+    if "%" not in name:
+        return name
+    try:
+        decoded = unquote(name, errors="strict")
+    except UnicodeDecodeError:
+        return name
+    return decoded if quote(decoded, safe="") == quote(name, safe="").replace("%25", "%") else name
+
+
 def store_upload(filename: str, source: BinaryIO) -> dict:
     """Persist one source file and return its id.
 
     Shared by the HTTP route and the MCP ``upload_source`` tool.
     """
     settings = get_settings()
-    name = Path(filename).name
+    name = readable_name(filename)
     if not name:
         raise InvalidRequest("缺少文件名")
 

@@ -110,9 +110,14 @@ export function App() {
       api.quality(projectId).catch(() => null),
       api.ledger(projectId).catch(() => []),
     ])
-    const set = { projectId, scenes, quality, ledger: chain, rendered }
-    setArtifacts(set)
-    return set
+    // The deck is not re-fetched here; it belongs to the parse that produced
+    // it, and dropping it would empty the tab someone is looking at.
+    let carried: ArtifactSet['deck']
+    setArtifacts((current) => {
+      carried = current?.projectId === projectId ? current.deck : undefined
+      return { projectId, scenes, quality, ledger: chain, rendered, deck: carried }
+    })
+    return { projectId, scenes, quality, ledger: chain, rendered, deck: carried }
   }, [])
 
   /**
@@ -305,6 +310,16 @@ export function App() {
           guide,
           hasModel,
         })
+        // The deck itself goes to the panel; the sentence above stays here.
+        setArtifacts({
+          projectId: prepared.project_id,
+          scenes: [],
+          quality: null,
+          ledger: [],
+          rendered: false,
+          deck: { pages: prepared.pages, guide, hasModel, locked: false },
+        })
+        setPanelOpen(true)
       } catch (error) {
         amend(thinking, { kind: 'text', text: `解析失败：${api.describeError(error)}` })
       } finally {
@@ -367,10 +382,13 @@ export function App() {
   )
 
   const startRender = useCallback(
-    async (id: string, narrations: Record<string, string>) => {
+    async (narrations: Record<string, string>) => {
       if (!projectId) return
       setBusy(true)
-      amend(id, { locked: true })
+      // The deck lives in the panel, so locking it is a panel-side fact now.
+      setArtifacts((current) =>
+        current?.deck ? { ...current, deck: { ...current.deck, locked: true } } : current,
+      )
       try {
         // Written pages are an instruction, so they go straight down the
         // pipeline. An empty form with a model configured is the opposite —
@@ -383,13 +401,15 @@ export function App() {
             : await api.submitNarrations(projectId, narrations)
         await follow(job_id, '开始了，渲染要几分钟。')
       } catch (error) {
-        amend(id, { locked: false })
+        setArtifacts((current) =>
+          current?.deck ? { ...current, deck: { ...current.deck, locked: false } } : current,
+        )
         say({ role: 'assistant', kind: 'text', text: `没能开始：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
     },
-    [amend, follow, hasModel, projectId, say],
+    [follow, hasModel, projectId, say],
   )
 
   if (runtime && !runtime.ready) {
@@ -476,7 +496,6 @@ export function App() {
         ) : (
           <MessageList
             messages={messages}
-            onRender={startRender}
             onShow={(id) => {
               void loadArtifacts(id, true)
               setPanelOpen(true)
@@ -495,7 +514,12 @@ export function App() {
         />
       </main>
 
-      <Artifacts set={artifacts} open={panelOpen} onClose={() => setPanelOpen(false)} />
+      <Artifacts
+        set={artifacts}
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        onRender={(narrations) => void startRender(narrations)}
+      />
 
       <Settings
         open={settingsOpen}
