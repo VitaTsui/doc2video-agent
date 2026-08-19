@@ -29,6 +29,7 @@ batch, which is why the batches are pages-at-a-time rather than page-at-a-time.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -338,6 +339,29 @@ def _resolve_config(settings: Settings) -> Path:
     return path
 
 
+# What the sandboxed CLI needs from our environment, and nothing else.
+#
+# The sandbox scrubs the environment by default, which is right — but it also
+# strips the proxy, and on a machine that can only reach the model's API
+# through one, the CLI then goes direct and is refused:
+#
+#     Failed to authenticate. API Error: 403 Request not allowed
+#
+# It reads as a credential problem and is a routing one. Named explicitly
+# rather than inherited wholesale: everything else in that environment is ours
+# and none of it is the CLI's business.
+PROXY_VARS = (
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "all_proxy",
+    "no_proxy",
+)
+
+
 def _default_config(runtime: str, settings: Settings) -> dict[str, Any]:
     """No tools, no network restriction, nothing writable that matters.
 
@@ -367,6 +391,10 @@ def _default_config(runtime: str, settings: Settings) -> dict[str, Any]:
             # means denying it its own backend. The filesystem is what is
             # confined here, and the workspace holds nothing but its scratch.
             "sandbox": {"mode": "workspace-write", "network": "inherit"},
+            # Network is inherited above; the way *to* the network has to be
+            # passed as well, or "inherit" means a route this machine does not
+            # have.
+            "inheritEnv": [name for name in PROXY_VARS if os.environ.get(name)],
             # claude-code's half of the same problem: without the real HOME it
             # cannot see the credentials it was logged in with.
             **({"homeMode": "inherit"} if runtime == "claude-code" else {}),

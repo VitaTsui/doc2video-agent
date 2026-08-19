@@ -48,6 +48,11 @@ const PROJECTS = [
   },
 ]
 
+const GUIDE = [
+  { page: 1, page_type: 'cover', target_seconds: 24, target_chars: 105, page_seconds: 24 },
+  { page: 2, page_type: 'agenda', target_seconds: 29, target_chars: 135, page_seconds: 29 },
+]
+
 const SCENES = [
   { scene_id: 'scene_01', source_page: 1, title: '封面', duration: 24, narration: '各位评审专家，下面汇报的是面向石化化工方向的应用场景揭榜方案。', actions: [] },
   { scene_id: 'scene_02', source_page: 2, title: '目录', duration: 29, narration: '汇报分五个部分。先交代这次揭榜的背景，以及我们作为技术牵头方的能力来源。', actions: [] },
@@ -163,6 +168,7 @@ export function installDevMock() {
     // Enough of a history for the sidebar to have something to be: a list
     // styled only against the empty case is a list nobody has looked at.
     if (url.includes('/session')) return json({ items: SESSION, compacted: 0 })
+    if (url.includes('/narration-guide')) return json({ items: GUIDE })
     if (url.includes('/scenes')) return json({ items: SCENES })
     if (url.includes('/quality')) return json(QUALITY)
     if (url.includes('/ledger')) return json({ items: LEDGER })

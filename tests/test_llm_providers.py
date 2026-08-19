@@ -316,3 +316,27 @@ def test_the_catalogue_says_which_local_cli_is_actually_installed(monkeypatch):
 
     # Nothing else grows the field: their availability is not knowable here.
     assert "installed" not in catalogue_module.catalogue_payload()["anthropic"][0]
+
+
+def test_the_sandboxed_cli_is_given_the_way_out_that_the_machine_uses(monkeypatch):
+    """`network: inherit` is not enough when the route is a proxy.
+
+    The sandbox scrubs the environment, which is right — but it also strips
+    the proxy, and on a machine that can only reach the model's API through
+    one the CLI then goes direct and is refused with
+    `403 Request not allowed`. That reads as a credential problem and is a
+    routing one.
+    """
+    from doc2video.tools.llm.virtualized import _default_config
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    environment = _default_config("claude-code", Settings())["environment"]
+
+    assert environment["sandbox"]["network"] == "inherit"
+    assert environment["inheritEnv"] == ["HTTPS_PROXY"]
+
+    # Only what is set. Naming an absent variable would hand the sandbox an
+    # empty proxy setting, which some clients read as "proxy to nowhere".
+    monkeypatch.delenv("HTTPS_PROXY")
+    assert _default_config("claude-code", Settings())["environment"]["inheritEnv"] == []
