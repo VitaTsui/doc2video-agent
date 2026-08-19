@@ -350,6 +350,12 @@ fn append_from(url: &str, to: &Path, on_progress: &mut impl FnMut(u64, u64)) -> 
 
     let response = request.call().context("下载失败")?;
     let resuming = response.status() == 206;
+    if resuming {
+        // Worth a line: a bar that opens at 6% looks like a download that went
+        // very fast and then stalled, when nothing was downloaded at all —
+        // those bytes were left by an earlier attempt.
+        log(&format!("从上次的 {have} 字节继续：{url}"));
+    }
     if have > 0 && !resuming {
         // The server ignored the range and is sending the whole file again;
         // start over rather than concatenating two copies.
