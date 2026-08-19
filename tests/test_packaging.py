@@ -122,7 +122,20 @@ def test_an_unsigned_package_is_left_out_of_the_update_manifest(tmp_path):
 
     out = tmp_path / "latest.json"
     script = Path(__file__).resolve().parents[1] / "scripts" / "updater_manifest.py"
-    subprocess.run([sys.executable, str(script), str(art), "9.9.9", str(out)], check=True)
+    built = "macos-arm64,linux-x64,windows-x64"
+    done = subprocess.run(
+        [sys.executable, str(script), str(art), "9.9.9", str(out), built],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    # Windows was in the matrix and produced nothing; that has to be visible on
+    # the run, not buried. Intel macOS was never in it, so it must stay quiet —
+    # a warning that fires every time is one nobody reads.
+    assert "::warning::" in done.stdout
+    assert "windows-x64" in done.stdout
+    assert "::warning::darwin-x86_64" not in done.stdout
 
     manifest = json.loads(out.read_text(encoding="utf-8"))
     assert list(manifest["platforms"]) == ["darwin-aarch64"]

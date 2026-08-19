@@ -157,7 +157,12 @@ jobs:
 
       - name: 生成 latest.json
         shell: bash
-        run: python3 scripts/updater_manifest.py artifacts "${{ steps.ver.outputs.version }}" latest.json
+        # 最后那个列表要和上面的矩阵一致：构建失败时不会上传产物目录，
+        # 「死掉的 job」和「压根没在矩阵里的平台」在产物里长得一模一样，
+        # 只有前者该报警告。
+        run: |
+          python3 scripts/updater_manifest.py artifacts "${{ steps.ver.outputs.version }}" \
+            latest.json macos-arm64,linux-x64,windows-x64
 
       - name: 挂到 Release
         env:

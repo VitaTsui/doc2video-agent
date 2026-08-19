@@ -11,7 +11,13 @@ signature is worse than one left out, because the app will find the entry,
 download the package, fail the signature check, and report a broken update
 rather than "already up to date".
 
-Usage: updater_manifest.py <artifacts-dir> <version> <output>
+Usage: updater_manifest.py <artifacts-dir> <version> <output> [built-targets]
+
+``built-targets`` is the comma-separated list of targets the run set out to
+build. It has to come from the workflow because nothing in the artifacts can
+say it: a build that failed uploads no directory, and a directory that is
+absent because the job died looks exactly like one absent because the platform
+was never in the matrix. Only the first of those deserves a warning.
 """
 
 from __future__ import annotations
@@ -39,6 +45,11 @@ PLATFORMS: dict[str, tuple[str, str]] = {
 RELEASE = "https://github.com/VitaTsui/doc2video-agent/releases/download"
 
 
+def warn(message: str) -> None:
+    """A line on the run's summary, not just in a log nobody opens."""
+    print(f"::warning::{message}")
+
+
 def find(root: Path, target: str, suffix: str) -> Path | None:
     """That platform's updatable bundle, from that platform's own artifacts."""
     for directory in root.glob(f"*{target}*"):
@@ -50,18 +61,27 @@ def find(root: Path, target: str, suffix: str) -> Path | None:
 
 def main() -> int:
     artifacts, version, output = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+    declared = sys.argv[4] if len(sys.argv) > 4 else ""
+    expected = {t.strip() for t in declared.split(",") if t.strip()}
 
     platforms: dict[str, dict[str, str]] = {}
     for target, (key, suffix) in PLATFORMS.items():
         package = find(artifacts, target, suffix)
         if package is None:
-            print(f"{key}：没有可更新的包，跳过")
+            if target in expected:
+                # Loud, because the manifest job runs even when a build failed
+                # or was cancelled — publishing what exists is right, doing it
+                # quietly is not. A platform missing from the manifest is a
+                # platform whose users never hear about the update.
+                warn(f"{key}（{target}）本次要构建却没有产物，这个平台收不到更新")
+            else:
+                print(f"{key}（{target}）不在本次构建范围内，跳过")
             continue
         signature = package.with_name(package.name + ".sig")
         if not signature.is_file():
             # Built without the signing key. Listing it would hand the app a
             # download it is bound to reject.
-            print(f"{key}：{package.name} 没有签名，跳过")
+            warn(f"{key}：{package.name} 没有签名，这个平台收不到本次更新")
             continue
         platforms[key] = {
             "signature": signature.read_text(encoding="utf-8").strip(),
