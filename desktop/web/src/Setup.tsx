@@ -25,14 +25,21 @@ export function Setup({
   onReady: () => void
 }) {
   const [installing, setInstalling] = useState(false)
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const [progress, setProgress] = useState<{
+    phase: 'download' | 'unpack'
+    done: number
+    total: number
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const stop = listen<[number, number]>('runtime://progress', (event) => {
-      const [done, total] = event.payload
-      setProgress({ done, total })
-    })
+    const stop = listen<['download' | 'unpack', number, number]>(
+      'runtime://progress',
+      (event) => {
+        const [phase, done, total] = event.payload
+        setProgress({ phase, done, total })
+      },
+    )
     return () => {
       void stop.then((off) => off())
     }
@@ -53,17 +60,31 @@ export function Setup({
   const percent =
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : null
   const downloadedMb = progress ? Math.round(progress.done / 1024 / 1024) : 0
+  // Two phases, said separately. Unpacking twenty thousand files takes minutes
+  // on a machine whose antivirus opens every one of them, and it used to
+  // happen with the bar parked at 100% — which reads as a crash, not as work.
+  const unpacking = progress?.phase === 'unpack'
 
   return (
     <div className="shell">
       <div className="transcript">
         <div className="column" style={{ maxWidth: '34rem', paddingTop: 64 }}>
-          <h2 style={{ marginTop: 0 }}>先装一次运行环境</h2>
-          <p>
-            应用本体只有几兆，真正干活的东西还没下载：Python 运行时和整条流水线、
-            ffmpeg、中文语音模型、中文字体，一共约 {status.approx_mb}MB。装一次，
-            之后升级只会重新下载几兆的应用本体。
-          </p>
+          <h2 style={{ marginTop: 0 }}>{status.needs_base ? '先装一次运行环境' : '更新运行环境'}</h2>
+          {/* Two different sentences because they are two different waits: the
+              first install is four hundred megabytes and twenty thousand
+              files, an ordinary update is a fifth of a megabyte. A screen that
+              said "约 400MB" for both taught people to expect the worse one. */}
+          {status.needs_base ? (
+            <p>
+              应用本体只有几兆，真正干活的东西还没下载：Python 运行时和整条流水线、
+              ffmpeg、中文语音模型、中文字体，一共约 {status.approx_mb}MB。
+              这一步只有第一次、以及依赖变化时才需要；平时的版本更新只下几百 KB。
+            </p>
+          ) : (
+            <p>
+              依赖没有变化，只需要更新流水线本身，约 {status.approx_mb}MB，几秒钟。
+            </p>
+          )}
           {status.installed && (
             <p className="muted">
               当前装的是 {status.installed}，这个版本需要 {status.required}。
@@ -82,9 +103,9 @@ export function Setup({
           {installing ? (
             <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <span>正在下载运行环境</span>
+                <span>{unpacking ? '正在解压（文件很多，会慢一些）' : '正在下载运行环境'}</span>
                 <span className="muted">
-                  {percent === null ? `${downloadedMb}MB` : `${percent}%`}
+                  {unpacking || percent !== null ? `${percent ?? 0}%` : `${downloadedMb}MB`}
                 </span>
               </div>
               <div className="bar">
@@ -97,7 +118,9 @@ export function Setup({
                 )}
               </div>
               <div className="muted" style={{ marginTop: 8 }}>
-                下载完会校验完整性再解压，中途关掉不会损坏已有环境。
+                {unpacking
+                  ? '两万多个小文件，Windows 上杀毒软件会逐个扫描，这一步比下载还久。'
+                  : '下载完会校验完整性再解压，中途关掉不会损坏已有环境。'}
               </div>
             </div>
           ) : (

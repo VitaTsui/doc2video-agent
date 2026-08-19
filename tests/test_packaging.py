@@ -122,7 +122,20 @@ def test_an_unsigned_package_is_left_out_of_the_update_manifest(tmp_path):
 
     out = tmp_path / "latest.json"
     script = Path(__file__).resolve().parents[1] / "scripts" / "updater_manifest.py"
-    subprocess.run([sys.executable, str(script), str(art), "9.9.9", str(out)], check=True)
+    built = "macos-arm64,linux-x64,windows-x64"
+    done = subprocess.run(
+        [sys.executable, str(script), str(art), "9.9.9", str(out), built],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    # Windows was in the matrix and produced nothing; that has to be visible on
+    # the run, not buried. Intel macOS was never in it, so it must stay quiet —
+    # a warning that fires every time is one nobody reads.
+    assert "::warning::" in done.stdout
+    assert "windows-x64" in done.stdout
+    assert "::warning::darwin-x86_64" not in done.stdout
 
     manifest = json.loads(out.read_text(encoding="utf-8"))
     assert list(manifest["platforms"]) == ["darwin-aarch64"]
@@ -149,3 +162,46 @@ def test_the_updater_trusts_exactly_the_key_the_release_signs_with():
     assert updater["endpoints"] == [
         "https://github.com/VitaTsui/doc2video-agent/releases/latest/download/latest.json"
     ]
+
+
+def test_the_shell_asks_for_the_base_the_build_script_would_produce():
+    """These two must never drift.
+
+    The Rust side embeds a digest and fetches `runtime-base-<digest>`; the
+    build script computes the same digest from the dependencies and publishes
+    under it. Let them disagree and the shell asks for a base nobody built —
+    an install that cannot succeed, on every platform at once, discovered by
+    the first person to click the button.
+    """
+    import sys
+
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    from build_runtime import base_version
+
+    recorded = (PROJECT_ROOT / "desktop/src-tauri/base_version.txt").read_text().strip()
+    assert recorded == base_version(), (
+        f"base_version.txt 是 {recorded}，而依赖算出来是 {base_version()}。"
+        "改过依赖之后要跑 scripts/build_runtime.py --print-base-version 重写它。"
+    )
+
+
+def test_the_base_digest_moves_when_a_dependency_does():
+    """Otherwise it is decoration, and the split it guards is unsafe.
+
+    A base pinned to a digest that does not react to `pyproject.toml` would let
+    an app that needs a new package install into a tree without it — and that
+    fails at the first render, not at install time.
+    """
+    import sys
+
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    import build_runtime
+
+    before = build_runtime.base_version()
+    original = build_runtime._dependency_block
+    try:
+        build_runtime._dependency_block = lambda: original() + '\n"some-new-package>=1.0",'
+        assert build_runtime.base_version() != before
+    finally:
+        build_runtime._dependency_block = original
+    assert build_runtime.base_version() == before

@@ -6,6 +6,21 @@ and optionally Node with the Remotion project — is this. It is kept out of the
 installer deliberately: bundling it would make every app update re-download
 ~600MB to change a button, and the two version at completely different rates.
 
+**It ships as two pieces, because they change at completely different rates.**
+
+    base   the interpreter, every third-party dependency, node, the browser,
+           the voice, the font. ~400MB, and unchanged for months at a time.
+    app    doc2video itself and the Remotion sources. ~2MB, and different on
+           every single release.
+
+Before the split every release forced every user through the whole 400MB
+again — and through unpacking twenty thousand files, which on Windows is the
+slower half. The base's version is a hash of what determines it (the declared
+dependencies, the lockfile, the pinned Node and Python, the voice, the font),
+never a number someone bumps by hand: a stale hash would ship a new app into a
+tree without its new dependencies, and that fails at the first render rather
+than at install time.
+
 Layout, which `sidecar.rs` and the settings agree on:
 
     runtime/
@@ -49,6 +64,49 @@ FONT_URL = (
     "NotoSansCJKsc-Regular.otf"
 )
 VOICE = "zh_CN-huayan-medium"
+
+
+def base_version() -> str:
+    """A digest of everything that decides what the heavy half contains.
+
+    Hand-maintained would be wrong here, and wrong in the expensive direction:
+    forget to bump it after adding a dependency and users keep a base that has
+    no such package, while the app that needs it installs happily. The failure
+    then surfaces as an ImportError in the middle of someone's first render.
+    """
+    material = [
+        PYTHON_VERSION,
+        NODE_VERSION,
+        VOICE,
+        FONT_URL,
+        _dependency_block(),
+        _read(ROOT / "renderer" / "pnpm-lock.yaml"),
+        _read(ROOT / "renderer" / "package.json"),
+    ]
+    return hashlib.sha256("\n".join(material).encode("utf-8")).hexdigest()[:12]
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _dependency_block() -> str:
+    """The declared dependencies, without the parts that do not affect them.
+
+    Taken as text between the first ``dependencies`` key and the end of the
+    optional-dependency tables. Reading it with a TOML parser would be tidier,
+    but this file is also read by the Rust side's test, and a digest that two
+    languages must agree on is safest computed one way, in one place.
+    """
+    text = _read(ROOT / "pyproject.toml")
+    start = text.find("dependencies = [")
+    if start == -1:
+        return text
+    end = text.find("[tool.", start)
+    return text[start : end if end != -1 else len(text)]
 
 
 def target() -> str:
@@ -192,19 +250,82 @@ def build_node(out: Path) -> None:
     archive.unlink()
 
 
-def pack(out: Path, version: str) -> Path:
-    """One archive, one checksum. The app verifies before it unpacks."""
-    print("== 打包 ==")
-    name = f"d2v-runtime-{version}-{target()}"
-    archive = out.parent / f"{name}.tar.gz"
-    with tarfile.open(archive, "w:gz") as tar:
-        tar.add(out, arcname="runtime")
+def site_packages(python: Path) -> Path:
+    """Where pip put things. Windows lays this out differently from the rest."""
+    if os.name == "nt":
+        return python / "Lib" / "site-packages"
+    return python / "lib" / f"python{PYTHON_VERSION}" / "site-packages"
 
+
+def _write(archive: Path, digest_of: Path | None = None) -> Path:
+    """A checksum beside the archive. The app verifies before it unpacks."""
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    (out.parent / f"{name}.sha256").write_text(f"{digest}  {archive.name}\n")
-    print(f"  {archive.name}  {archive.stat().st_size / 1024 / 1024:.0f}MB")
+    archive.with_suffix("").with_suffix(".sha256").write_text(
+        f"{digest}  {archive.name}\n", encoding="utf-8"
+    )
+    print(f"  {archive.name}  {archive.stat().st_size / 1024 / 1024:.1f}MB")
     print(f"  sha256 {digest}")
     return archive
+
+
+def build_app_only(out: Path) -> None:
+    """Just the files the app half carries — no interpreter, no dependencies.
+
+    This is what makes an ordinary release cheap: when the base digest already
+    exists, nothing has to install Python, resolve a lockfile or fetch a
+    browser. `pip --no-deps --target` is doing very little work here, but it is
+    what produces a real dist-info, and the API reads its own version from one.
+    """
+    print("== 只打 app ==")
+    packages = site_packages(out / "python")
+    packages.mkdir(parents=True, exist_ok=True)
+    # `uv pip` rather than `pip`: the interpreter running this script is often
+    # a uv-managed venv, which ships no pip at all.
+    run("uv", "pip", "install", "--quiet", "--no-deps", "--target", str(packages), str(ROOT))
+    renderer = ROOT / "renderer" / "src"
+    if renderer.exists():
+        shutil.copytree(renderer, out / "node" / "src", dirs_exist_ok=True)
+
+
+def pack_base(out: Path) -> Path:
+    """The heavy half, named by what it contains rather than by a release.
+
+    Named by digest on purpose: two releases whose dependencies did not move
+    resolve to the same file, and the second one does not have to build it,
+    upload it, or make anybody download it again.
+    """
+    print("== 打包 base ==")
+    archive = out.parent / f"d2v-base-{base_version()}-{target()}.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(out, arcname="runtime")
+    return _write(archive)
+
+
+def pack_app(out: Path, version: str) -> Path:
+    """doc2video itself, and the Remotion sources. Everything else is base.
+
+    Two megabytes against four hundred — this is the piece that actually
+    changes when a release changes, and making it the only piece a user
+    fetches is the whole point of the split.
+    """
+    print("== 打包 app ==")
+    packages = site_packages(out / "python")
+    prefix = packages.relative_to(out)
+
+    archive = out.parent / f"d2v-app-{version}-{target()}.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(packages / "doc2video", arcname=f"runtime/{prefix}/doc2video")
+        # The dist-info too: without it `importlib.metadata.version` raises,
+        # and the API reports its own version from there.
+        for info in packages.glob("doc2video_agent-*.dist-info"):
+            tar.add(info, arcname=f"runtime/{prefix}/{info.name}")
+        renderer = out / "node" / "src"
+        if renderer.exists():
+            tar.add(renderer, arcname="runtime/node/src")
+        # The manifest rides along, so unpacking the app is what records that
+        # this tree now holds this version. Nothing else has to write it.
+        tar.add(out / "runtime.json", arcname="runtime/runtime.json")
+    return _write(archive)
 
 
 def main() -> int:
@@ -213,7 +334,20 @@ def main() -> int:
     parser.add_argument("--version", default="", help="版本号，默认读 pyproject")
     parser.add_argument("--no-renderer", action="store_true", help="不带 Node / Remotion")
     parser.add_argument("--no-pack", action="store_true", help="只构建，不打包")
+    parser.add_argument(
+        "--part",
+        choices=("all", "base", "app"),
+        default="all",
+        help="打哪一半。app 不需要装依赖，几秒钟就好",
+    )
+    parser.add_argument(
+        "--print-base-version", action="store_true", help="只打印 base 的版本号后退出"
+    )
     args = parser.parse_args()
+
+    if args.print_base_version:
+        print(base_version())
+        return 0
 
     version = args.version or _project_version()
     out = Path(args.out).resolve()
@@ -221,23 +355,33 @@ def main() -> int:
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
-    build_python(out)
-    build_voice(out, out / "python")
-    build_font(out)
-    if not args.no_renderer:
-        build_node(out)
+    if args.part == "app":
+        build_app_only(out)
+    else:
+        build_python(out)
+        build_voice(out, out / "python")
+        build_font(out)
+        if not args.no_renderer:
+            build_node(out)
 
     manifest = {
+        # Kept for the runtimes already installed out there, which know only
+        # this key and must read as "wrong version" rather than as corrupt.
         "version": version,
+        "base": base_version(),
+        "app": version,
         "target": target(),
         "renderer": not args.no_renderer,
     }
-    (out / "runtime.json").write_text(json.dumps(manifest, indent=2))
+    (out / "runtime.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     print(f"\n运行时 {size / 1024 / 1024:.0f}MB → {out}")
     if not args.no_pack:
-        pack(out, version)
+        if args.part in ("all", "base"):
+            pack_base(out)
+        if args.part in ("all", "app"):
+            pack_app(out, version)
     return 0
 
 
