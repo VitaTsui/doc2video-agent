@@ -114,7 +114,22 @@ export function Setup({
           )}
 
           {error && (
-            <div className="card" style={{ color: '#b0562f' }}>
+            // A Windows error carries paths like
+            // `…\node_modules\.pnpm\@agentclientprotocol+sdk@0.25.1_zod@4.4.3\…`
+            // — one unbroken token far wider than the card. Without
+            // `overflow-wrap: anywhere` it pushed the whole page into
+            // horizontal scrolling and the sentence that mattered ran off the
+            // right edge. Errors are exactly the text that must not be the
+            // hard part to read.
+            <div
+              className="card"
+              style={{
+                color: '#b0562f',
+                overflowWrap: 'anywhere',
+                whiteSpace: 'pre-wrap',
+                maxWidth: '100%',
+              }}
+            >
               {error}
               {/* The guess this used to make ("可能还没发布") read as a
                   diagnosis and was usually wrong — the message above now
