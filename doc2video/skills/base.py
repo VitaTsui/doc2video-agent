@@ -113,6 +113,14 @@ class Skill:
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001 - any failure degrades, none aborts
-            self.log.warning("%s 的模型调用失败，改用启发式规则：%s", what, exc)
-            telemetry.record_degradation(what, str(exc))
+            # The useful half of these failures lives in `detail` — the reply
+            # that would not parse, the CLI's stderr — and a degradation that
+            # records only the summary leaves the next person with
+            # "返回的结构化结果不是合法 JSON 对象" and nothing to look at.
+            reason = str(exc)
+            detail = getattr(exc, "detail", None)
+            if detail:
+                reason += "｜" + "；".join(f"{k}={str(v)[:200]}" for k, v in detail.items())
+            self.log.warning("%s 的模型调用失败，改用启发式规则：%s", what, reason)
+            telemetry.record_degradation(what, reason)
             return fallback()
