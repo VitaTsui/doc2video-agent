@@ -57,6 +57,10 @@ class JobRequest:
     # targeted revision — this service writes neither.
     narrations: dict[int, str] = field(default_factory=dict)
     scene_narrations: dict[str, str] = field(default_factory=dict)
+    # Set when the agent should decide for itself what to do with `message`,
+    # rather than being handed a script. A chat turn may render several times,
+    # which is why it is a job like any other instead of a request that waits.
+    chat: bool = False
 
 
 @dataclass
@@ -73,6 +77,8 @@ class Job:
     # over scenes; everything else reports 0/0 and the client shows a spinner.
     done: int = 0
     total: int = 0
+    # What the agent said, for a chat turn.
+    reply: str = ""
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     # Live listeners. Jobs run on threads and the SSE endpoint is async, so the
@@ -87,6 +93,7 @@ class Job:
             "detail": self.detail,
             "done": self.done,
             "total": self.total,
+            "reply": self.reply,
             "attempts": self.attempts,
             "project_id": self.result.project_id if self.result else self.request.project_id,
             "error": self.error,
@@ -211,14 +218,26 @@ class JobManager:
             self._publish(job)
 
         try:
-            result = self._agent.run(
-                message=job.request.message,
-                project_id=job.request.project_id,
-                files=job.request.files,
-                progress=progress,
-                narrations=job.request.narrations,
-                scene_narrations=job.request.scene_narrations,
-            )
+            if job.request.chat:
+                outcome = self._agent.chat(
+                    project_id=job.request.project_id or "",
+                    message=job.request.message,
+                    progress=progress,
+                )
+                # The reply is the point of a chat turn; the project state that
+                # came out of it is read the same way as any other run's.
+                result = self._agent.describe(job.request.project_id or "")
+                result.summary = outcome.reply
+                job.reply = outcome.reply
+            else:
+                result = self._agent.run(
+                    message=job.request.message,
+                    project_id=job.request.project_id,
+                    files=job.request.files,
+                    progress=progress,
+                    narrations=job.request.narrations,
+                    scene_narrations=job.request.scene_narrations,
+                )
             job.result = result
             job.status = "succeeded"
             job.stage = "done"

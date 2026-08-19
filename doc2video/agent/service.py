@@ -197,7 +197,29 @@ class Doc2VideoAgent:
             render_scene=render_scene,
             reload=lambda: self.store.load(project_id),
         )
-        return loop.run(message)
+        # Opened here rather than inside `run`, so the decisions land in the
+        # account too — they happen between the renders, not during one.
+        with ledger.recording(self._ledger_path(project)):
+            return loop.run(message)
+
+    def describe(self, project_id: str) -> AgentRunResult:
+        """A project's current state in the shape a job reports.
+
+        Used after a chat turn, which may have rendered several times: what
+        matters afterwards is where the project ended up, not which of those
+        renders was last.
+        """
+        project = self.store.load(project_id)
+        return AgentRunResult(
+            project_id=project.project_id,
+            status=project.status.value,
+            summary="",
+            scene_count=len(project.scenes),
+            duration=round(project.total_duration(), 1),
+            output_path=project.render.output_path,
+            review=[f.model_dump(mode="json") for f in project.review],
+            quality=project.quality.score if project.quality else None,
+        )
 
     def _ledger_path(self, project: VideoProject) -> Path:
         return self.store.project_dir(project.project_id) / ledger.LEDGER_FILE

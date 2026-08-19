@@ -177,15 +177,24 @@ export function App() {
         api.quality(final.project_id).catch(() => null),
         api.ledger(final.project_id).catch(() => []),
       ])
-      say({
-        role: 'assistant',
-        kind: 'video',
-        text: '好了。',
-        projectId: final.project_id,
-        scenes,
-        quality,
-        ledger: chain,
-      })
+
+      // A turn can end without a video — the agent asked something, or stopped
+      // before rendering. Showing a player pointed at a file that does not
+      // exist would be worse than saying only what happened.
+      const rendered = Boolean(final.result?.output_path)
+      say(
+        rendered
+          ? {
+              role: 'assistant',
+              kind: 'video',
+              text: final.reply || '好了。',
+              projectId: final.project_id,
+              scenes,
+              quality,
+              ledger: chain,
+            }
+          : { role: 'assistant', kind: 'text', text: final.reply || '这一轮没有出片。' },
+      )
     },
     [amend, say],
   )
@@ -233,8 +242,8 @@ export function App() {
       }
       setBusy(true)
       try {
-        const { job_id } = await api.runAgent(projectId, text)
-        await follow(job_id, '好，我来改。')
+        const { job_id } = await api.chat(projectId, text)
+        await follow(job_id, '我看看现在这一版，想想该改什么。')
       } catch (error) {
         say({ role: 'assistant', kind: 'text', text: `没能开始：${api.describeError(error)}` })
       } finally {
@@ -250,7 +259,15 @@ export function App() {
       setBusy(true)
       amend(id, { locked: true })
       try {
-        const { job_id } = await api.submitNarrations(projectId, narrations)
+        // Written pages are an instruction, so they go straight down the
+        // pipeline. An empty form with a model configured is the opposite —
+        // it means "you decide" — and that belongs in the loop, where the
+        // agent can read its own quality report afterwards and fix a page.
+        const written = Object.values(narrations).some((text) => text.trim())
+        const { job_id } =
+          !written && hasModel
+            ? await api.chat(projectId, '按这份文档生成视频。')
+            : await api.submitNarrations(projectId, narrations)
         await follow(job_id, '开始了，渲染要几分钟。')
       } catch (error) {
         amend(id, { locked: false })
@@ -259,7 +276,7 @@ export function App() {
         setBusy(false)
       }
     },
-    [amend, follow, projectId, say],
+    [amend, follow, hasModel, projectId, say],
   )
 
   if (runtime && !runtime.ready) {

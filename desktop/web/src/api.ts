@@ -32,6 +32,9 @@ export interface JobState {
   total: number
   project_id: string | null
   error: { code: string; message: string } | null
+  /** What the agent said, for a chat turn. */
+  reply: string
+  result: { output_path: string | null } | null
 }
 
 export interface PageView {
@@ -211,6 +214,21 @@ export async function runAgent(projectId: string, message: string) {
   return request<{ job_id: string }>('/agent/run', {
     method: 'POST',
     body: JSON.stringify({ project_id: projectId, message }),
+  })
+}
+
+/**
+ * Say something and let the agent decide what to do about it.
+ *
+ * The route this replaced ran a regex over the message and a fixed pipeline
+ * over whatever it guessed. This one hands the message to a model that can see
+ * the deck, the current script and the last quality report — and can therefore
+ * answer "第 3 页太长了" by actually rewriting that page.
+ */
+export async function chat(projectId: string, message: string) {
+  return request<{ job_id: string }>(`/projects/${projectId}/chat`, {
+    method: 'POST',
+    body: JSON.stringify({ message }),
   })
 }
 

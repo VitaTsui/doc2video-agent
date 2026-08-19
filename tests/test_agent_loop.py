@@ -156,3 +156,44 @@ def test_compaction_without_a_model_still_records_that_it_happened():
 
     assert compact(session, MockLLM(), above=500) is True
     assert "折叠" in session.turns[0].text
+
+
+def test_decisions_land_in_the_ledger_alongside_the_renders(tmp_path: Path) -> None:
+    """The reasoning and the work it caused must read as one sequence.
+
+    They are recorded from different places — the loop writes decisions, the
+    executor writes stages — and for a while nothing recorded the decisions at
+    all, because the only recorder was opened inside a render. A decision that
+    exists only in a log the user cannot see is not an account of anything.
+    """
+    from doc2video.core import ledger
+
+    book = tmp_path / "ledger.jsonl"
+    loop = AgentLoop(
+        _project(),
+        _Scripted(
+            Decision(action="write_script", reason="还没有讲稿，先写一版", narrations={"1": "开场"}),
+            Decision(action="finish", reason="质检没问题", message="好了"),
+        ),
+        SessionStore(tmp_path / SESSION_FILE),
+        # Each render opens a recorder of its own, exactly as the service does.
+        render_all=lambda pages: _record_a_render(book),  # noqa: ARG005
+        render_scene=lambda scene_id, narration: None,  # noqa: ARG005
+        reload=_project,
+    )
+
+    with ledger.recording(book):
+        loop.run("帮我做一版")
+
+    entries = ledger.read(book)
+    assert [e.kind.value for e in entries] == ["decision", "stage", "decision"]
+    assert entries[0].detail == "还没有讲稿，先写一版"
+    # Numbered once, in order, despite two recorders having been open.
+    assert [e.seq for e in entries] == [1, 2, 3]
+
+
+def _record_a_render(book: Path) -> None:
+    from doc2video.core import ledger
+
+    with ledger.recording(book, run_id="run_1") as recorder, recorder.stage("渲染"):
+        pass

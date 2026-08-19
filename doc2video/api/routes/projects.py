@@ -25,6 +25,10 @@ class NarrationsIn(BaseModel):
 class SceneNarrationIn(BaseModel):
     narration: str
 
+
+class ChatIn(BaseModel):
+    message: str
+
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
@@ -96,6 +100,23 @@ def revise_scene(project_id: str, scene_id: str, body: SceneNarrationIn) -> dict
             project_id=project_id,
             scene_narrations={scene_id: body.narration},
         )
+    )
+    return {"job_id": job.id, "status": job.status}
+
+
+@router.post("/{project_id}/chat")
+def chat(project_id: str, body: ChatIn) -> dict:
+    """Say something about this project and let the agent decide what to do.
+
+    The difference from ``POST /projects/{id}/narrations`` is who chooses: there
+    the caller supplies the script and the pipeline runs it; here the agent
+    reads the deck, the current script and the last quality report, and picks
+    among the same operations. Returns a job id — a turn may render more than
+    once, so it cannot be a request that waits.
+    """
+    _load(project_id)
+    job = get_jobs().submit(
+        JobRequest(message=body.message, project_id=project_id, chat=True)
     )
     return {"job_id": job.id, "status": job.status}
 

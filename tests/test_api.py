@@ -111,6 +111,16 @@ def test_narration_routes_exist_for_a_client_without_mcp(client: TestClient):
     assert bad_key.status_code in (400, 404)
 
 
+def test_chat_is_a_job_because_a_turn_may_render_more_than_once(client: TestClient):
+    """The route the window uses to talk to the agent rather than command it.
+
+    It cannot be a request that waits: one message can cost several renders,
+    and the caller needs the progress stream in between.
+    """
+    assert client.post("/projects/proj_nope/chat", json={"message": "短一点"}).status_code == 404
+    assert client.post("/projects/proj_nope/chat", json={}).status_code == 422
+
+
 def test_job_events_streams_and_closes(client: TestClient):
     """A late subscriber gets the outcome and a done event, not a hung stream."""
     assert client.get("/jobs/job_nope/events").status_code == 404

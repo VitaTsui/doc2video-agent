@@ -43,6 +43,25 @@ class Recorder:
         self._lock = threading.Lock()
         self._seq = _last_seq(path)
 
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    @contextmanager
+    def run_scope(self, run_id: str) -> Iterator[None]:
+        """Tag entries with a different run for the duration of a block.
+
+        A chat turn is one account containing several runs: the agent decides,
+        a render happens under its own run id, then it decides again. The
+        entries stay in one numbered sequence; only their run tag changes.
+        """
+        previous = self._run_id
+        self._run_id = run_id or previous
+        try:
+            yield
+        finally:
+            self._run_id = previous
+
     def record(
         self,
         kind: EntryKind,
@@ -118,6 +137,15 @@ def _last_seq(path: Path) -> int:
 # -- module-level access ---------------------------------------------------
 @contextmanager
 def recording(path: Path, run_id: str = "") -> Iterator[Recorder]:
+    active = _current.get()
+    if active is not None and active.path == path:
+        # A chat turn records, and every render it causes records the same
+        # project. A second recorder would start numbering from its own read of
+        # the file and collide with the first, so nest instead of stacking.
+        with active.run_scope(run_id):
+            yield active
+        return
+
     recorder = Recorder(path, run_id)
     token = _current.set(recorder)
     try:
