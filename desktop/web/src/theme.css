@@ -367,3 +367,14 @@ video {
   background: #000;
   display: block;
 }
+
+/* Nothing in this window has a reason to scroll sideways. A single long token
+   — a Windows path in an error, a URL — otherwise widens the page itself and
+   pushes every line's beginning off-screen. */
+body {
+  overflow-x: hidden;
+}
+
+.card {
+  overflow-wrap: anywhere;
+}

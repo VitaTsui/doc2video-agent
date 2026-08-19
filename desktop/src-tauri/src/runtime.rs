@@ -540,8 +540,23 @@ fn unpack(archive: &Path, into: &Path, mut on_progress: impl FnMut(u64, u64)) ->
     // progress bar frozen at 100% — indistinguishable from a hang, and the
     // reason "安装要一两个小时" was as much about silence as about time.
     let mut done = 0u64;
+    // Windows will not create a symlink without Developer Mode or an elevated
+    // process — `os error 1314`, arriving after a 418MB download, on an
+    // archive that was fine everywhere else. Ordinary accounts can copy, so
+    // they are copied. Deferred to the end because a link may name a file that
+    // has not been extracted yet.
+    let mut deferred: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+
     for entry in tar.entries().context("解压失败")? {
         let mut entry = entry.context("解压失败")?;
+
+        if cfg!(windows) && entry.header().entry_type().is_symlink() {
+            if let (Ok(path), Ok(Some(target))) = (entry.path(), entry.link_name()) {
+                deferred.push((into.join(path), target.into_owned()));
+                done += 1;
+                continue;
+            }
+        }
         entry.unpack_in(into).context("解压失败")?;
         done += 1;
         // Reporting each file would be twenty thousand IPC messages.
@@ -549,7 +564,38 @@ fn unpack(archive: &Path, into: &Path, mut on_progress: impl FnMut(u64, u64)) ->
             on_progress(done, APPROX_ENTRIES);
         }
     }
+
+    for (link, target) in deferred {
+        let Some(parent) = link.parent() else { continue };
+        let source = parent.join(&target);
+        // A link whose target is missing is dropped rather than fatal: it is
+        // one entry of twenty thousand, and refusing the whole runtime over a
+        // dangling `.bin` shim would be the worse trade.
+        if source.is_dir() {
+            let _ = copy_tree(&source, &link);
+        } else if source.is_file() {
+            let _ = fs::create_dir_all(parent);
+            let _ = fs::copy(&source, &link);
+        } else {
+            log(&format!("跳过指向不存在目标的链接：{} → {}", link.display(), target.display()));
+        }
+    }
+
     on_progress(APPROX_ENTRIES, APPROX_ENTRIES);
+    Ok(())
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
     Ok(())
 }
 

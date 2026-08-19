@@ -64,6 +64,11 @@ FONT_URL = (
     "NotoSansCJKsc-Regular.otf"
 )
 VOICE = "zh_CN-huayan-medium"
+# Flat, not pnpm's symlinked store. Part of the digest because it decides what
+# the tree contains: switching it without a new digest would leave machines
+# holding the old layout while believing it current — which for the isolated
+# layout means an archive Windows cannot extract at all.
+NODE_LINKER = "hoisted"
 
 
 def base_version() -> str:
@@ -77,6 +82,7 @@ def base_version() -> str:
     material = [
         PYTHON_VERSION,
         NODE_VERSION,
+        NODE_LINKER,
         VOICE,
         FONT_URL,
         _dependency_block(),
@@ -228,7 +234,13 @@ def build_node(out: Path) -> None:
             shutil.copy2(source, node_dir / name)
     shutil.copytree(ROOT / "renderer" / "src", node_dir / "src", dirs_exist_ok=True)
 
-    run("pnpm", "install", "--prod=false", cwd=node_dir)
+    # `hoisted` rather than pnpm's default isolated layout: the default builds
+    # node_modules out of symlinks into a .pnpm store, and Windows refuses to
+    # create a symlink without Developer Mode or Administrator — the unpack
+    # died with `os error 1314` on the first machine that ever got far enough
+    # to try. A flat tree costs some duplicated files and owes nothing to the
+    # privileges of the machine it lands on.
+    run("pnpm", "install", "--prod=false", f"--node-linker={NODE_LINKER}", cwd=node_dir)
     # Fetch the headless browser now; doing it at first render adds ~165MB to
     # what already looks like a hang.
     run("npx", "remotion", "browser", "ensure", cwd=node_dir)
@@ -295,10 +307,28 @@ def pack_base(out: Path) -> Path:
     upload it, or make anybody download it again.
     """
     print("== 打包 base ==")
+    _refuse_symlinks_on_windows(out)
     archive = out.parent / f"d2v-base-{base_version()}-{target()}.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(out, arcname="runtime")
     return _write(archive)
+
+
+def _refuse_symlinks_on_windows(out: Path) -> None:
+    """A Windows archive containing a symlink is one that cannot be installed.
+
+    Extracting it needs a privilege ordinary accounts do not have, and the
+    failure lands on the user as `os error 1314` after a 418MB download. It is
+    a build-time property, so it is checked at build time.
+    """
+    if os.name != "nt":
+        return
+    links = [p for p in out.rglob("*") if p.is_symlink()]
+    if links:
+        shown = "\n  ".join(str(p.relative_to(out)) for p in links[:10])
+        raise SystemExit(
+            f"Windows 的 base 里有 {len(links)} 个软链接，装不上（os error 1314）：\n  {shown}"
+        )
 
 
 def pack_app(out: Path, version: str) -> Path:
