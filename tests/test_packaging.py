@@ -109,10 +109,16 @@ def test_an_unsigned_package_is_left_out_of_the_update_manifest(tmp_path):
     import sys
 
     art = tmp_path / "artifacts"
-    art.mkdir()
-    (art / "Doc2Video_9.9.9_aarch64.app.tar.gz").touch()
-    (art / "Doc2Video_9.9.9_aarch64.app.tar.gz.sig").write_text("dW50cnVzdGVk", encoding="utf-8")
-    (art / "doc2video_9.9.9_amd64.AppImage").touch()  # built without the key
+    # Laid out the way download-artifact leaves them: one directory per build
+    # job. macOS names its updater bundle without a version or an architecture,
+    # which is why the platform comes from the directory and not the filename.
+    mac = art / "desktop-macos-arm64"
+    linux = art / "desktop-linux-x64"
+    mac.mkdir(parents=True)
+    linux.mkdir(parents=True)
+    (mac / "Doc2Video.app.tar.gz").touch()
+    (mac / "Doc2Video.app.tar.gz.sig").write_text("dW50cnVzdGVk", encoding="utf-8")
+    (linux / "doc2video_9.9.9_amd64.AppImage").touch()  # built without the key
 
     out = tmp_path / "latest.json"
     script = Path(__file__).resolve().parents[1] / "scripts" / "updater_manifest.py"
@@ -121,7 +127,7 @@ def test_an_unsigned_package_is_left_out_of_the_update_manifest(tmp_path):
     manifest = json.loads(out.read_text(encoding="utf-8"))
     assert list(manifest["platforms"]) == ["darwin-aarch64"]
     assert manifest["platforms"]["darwin-aarch64"]["url"].endswith(
-        "/v9.9.9/Doc2Video_9.9.9_aarch64.app.tar.gz"
+        "/v9.9.9/Doc2Video.app.tar.gz"
     )
 
 
