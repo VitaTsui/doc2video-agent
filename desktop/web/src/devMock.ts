@@ -111,8 +111,8 @@ const CATALOGUE = {
   ],
   models: {
     agent_cli: [
-      { id: 'claude-code', label: 'Claude Code', vision: false, note: '' },
-      { id: 'codex', label: 'Codex', vision: false, note: '' },
+      { id: 'claude-code', label: 'Claude Code', vision: false, note: '检测到 /usr/local/bin/claude', installed: true },
+      { id: 'codex', label: 'Codex', vision: false, note: '未检测到 codex', installed: false },
     ],
     anthropic: [
       { id: 'claude-opus-5', label: 'Claude Opus 5', vision: true, note: '' },

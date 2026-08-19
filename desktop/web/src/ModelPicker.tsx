@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { ModelPrefs } from './api'
-import { ChevronIcon } from './Icon'
+import { CaretIcon } from './Icon'
 
 export function ModelPicker({
   prefs,
@@ -53,7 +53,7 @@ export function ModelPicker({
         onClick={() => setOpen((value) => !value)}
       >
         {current?.name || current?.id || '选择模型'}
-        <ChevronIcon open={open} size={14} />
+        <CaretIcon open={open} size={14} />
       </button>
 
       {open && (

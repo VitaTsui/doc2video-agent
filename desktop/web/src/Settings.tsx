@@ -13,6 +13,12 @@
  * matters most: a CLI already on this machine needs no key at all.
  */
 
+// Deep imports, as elsewhere: the barrel pulls ChatList in, and with it
+// mermaid, cytoscape and pdf.js — six megabytes of diagram engines for a
+// dialog made of text boxes.
+import Button from '@hsu-react/ui/es/components/Button'
+import Input from '@hsu-react/ui/es/components/Input'
+import Select from '@hsu-react/ui/es/components/Select'
 import { useEffect, useState } from 'react'
 
 import * as api from './api'
@@ -127,9 +133,9 @@ export function Settings({
 
         <div className="modal__body">
           <div className="modal__topline">
-            <button type="button" className="modal__ghost" onClick={onClose}>
-              关闭
-            </button>
+            <Button size="small" onClick={onClose}>
+            关闭
+          </Button>
           </div>
 
           {error && (
@@ -167,20 +173,12 @@ export function Settings({
                           </span>
                         </span>
                         <span style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                          <button
-                            type="button"
-                            className="modal__ghost"
-                            onClick={() => setEditing(editing === entry.id ? null : entry.id)}
-                          >
-                            {editing === entry.id ? '收起' : '编辑'}
-                          </button>
-                          <button
-                            type="button"
-                            className="modal__ghost"
-                            onClick={() => void remove(entry)}
-                          >
-                            删除
-                          </button>
+                          <Button size="small" onClick={() => setEditing(editing === entry.id ? null : entry.id)}>
+            {editing === entry.id ? '收起' : '编辑'}
+          </Button>
+                          <Button size="small" onClick={() => void remove(entry)}>
+            删除
+          </Button>
                         </span>
                       </div>
 
@@ -297,10 +295,11 @@ export function Settings({
                           {update.notes.slice(0, 400)}
                         </p>
                       )}
-                      <button
-                        type="button"
-                        className="modal__primary"
+                      <Button
+                        type="primary"
+                        size="small"
                         disabled={busy || updating}
+                        style={{ marginTop: 8 }}
                         onClick={() => {
                           setUpdating(true)
                           api.installUpdate().catch((thrown) => {
@@ -310,7 +309,7 @@ export function Settings({
                         }}
                       >
                         {updating ? '下载中…' : '更新并重启'}
-                      </button>
+                      </Button>
                       {/* Installing restarts the shell, and the backend is its
                           child — a render in flight would go with it. */}
                       {busy && <div className="muted">正在生成，等这一次跑完再更新。</div>}
@@ -350,28 +349,23 @@ function ProviderForm({
   return (
     <div className="provider__form">
       <label className="provider__label">名称</label>
-      <input
+      <Input
         className="provider__input"
         value={draft.name}
         placeholder="随便叫什么，比如 DeepSeek、公司网关"
-        onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+        onChange={(value) => setDraft({ ...draft, name: value })}
       />
 
       <label className="provider__label">协议</label>
       {/* The one field that is a choice rather than a value: these are four
           different SDKs with four different request formats, so the list is
           what the code implements, not what exists in the world. */}
-      <select
+      <Select
         className="provider__input"
         value={draft.protocol}
-        onChange={(event) => setDraft({ ...draft, protocol: event.target.value })}
-      >
-        {api.PROTOCOLS.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        options={api.PROTOCOLS.map((option) => ({ label: option.label, value: option.id }))}
+        onChange={(value) => setDraft({ ...draft, protocol: value as string })}
+      />
       {protocol?.note && (
         <p className="muted" style={{ marginTop: -4 }}>
           {protocol.note}
@@ -383,30 +377,35 @@ function ProviderForm({
           <label className="provider__label">
             Base URL{draft.protocol === 'compatible' ? '' : '（留空用官方地址）'}
           </label>
-          <input
+          <Input
             className="provider__input"
             value={draft.base_url}
             placeholder="https://api.deepseek.com/v1"
-            onChange={(event) => setDraft({ ...draft, base_url: event.target.value })}
+            onChange={(value) => setDraft({ ...draft, base_url: value })}
           />
 
           <label className="provider__label">API Key</label>
-          <input
-            type="password"
+          <Input.Password
             className="provider__input"
             value={key}
             // Says what leaving it alone means. Keys are write-only — they go
             // to the OS keychain and are never read back into the page.
             placeholder={configured ? '已配置——输入新值可替换' : '粘贴 API Key'}
-            onChange={(event) => setKey(event.target.value)}
+            onChange={(value) => setKey(value)}
           />
         </>
       )}
 
       <label className="provider__label">模型目录</label>
       {local && (
-        <p className="muted" style={{ marginTop: -4 }}>
-          {detected.map((cli) => `${cli.label}：${cli.note}`).join('；') || '没有检测到本机 CLI'}
+        <p className="modal__foot" style={{ margin: '0 0 8px' }}>
+          {/* Only what the check actually found. Joining empty notes produced
+              「Claude Code：；Codex：」 — a line that looks like a bug because
+              it is one. */}
+          {detected
+            .filter((cli) => cli.note)
+            .map((cli) => `${cli.label}：${cli.note}`)
+            .join('；') || '没有检测到本机 CLI'}
         </p>
       )}
       <ModelRows
@@ -417,18 +416,25 @@ function ProviderForm({
         onChange={(models) => setDraft({ ...draft, models })}
       />
 
+      {/* The thing that is true but is not a field. dsh puts one here too —
+          「其余字段在 settings.yaml 中」 — and it is the right place for it:
+          after everything editable, before the buttons that commit it. */}
+      <p className="modal__foot">
+        模型 id 原样传给提供方，不做校验——没听说过的 id 更可能是新发布的。
+      </p>
+
       <div className="provider__actions">
-        <button type="button" className="modal__ghost" onClick={onCancel}>
-          取消
-        </button>
-        <button
-          type="button"
-          className="modal__primary"
+        <Button size="small" onClick={onCancel}>
+            取消
+          </Button>
+        <Button
+          type="primary"
+          size="small"
           disabled={saving || !draft.name.trim()}
           onClick={() => onSave({ ...draft, name: draft.name.trim() }, key)}
         >
           {saving ? '保存中…' : '保存'}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -461,34 +467,29 @@ function ModelRows({
         <div key={index} className="models__entry">
           <div className="models__row">
             {suggest.length > 0 ? (
-              <select
+              <Select
                 className="provider__input"
-                value={model.id}
-                onChange={(event) => {
-                  const picked = suggest.find((cli) => cli.id === event.target.value)
-                  edit(index, { id: event.target.value, name: model.name || picked?.label || '' })
+                value={model.id || undefined}
+                placeholder="选一个"
+                options={suggest.map((cli) => ({ label: cli.id, value: cli.id }))}
+                onChange={(value) => {
+                  const picked = suggest.find((cli) => cli.id === value)
+                  edit(index, { id: value as string, name: model.name || picked?.label || '' })
                 }}
-              >
-                <option value="">选一个</option>
-                {suggest.map((cli) => (
-                  <option key={cli.id} value={cli.id}>
-                    {cli.id}
-                  </option>
-                ))}
-              </select>
+              />
             ) : (
-              <input
+              <Input
                 className="provider__input"
                 value={model.id}
                 placeholder="模型 id，原样传给提供方"
-                onChange={(event) => edit(index, { id: event.target.value })}
+                onChange={(value) => edit(index, { id: value })}
               />
             )}
-            <input
+            <Input
               className="provider__input"
               value={model.name}
               placeholder="显示名"
-              onChange={(event) => edit(index, { name: event.target.value })}
+              onChange={(value) => edit(index, { name: value })}
             />
             <button
               type="button"
@@ -510,24 +511,20 @@ function ModelRows({
           {open === index && (
             <>
               <label className="provider__label">说明</label>
-              <input
+              <Input
                 className="provider__input"
                 value={model.note}
                 placeholder="选择模型时显示在名字下面的一行"
-                onChange={(event) => edit(index, { note: event.target.value })}
+                onChange={(value) => edit(index, { note: value })}
               />
             </>
           )}
         </div>
       ))}
 
-      <button
-        type="button"
-        className="modal__ghost"
-        onClick={() => onChange([...models, { id: '', name: '', note: '' }])}
-      >
+      <Button size="small" onClick={() => onChange([...models, { id: '', name: '', note: '' }])}>
         添加模型
-      </button>
+      </Button>
     </div>
   )
 }

@@ -80,6 +80,16 @@ export const CloseIcon = (props: Props) =>
     props,
   )
 
+/**
+ * A dropdown's arrow: down when shut, up when open.
+ *
+ * Distinct from `ChevronIcon`, which points right when shut — that is the
+ * disclosure sense ("there is more inside this row"), and on a menu it reads
+ * as "goes to a submenu" rather than "opens downward".
+ */
+export const CaretIcon = ({ open, ...props }: Props & { open: boolean }) =>
+  svg(<path d={open ? 'M6 15l6-6 6 6' : 'M6 9l6 6 6-6'} />, props)
+
 /** Points right when closed, down when open — the usual disclosure. */
 export const ChevronIcon = ({ open, ...props }: Props & { open: boolean }) =>
   svg(<path d={open ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'} />, props)

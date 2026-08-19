@@ -27,6 +27,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ConfigProvider
       locale={zhCN}
+      // antd pushes a space between two CJK characters in a button, so
+      // 「关闭」 is drawn as 「关 闭」. That convention belongs to a different
+      // typographic tradition than the rest of this window, and next to
+      // 「添加模型」 — four characters, untouched — it reads as a mistake.
+      button={{ autoInsertSpace: false }}
       theme={{
         token: {
           colorPrimary: '#c96442',

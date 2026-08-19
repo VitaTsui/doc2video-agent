@@ -574,24 +574,31 @@ body {
   z-index: 30;
 }
 
+/* 800×800 with a 24px radius and a layered shadow instead of a border —
+   measured off dsh, because a settings dialog that is visibly smaller and
+   squarer than the one it was modelled on reads as a different quality of
+   thing. */
 .modal {
   position: fixed;
   inset: 0;
   margin: auto;
-  width: 660px;
+  width: 800px;
   max-width: 92vw;
-  height: 640px;
-  max-height: 86vh;
+  height: 800px;
+  max-height: 88vh;
   display: flex;
   background: var(--surface);
-  border-radius: 16px;
-  border: 1px solid var(--line);
+  border-radius: 24px;
   overflow: hidden;
   z-index: 31;
+  box-shadow:
+    0 0 1px rgb(0 0 0 / 20%),
+    0 0 4px rgb(0 0 0 / 2%),
+    0 12px 32px rgb(0 0 0 / 8%);
 }
 
 .modal__nav {
-  width: 170px;
+  width: 190px;
   flex-shrink: 0;
   background: var(--bg);
   border-right: 1px solid var(--line);
@@ -629,7 +636,7 @@ body {
 .modal__body {
   flex: 1;
   min-width: 0;
-  padding: 16px 22px 24px;
+  padding: 18px 26px 28px;
   overflow-y: auto;
 }
 
@@ -698,7 +705,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 11px 14px;
+  padding: 12px 14px;
 }
 
 /* Configured, in the smallest mark that can say it. */
@@ -712,10 +719,13 @@ body {
   vertical-align: middle;
 }
 
+/* The form opens as a panel inside the row's card — tinted, inset, its own
+   rounded box — rather than as fields bolted under a divider. */
 .provider__form {
   background: var(--bg);
-  border-top: 1px solid var(--line);
-  padding: 14px;
+  border-radius: 12px;
+  margin: 0 10px 10px;
+  padding: 14px 16px;
 }
 
 .provider__name {
@@ -732,14 +742,17 @@ body {
 
 .provider__input {
   width: 100%;
-  height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0 10px;
-  font: inherit;
-  background: var(--surface);
-  color: inherit;
   margin-bottom: 10px;
+}
+
+/* The library's own control, sized to match: 32px tall, 8px radius, white on
+   the tinted panel. */
+.provider__form .ant-input,
+.provider__form .ant-input-affix-wrapper,
+.provider__form .ant-select-selector {
+  height: 32px;
+  border-radius: 8px;
+  font-size: 14px;
 }
 
 .provider__more {
@@ -1013,13 +1026,18 @@ body {
   padding: 8px 10px;
 }
 
-/* The picker sits in its own row above the input, right where the library's
-   own select used to be — that control cannot render two lines, so it is not
-   passed a model list at all. */
-.composer__row {
-  display: flex;
-  justify-content: flex-start;
-  padding: 0 0 6px;
+/* The picker sits at the foot of the input box, in the space the library's
+   own select left — it is not passed a model list, because an antd Select
+   cannot carry a second line under each option. */
+.composer .column {
+  position: relative;
+}
+
+.composer .picker {
+  position: absolute;
+  left: 14px;
+  bottom: 13px;
+  z-index: 5;
 }
 
 /* -- model catalogue inside a provider ----------------------------------- */
@@ -1028,8 +1046,22 @@ body {
   margin-bottom: 10px;
 }
 
+/* Each model is a card of its own, so an expanded one visibly contains its
+   fields rather than leaving them adrift between two rows. */
 .models__entry {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 6px;
   margin-bottom: 6px;
+}
+
+.models__entry .provider__input {
+  margin-bottom: 0;
+}
+
+.models__entry .provider__label {
+  margin: 8px 0 4px;
 }
 
 .models__row {
@@ -1062,4 +1094,17 @@ body {
 .models__icon:hover {
   background: var(--user-bg);
   color: var(--ink);
+}
+
+/* Pills, like dsh: 28px tall and fully rounded. antd draws its own radius from
+   the theme token, which the rest of the window wants at 8. */
+.modal .ant-btn {
+  border-radius: 999px;
+}
+
+/* A note at the foot of a form, for the thing that is true but not a field. */
+.modal__foot {
+  color: var(--ink-soft);
+  font-size: 13px;
+  margin: 10px 0 0;
 }
