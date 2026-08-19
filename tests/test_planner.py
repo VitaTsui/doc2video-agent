@@ -104,3 +104,28 @@ def test_an_empty_script_still_asks_for_a_render(settings, store):
         "第 7 页太长了", project, narrations=None, scene_narrations=None, editing=True
     )
     assert absent.scene_ids == ["scene_07"]
+
+
+def test_preparing_writes_a_script_only_when_asked(settings, store):
+    """Who writes the words is the difference between the two callers.
+
+    Over MCP the calling model reads the deck and writes the script itself, so
+    handing it one would be answering a question it did not ask. A client with
+    a model of its own has the opposite problem: leave the pages blank and the
+    script is written at render time, arriving with the finished video — too
+    late to read, let alone edit.
+    """
+    from doc2video.agent import Doc2VideoAgent
+
+    agent = Doc2VideoAgent(settings, store)
+    project = _project()
+
+    waiting = agent.planner.prepare_plan("讲三分钟", project)
+    assert waiting.stages == [Stage.PARSE, Stage.UNDERSTAND]
+
+    drafting = agent.planner.prepare_plan("讲三分钟", project, draft=True)
+    assert drafting.stages == [Stage.PARSE, Stage.UNDERSTAND, Stage.NARRATE]
+    # And it stops there: nothing is voiced or rendered from a draft nobody
+    # has looked at yet.
+    assert Stage.VOICE not in drafting.stages
+    assert Stage.RENDER not in drafting.stages

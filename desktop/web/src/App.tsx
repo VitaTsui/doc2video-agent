@@ -98,7 +98,7 @@ export function App() {
           role: 'assistant',
           kind: 'text',
           text: caps?.llm.available
-            ? `换成 ${caps.llm.model} 了，之后留空的页我来写。`
+            ? `换成 ${caps.llm.model} 了。下次投文档时我顺手把讲稿写好，你在上面改。`
             : '好，讲稿由你来写。留空的页会是占位文本。',
         })
       } catch (error) {
@@ -172,6 +172,16 @@ export function App() {
           current?.projectId === summary.project_id
             ? { ...current, deck: { pages: deckPages, guide, hasModel, locked: false } }
             : current,
+        )
+        // The script it already has, back in the boxes it belongs to. It was
+        // drafted when this deck was parsed; coming back to a project should
+        // not mean coming back to blank pages.
+        setDrafts(
+          Object.fromEntries(
+            deckPages
+              .filter((page) => page.narration)
+              .map((page) => [String(page.index), page.narration]),
+          ),
         )
         // Open on anything worth seeing, not only on a finished video: a
         // project that was parsed and never rendered is exactly the one whose
@@ -391,12 +401,21 @@ export function App() {
     async (file: File, brief: string, uploaded?: string) => {
       setBusy(true)
       say({ role: 'user', kind: 'text', text: brief || '按默认来', file: file.name })
-      const thinking = say({ role: 'assistant', kind: 'text', text: '正在解析…', pending: true })
+      const thinking = say({
+        role: 'assistant',
+        kind: 'text',
+        text: hasModel ? '正在解析，并起草讲稿…' : '正在解析…',
+        pending: true,
+      })
       try {
         // Already on the backend if the picker managed it; only a failed
         // upload has to be repeated here.
         const uploadId = uploaded ?? (await api.uploadSource(file))
-        const prepared = await api.prepare(uploadId, brief)
+        // The script is written now, while the deck is on screen, rather than
+        // at render time — words that arrive with the finished video are words
+        // nobody got to change. Only with a model: without one this would draft
+        // placeholder text and pass it off as a starting point.
+        const prepared = await api.prepare(uploadId, brief, hasModel)
         const guide = await api.narrationGuide(prepared.project_id)
         setProjectId(prepared.project_id)
         void loadProjects()
@@ -411,7 +430,13 @@ export function App() {
           hasModel,
         })
         // The deck itself goes to the panel; the sentence above stays here.
-        setDrafts({})
+        setDrafts(
+          Object.fromEntries(
+            prepared.pages
+              .filter((page) => page.narration)
+              .map((page) => [String(page.index), page.narration]),
+          ),
+        )
         setArtifacts({
           projectId: prepared.project_id,
           scenes: [],
@@ -661,7 +686,7 @@ export function App() {
             role: 'assistant',
             kind: 'text',
             text: caps?.llm.available
-              ? `模型已就绪：${caps.llm.provider}｜${caps.llm.model}。之后留空的页我来写。`
+              ? `模型已就绪：${caps.llm.provider}｜${caps.llm.model}。投文档时我就把讲稿写好，你在上面改。`
               : '设置已保存，后端已重启。',
           })
         }}

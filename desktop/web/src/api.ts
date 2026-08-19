@@ -44,6 +44,8 @@ export interface PageView {
   summary: string
   /** Project-relative path to this page's render, e.g. "assets/page_001.png". */
   image: string | null
+  /** The script this page already has — empty until something writes one. */
+  narration: string
   elements: { id: string; kind: string; text: string }[]
 }
 
@@ -245,11 +247,16 @@ export async function pages(projectId: string) {
   return body.items
 }
 
-/** Parse a deck and stop — fast, and everything the script needs to be written. */
-export async function prepare(uploadId: string, brief: string) {
+/** Parse a deck and stop — everything the script needs to be written.
+ *
+ * With `draft`, the script is written here too, so the pages come back with
+ * words on them and editing can start immediately. Costs a model call and the
+ * wait that comes with it, which is why it is the caller's decision.
+ */
+export async function prepare(uploadId: string, brief: string, draft: boolean) {
   return request<{ project_id: string; title: string; pages: PageView[] }>('/agent/prepare', {
     method: 'POST',
-    body: JSON.stringify({ upload_id: uploadId, brief }),
+    body: JSON.stringify({ upload_id: uploadId, brief, draft }),
   })
 }
 

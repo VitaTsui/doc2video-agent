@@ -23,6 +23,10 @@ TRUTHY = {"1", "true", "yes", "on"}
 class PrepareIn(BaseModel):
     upload_id: str
     brief: str = ""
+    # Whether to write a first script here rather than leave the pages blank.
+    # Off by default: the caller that supplies its own script must not be
+    # handed one it did not ask for.
+    draft: bool = False
 
 
 @router.post("/prepare")
@@ -36,7 +40,7 @@ def prepare(body: PrepareIn) -> dict:
     settings = get_settings()
     try:
         source = resolve_upload(settings, body.upload_id)
-        project = get_agent().prepare(source, body.brief)
+        project = get_agent().prepare(source, body.brief, draft=body.draft)
     except Doc2VideoError as exc:
         raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
 
@@ -57,6 +61,11 @@ def page_views(project) -> list[dict]:
     looks different depending on whether you had just parsed it or reopened
     it from the sidebar.
     """
+    # The script this page already has, if any — so an editor opens on the
+    # words rather than on an empty box beside them.
+    written = {
+        scene.source_page: scene.narration for scene in project.scenes if scene.source_page
+    }
     return [
         {
             "index": page.index,
@@ -64,6 +73,7 @@ def page_views(project) -> list[dict]:
             "page_type": page.page_type.value,
             "summary": page.summary,
             "image": page.image_path,
+            "narration": written.get(page.index, ""),
             "elements": [
                 {"id": e.id, "kind": e.kind.value, "text": e.text} for e in page.elements if e.text
             ],

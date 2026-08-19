@@ -270,6 +270,31 @@ def test_a_project_can_be_reopened_with_its_pages(client: TestClient):
     assert client.get("/projects/proj_nope/pages").status_code == 404
 
 
+def test_a_prepared_deck_can_come_back_with_its_script(
+    client: TestClient, demo_pptx: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The pages carry the words, so the editor opens on them.
+
+    Without this the window had the deck and the script at two different
+    moments: the pages when the file was parsed, the script when the video
+    was finished. Editing "what the model wrote" meant waiting for a render
+    to find out what that was.
+    """
+    monkeypatch.setenv("D2V_LLM_PROVIDER", "mock")
+    with demo_pptx.open("rb") as handle:
+        upload = client.post("/uploads", files={"file": ("demo.pptx", handle)}).json()
+
+    drafted = client.post(
+        "/agent/prepare",
+        json={"upload_id": upload["upload_id"], "brief": "讲两分钟", "draft": True},
+    ).json()
+    assert all(page["narration"] for page in drafted["pages"])
+
+    # And it stopped at the script: nothing was voiced or rendered.
+    project = client.get(f"/projects/{drafted['project_id']}").json()
+    assert project["render"]["output_path"] is None
+
+
 def test_the_two_page_lists_are_one_list():
     """`prepare` and `/pages` must not drift.
 

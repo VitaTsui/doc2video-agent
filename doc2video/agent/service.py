@@ -83,16 +83,19 @@ class Doc2VideoAgent:
         return project
 
     # -- entry points ---------------------------------------------------------
-    def prepare(self, source_file: Path, brief: str) -> VideoProject:
+    def prepare(self, source_file: Path, brief: str, *, draft: bool = False) -> VideoProject:
         """Parse a deck and stop.
 
         The first half of a run: everything that can be decided without knowing
         what the video will *say*. It returns the document model so the caller
         can read the deck and write the script — which is the step this service
-        deliberately does not perform.
+        deliberately does not perform, unless `draft` asks it to. Callers that
+        have no model of their own do ask: for them "the caller writes it"
+        means nobody writes it until render time, and a script that appears
+        with the finished video is a script nobody got to read first.
         """
         project = self.create_project(source_file)
-        plan = self.planner.prepare_plan(brief, project)
+        plan = self.planner.prepare_plan(brief, project, draft=draft)
         with (
             telemetry.run(project.project_id, flags=self._flags(project)) as recorder,
             ledger.recording(self._ledger_path(project), recorder.record.run_id),
