@@ -20,36 +20,40 @@ import json
 import sys
 from pathlib import Path
 
-# Which artifact serves which platform. The app asks by target triple; these
-# are the names Tauri gives the bundles it can install over itself.
+# Keyed by the build job's artifact directory, not by guessing at file names.
+# The build already knows which platform it ran on; a filename does not
+# reliably say so — macOS ships its updater bundle as a bare
+# `Doc2Video.app.tar.gz`, with neither version nor architecture in it, and
+# matching on "aarch64" silently left macOS out of the manifest entirely.
 #
-# Windows is NSIS rather than MSI on purpose: the updater can run an NSIS
-# installer silently over a running app, and cannot do the same with an MSI.
-PLATFORMS: list[tuple[str, tuple[str, ...]]] = [
-    ("darwin-aarch64", ("aarch64.app.tar.gz", "_aarch64.app.tar.gz")),
-    ("darwin-x86_64", ("x64.app.tar.gz", "x86_64.app.tar.gz")),
-    ("linux-x86_64", ("amd64.AppImage", "x86_64.AppImage")),
-    ("windows-x86_64", ("x64-setup.exe", "x64_en-US.msi")),
-]
+# Within a platform the suffix picks which of its bundles can install over a
+# running app. Windows is NSIS rather than MSI on purpose: the updater can run
+# an NSIS installer silently, and cannot do the same with an MSI.
+PLATFORMS: dict[str, tuple[str, str]] = {
+    "macos-arm64": ("darwin-aarch64", ".app.tar.gz"),
+    "macos-x64": ("darwin-x86_64", ".app.tar.gz"),
+    "linux-x64": ("linux-x86_64", ".AppImage"),
+    "windows-x64": ("windows-x86_64", "-setup.exe"),
+}
 
 RELEASE = "https://github.com/VitaTsui/doc2video-agent/releases/download"
 
 
-def find(files: list[Path], suffixes: tuple[str, ...]) -> Path | None:
-    for suffix in suffixes:
-        for file in files:
-            if file.name.endswith(suffix):
+def find(root: Path, target: str, suffix: str) -> Path | None:
+    """That platform's updatable bundle, from that platform's own artifacts."""
+    for directory in root.glob(f"*{target}*"):
+        for file in sorted(directory.rglob("*")):
+            if file.is_file() and file.name.endswith(suffix):
                 return file
     return None
 
 
 def main() -> int:
-    artifacts, version, output = sys.argv[1], sys.argv[2], Path(sys.argv[3])
-    files = [p for p in Path(artifacts).rglob("*") if p.is_file()]
+    artifacts, version, output = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
 
     platforms: dict[str, dict[str, str]] = {}
-    for key, suffixes in PLATFORMS:
-        package = find(files, suffixes)
+    for target, (key, suffix) in PLATFORMS.items():
+        package = find(artifacts, target, suffix)
         if package is None:
             print(f"{key}：没有可更新的包，跳过")
             continue

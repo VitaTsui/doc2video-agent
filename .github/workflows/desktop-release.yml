@@ -117,7 +117,7 @@ jobs:
           find desktop/src-tauri/target/release/bundle \
             -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
             -o -name '*.AppImage' -o -name '*.deb' \
-            -o -name '*.app.tar.gz' -o -name '*.sig' \) -exec cp {} out/ \;
+            -o -name '*.rpm' -o -name '*.app.tar.gz' -o -name '*.sig' \) -exec cp {} out/ \;
           ls -la out
 
       - uses: actions/upload-artifact@v4

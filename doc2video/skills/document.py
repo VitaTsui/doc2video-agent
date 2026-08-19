@@ -145,6 +145,7 @@ class DocumentSkill(Skill):
             # Deck-level fields come back with every batch; the first batch —
             # which holds the cover — is the one that knows what the deck is.
             if start == 0:
+                seen = {page.index for page in batch}
                 document.topic = result.topic or document.topic
                 document.summary = result.summary or document.summary
                 document.key_concepts = result.key_concepts or document.key_concepts
@@ -152,8 +153,20 @@ class DocumentSkill(Skill):
                     document.sections = result.sections
                 if result.presentation_order:
                     known = {p.index for p in pages}
-                    document.presentation_order = [
-                        i for i in result.presentation_order if i in known
+                    ordered = [i for i in result.presentation_order if i in known]
+                    # The ordering is the one deck-level field a batch cannot
+                    # answer: this one has seen six pages of thirty, so every
+                    # page it never read is missing from its answer — not
+                    # dropped on purpose. A 30-page deck became a 6-page video
+                    # this way, silently, because `ordered_pages()` obeys.
+                    #
+                    # So a page may only be left out by a batch that saw it.
+                    document.presentation_order = ordered + [
+                        page.index
+                        for page in pages
+                        if page.index not in set(ordered)
+                        and page.index not in seen
+                        and page.page_type is not PageType.CONTACT
                     ]
 
     @staticmethod
