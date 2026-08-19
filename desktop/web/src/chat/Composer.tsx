@@ -1,10 +1,11 @@
 /**
  * The input line — the component library's, not ours.
  *
- * `Chat.Input` already is what this needs: a message box, file attachment, a
- * busy/stop state, and a model selector built into the same row. Hand-rolling
- * those was a mistake worth undoing — the picker in particular, which is the
- * whole reason this file used to be two files.
+ * `Chat.Input` already is what this needs: a message box, file attachment and
+ * a busy/stop state. Its model selector is the one part we do not use: it is
+ * an antd `Select` with no `optionRender`, so an option cannot carry a second
+ * line, and a model is a name plus a line saying what it is for. Ours sits
+ * above the box instead — see `ModelPicker`.
  *
  * The transcript above is still ours. `Chat.List` renders an assistant turn as
  * markdown with no escape hatch for arbitrary React (`userRenderContent` exists
@@ -17,36 +18,25 @@
 // with it, and ChatList's markdown renderer drags in mermaid, cytoscape and
 // pdf.js — six megabytes of diagram engines for a text box.
 import ChatInput from '@hsu-react/ui/es/components/Chat/ChatInput'
-import type { ModelConfig } from '@hsu-react/ui/es/components/Chat/ChatInput'
 import type { UploadFile } from 'antd'
 import { useState } from 'react'
 
-export interface ModelChoice {
-  /** `provider/model`, or empty for "no model". */
-  value: string
-  label: string
-}
-
-export interface ModelGroup {
-  label: string
-  models: ModelChoice[]
-}
+import * as api from '../api'
+import { ModelPicker } from '../ModelPicker'
 
 export function Composer({
   disabled,
   hint,
-  groups,
-  model,
-  onModel,
+  prefs,
+  onPick,
   onSend,
   onDeck,
   uploadAction,
 }: {
   disabled: boolean
   hint: string
-  groups: ModelGroup[]
-  model: string
-  onModel: (value: string) => void
+  prefs: api.ModelPrefs
+  onPick: (providerId: string, modelId: string) => void
   onSend: (text: string) => void | Promise<void>
   onDeck: (file: File, brief: string, uploadId?: string) => void | Promise<void>
   /** Where the picker posts. Carries the token, which it cannot send as a header. */
@@ -54,20 +44,12 @@ export function Composer({
 }) {
   const [files, setFiles] = useState<UploadFile[]>([])
 
-  // antd's Select reads an entry with an `options` array as a group heading,
-  // and the library hands `modelList` straight through to it. The declared
-  // type is a flat list — it has an index signature, so a group fits, but the
-  // cast is what says so out loud. Grouping is worth it: "runs on this machine,
-  // costs nothing" and "calls an API you pay for" is the distinction that
-  // actually decides which of these a person wants.
-  const modelList = groups.map((group) => ({
-    label: group.label,
-    options: group.models.map((choice) => ({ label: choice.label, value: choice.value })),
-  })) as unknown as ModelConfig[]
-
   return (
     <div className="composer">
       <div className="column">
+        <div className="composer__row">
+          <ModelPicker prefs={prefs} disabled={disabled} onPick={onPick} />
+        </div>
         <ChatInput
           placeholder={hint}
           assistanting={disabled}
@@ -79,7 +61,6 @@ export function Composer({
           // which is the better order anyway — a 6MB deck is already on the
           // backend by the time the sentence is finished.
           uploadConfig={{ accept: '.pdf,.ppt,.pptx', action: uploadAction }}
-          modelConfig={{ modelList, modelType: model, setModelType: onModel }}
           onSend={(text) => {
             // A deck and the sentence describing what to do with it arrive in
             // the same turn: the file is held here until send, not uploaded on

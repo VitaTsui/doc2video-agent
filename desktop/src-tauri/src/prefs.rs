@@ -22,6 +22,23 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// One model a provider offers.
+///
+/// The id is what goes on the wire; the name is what the picker shows. They
+/// are separate because they are for different readers — `deepseek-chat` is
+/// the API's word and "DeepSeek V4" is the person's, and a list that shows
+/// only the first makes you translate every time you pick.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct Model {
+    pub id: String,
+    pub name: String,
+    /// One line under the name in the picker. Anything worth knowing at the
+    /// moment of choosing: what it is good at, what it costs, that it is a
+    /// local CLI and free.
+    pub note: String,
+}
+
 /// One configured way to reach a model.
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
@@ -35,8 +52,12 @@ pub struct Provider {
     /// shapes the pipeline actually implements, plus the local CLIs.
     pub protocol: String,
     pub base_url: String,
-    /// Passed to the provider verbatim. We never validate it: a model id we
-    /// have not heard of is far more likely to be new than wrong.
+    /// Everything this provider offers. Ids are passed verbatim and never
+    /// validated: one we have not heard of is far more likely to be new than
+    /// wrong.
+    pub models: Vec<Model>,
+
+    /// What a one-model-per-provider install wrote. Folded into `models`.
     pub model: String,
 }
 
@@ -44,9 +65,11 @@ pub struct Provider {
 #[serde(default)]
 pub struct Prefs {
     pub providers: Vec<Provider>,
-    /// Which provider's id answers. Empty means no model at all, which is a
+    /// Which provider answers. Empty means no model at all, which is a
     /// supported way to run: the script is then written by hand or by MCP.
     pub active: String,
+    /// And which of its models. Empty falls back to the provider's first.
+    pub active_model: String,
 
     // -- what a pre-list install wrote ------------------------------------
     // Read once, on the next launch, and turned into a single entry. Kept so
@@ -89,25 +112,57 @@ pub fn key_var(protocol: &str) -> &'static str {
 }
 
 impl Prefs {
-    /// Fold a pre-list configuration into the list, once.
+    /// Fold older shapes into the current one, once.
     fn migrate(&mut self) {
-        if !self.providers.is_empty() || self.provider.trim().is_empty() {
-            return;
+        // A pre-list configuration: one provider, one model, no list at all.
+        if self.providers.is_empty() && !self.provider.trim().is_empty() {
+            let protocol = self.provider.trim().to_string();
+            self.providers.push(Provider {
+                id: format!("p_{protocol}"),
+                name: protocol.clone(),
+                protocol,
+                base_url: std::mem::take(&mut self.base_url),
+                models: Vec::new(),
+                model: std::mem::take(&mut self.model),
+            });
+            self.active = self.providers[0].id.clone();
+            self.provider.clear();
         }
-        let protocol = self.provider.trim().to_string();
-        self.providers.push(Provider {
-            id: format!("p_{protocol}"),
-            name: protocol.clone(),
-            protocol,
-            base_url: std::mem::take(&mut self.base_url),
-            model: std::mem::take(&mut self.model),
-        });
-        self.active = self.providers[0].id.clone();
-        self.provider.clear();
+
+        // A provider that held exactly one model in a field of its own.
+        for provider in &mut self.providers {
+            let single = std::mem::take(&mut provider.model);
+            if provider.models.is_empty() && !single.trim().is_empty() {
+                provider.models.push(Model {
+                    id: single.trim().to_string(),
+                    name: single.trim().to_string(),
+                    note: String::new(),
+                });
+            }
+        }
+        if self.active_model.is_empty() {
+            if let Some(first) = self.chosen().and_then(|p| p.models.first()) {
+                self.active_model = first.id.clone();
+            }
+        }
     }
 
     pub fn chosen(&self) -> Option<&Provider> {
         self.providers.iter().find(|p| p.id == self.active)
+    }
+
+    /// The model that answers: the one chosen, or the provider's first.
+    ///
+    /// Falling back rather than refusing, because a provider with models and
+    /// no selection is a configuration someone is halfway through, not a
+    /// broken one.
+    pub fn chosen_model(&self) -> Option<&Model> {
+        let provider = self.chosen()?;
+        provider
+            .models
+            .iter()
+            .find(|m| m.id == self.active_model)
+            .or_else(|| provider.models.first())
     }
 
     /// As environment variables for the backend process.
@@ -119,9 +174,10 @@ impl Prefs {
         let Some(provider) = self.chosen() else {
             return Vec::new();
         };
+        let model = self.chosen_model().map(|m| m.id.clone()).unwrap_or_default();
         [
             ("D2V_LLM_PROVIDER", &provider.protocol),
-            ("D2V_LLM_MODEL", &provider.model),
+            ("D2V_LLM_MODEL", &model),
             ("D2V_LLM_BASE_URL", &provider.base_url),
         ]
         .into_iter()
@@ -141,7 +197,12 @@ mod tests {
             name: id.into(),
             protocol: protocol.into(),
             base_url: String::new(),
-            model: "some-model".into(),
+            models: vec![Model {
+                id: "some-model".into(),
+                name: "Some Model".into(),
+                note: String::new(),
+            }],
+            model: String::new(),
         }
     }
 
@@ -172,7 +233,8 @@ mod tests {
                 name: "a".into(),
                 protocol: "anthropic".into(),
                 base_url: String::new(),
-                model: "  ".into(),
+                models: Vec::new(),
+                model: String::new(),
             }],
             active: "a".into(),
             ..Default::default()
@@ -207,12 +269,55 @@ mod tests {
 
         assert_eq!(prefs.providers.len(), 1);
         assert_eq!(prefs.chosen().unwrap().protocol, "compatible");
-        assert_eq!(prefs.chosen().unwrap().model, "deepseek-chat");
         assert_eq!(prefs.chosen().unwrap().base_url, "https://api.deepseek.com/v1");
+        // The single model becomes the first entry of the provider's list, and
+        // the active one, so the person is looking at the same setup they had.
+        assert_eq!(prefs.chosen_model().unwrap().id, "deepseek-chat");
+        assert_eq!(prefs.active_model, "deepseek-chat");
 
         // And only once — a second pass must not add a duplicate.
         prefs.migrate();
         assert_eq!(prefs.providers.len(), 1);
+        assert_eq!(prefs.chosen().unwrap().models.len(), 1);
+    }
+
+    #[test]
+    fn a_provider_offers_several_models_and_one_of_them_answers() {
+        let mut prefs = Prefs {
+            providers: vec![Provider {
+                id: "ds".into(),
+                name: "DeepSeek".into(),
+                protocol: "compatible".into(),
+                base_url: "https://api.deepseek.com/v1".into(),
+                models: vec![
+                    Model { id: "deepseek-chat".into(), name: "V4 Flash".into(), note: String::new() },
+                    Model { id: "deepseek-reasoner".into(), name: "V4 Pro".into(), note: String::new() },
+                ],
+                model: String::new(),
+            }],
+            active: "ds".into(),
+            active_model: "deepseek-reasoner".into(),
+            ..Default::default()
+        };
+        prefs.migrate();
+
+        assert_eq!(prefs.chosen_model().unwrap().name, "V4 Pro");
+        assert!(prefs
+            .as_env()
+            .contains(&("D2V_LLM_MODEL".to_string(), "deepseek-reasoner".to_string())));
+    }
+
+    #[test]
+    fn a_selection_naming_no_model_falls_back_to_the_first() {
+        // Halfway through configuring is not broken; refusing to run would
+        // make it so.
+        let prefs = Prefs {
+            providers: vec![provider("a", "anthropic")],
+            active: "a".into(),
+            active_model: "one-that-was-deleted".into(),
+            ..Default::default()
+        };
+        assert_eq!(prefs.chosen_model().unwrap().id, "some-model");
     }
 
     #[test]
