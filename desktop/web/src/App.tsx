@@ -22,6 +22,8 @@ import { MessageList } from './chat/MessageList'
 import type { Message, MessageDraft, MessagePatch } from './chat/types'
 import { Settings } from './Settings'
 import { Sidebar } from './Sidebar'
+import { Artifacts } from './Artifacts'
+import type { ArtifactSet } from './Artifacts'
 import { Setup } from './Setup'
 
 let counter = 0
@@ -43,6 +45,8 @@ export function App() {
   const [projectId, setProjectId] = useState<string | null>(null)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [collapsed, setCollapsed] = useState(false)
+  const [artifacts, setArtifacts] = useState<ArtifactSet | null>(null)
+  const [panelOpen, setPanelOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [hasModel, setHasModel] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -75,13 +79,17 @@ export function App() {
       catalogue.providers
         .filter((provider) => provider.needs_key === needsKey)
         .flatMap((provider) =>
-          (catalogue.models[provider.id] ?? []).map((entry) => ({
-            value: `${provider.id}/${entry.id}`,
-            // The vendor is already in the model's name — "Claude Opus 5",
-            // "GPT-5", "Gemini 2.5 Pro" — and the group heading carries what
-            // actually differs. Prefixing the provider only truncates.
-            label: entry.label,
-          })),
+          (catalogue.models[provider.id] ?? [])
+            // A local CLI that is not installed is not a choice; offering it
+            // produces a model that fails at its first request.
+            .filter((entry) => entry.installed !== false)
+            .map((entry) => ({
+              value: `${provider.id}/${entry.id}`,
+              // The vendor is already in the model's name — "Claude Opus 5",
+              // "GPT-5", "Gemini 2.5 Pro" — and the group heading carries what
+              // actually differs. Prefixing the provider only truncates.
+              label: entry.label,
+            })),
         )
 
     setGroups([
@@ -131,6 +139,18 @@ export function App() {
    * a home — the ledger under the video, where they sit next to the render
    * they caused. Repeating them here would be the same story told twice.
    */
+  /** Collect a project's outputs for the side panel. */
+  const loadArtifacts = useCallback(async (projectId: string, rendered: boolean) => {
+    const [scenes, quality, chain] = await Promise.all([
+      api.scenes(projectId).catch(() => []),
+      api.quality(projectId).catch(() => null),
+      api.ledger(projectId).catch(() => []),
+    ])
+    const set = { projectId, scenes, quality, ledger: chain, rendered }
+    setArtifacts(set)
+    return set
+  }, [])
+
   /**
    * Put one project's conversation on screen, replacing whatever is there.
    *
@@ -163,24 +183,21 @@ export function App() {
       }
       spoken.forEach(say)
 
+      const set = await loadArtifacts(summary.project_id, Boolean(summary.output))
       if (summary.output) {
-        const [scenes, quality, chain] = await Promise.all([
-          api.scenes(summary.project_id),
-          api.quality(summary.project_id).catch(() => null),
-          api.ledger(summary.project_id).catch(() => []),
-        ])
         say({
           role: 'assistant',
           kind: 'video',
           text: `《${summary.title || summary.source}》，${Math.round(summary.duration)} 秒。`,
           projectId: summary.project_id,
-          scenes,
-          quality,
-          ledger: chain,
+          scenes: set.scenes,
+          quality: set.quality,
+          ledger: set.ledger,
         })
+        setPanelOpen(true)
       }
     },
-    [say],
+    [loadArtifacts, say],
   )
 
   /** Everything on this machine, newest first — the sidebar's whole content. */
@@ -194,6 +211,8 @@ export function App() {
   const startNew = useCallback(() => {
     setProjectId(null)
     setMessages([])
+    setArtifacts(null)
+    setPanelOpen(false)
     greeted.current = false
   }, [])
 
@@ -275,16 +294,13 @@ export function App() {
         return
       }
 
-      const [scenes, quality, chain] = await Promise.all([
-        api.scenes(final.project_id),
-        api.quality(final.project_id).catch(() => null),
-        api.ledger(final.project_id).catch(() => []),
-      ])
+      const rendered = Boolean(final.result?.output_path)
+      const { scenes, quality, ledger: chain } = await loadArtifacts(final.project_id, rendered)
+      if (rendered) setPanelOpen(true)
 
       // A turn can end without a video — the agent asked something, or stopped
       // before rendering. Showing a player pointed at a file that does not
       // exist would be worse than saying only what happened.
-      const rendered = Boolean(final.result?.output_path)
       say(
         rendered
           ? {
@@ -494,7 +510,14 @@ export function App() {
             <p className="muted">拖一份 PPT 或 PDF 进来，再说一句你想要什么样的视频。</p>
           </div>
         ) : (
-          <MessageList messages={messages} onRender={startRender} />
+          <MessageList
+            messages={messages}
+            onRender={startRender}
+            onShow={(id) => {
+              void loadArtifacts(id, true)
+              setPanelOpen(true)
+            }}
+          />
         )}
 
         <Composer
@@ -508,6 +531,8 @@ export function App() {
           onModel={(value) => void switchModel(value)}
         />
       </main>
+
+      <Artifacts set={artifacts} open={panelOpen} onClose={() => setPanelOpen(false)} />
 
       <Settings
         open={settingsOpen}

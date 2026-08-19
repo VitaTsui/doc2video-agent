@@ -385,6 +385,8 @@ export interface ModelInfo {
   label: string
   vision: boolean
   note: string
+  /** Local CLIs only: whether the binary is actually on this machine. */
+  installed?: boolean
 }
 
 /** Which providers this build can reach, and a starting list of model ids. */

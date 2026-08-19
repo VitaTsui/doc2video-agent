@@ -422,14 +422,19 @@ body {
 }
 
 .sidebar__icon {
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
-  font-size: 15px;
+  /* These are glyphs standing in for icons, and at body size they read as
+     punctuation rather than as controls. */
+  font-size: 19px;
+  line-height: 1;
   cursor: pointer;
   border-radius: 8px;
-  padding: 4px 8px;
+  padding: 6px 9px;
 }
 
 .sidebar__icon:hover {
@@ -438,6 +443,10 @@ body {
 }
 
 .sidebar__new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 1px solid var(--line);
   background: var(--surface);
   color: inherit;
@@ -505,6 +514,9 @@ body {
 }
 
 .sidebar__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border: none;
   background: transparent;
   font: inherit;
@@ -731,6 +743,9 @@ body {
 }
 
 .provider__more {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   border: none;
   background: transparent;
   font: inherit;
@@ -749,4 +764,117 @@ body {
 
 .provider__actions .modal__primary {
   margin-top: 0;
+}
+
+/* The library draws its attachment and send icons at 14px, which next to
+   16px body text looks like something that failed to load rather than a
+   button.
+   
+   Only the buttons. The first version of this matched every svg in the
+   composer, which caught the model select's own chevron — that one is sized
+   to its field and looked wrong blown up to match a control it is not. */
+.composer button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar__foot {
+  font-size: 15px;
+}
+
+/* -- artifacts panel ----------------------------------------------------- */
+
+.panel {
+  width: 400px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel__tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.panel__tab {
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink-soft);
+  padding: 4px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.panel__tab:hover {
+  background: var(--user-bg);
+}
+
+.panel__tab--on {
+  background: var(--user-bg);
+  color: var(--ink);
+}
+
+.panel__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.panel__video {
+  width: 100%;
+  border-radius: 10px;
+  background: #000;
+}
+
+.panel__dim {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.panel__dim .bar {
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.panel__page {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* A line in the transcript that opens the panel — the artifact's handle, not
+   the artifact. */
+.turn__artifact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  border-radius: 10px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.turn__artifact:hover {
+  border-color: var(--ink-soft);
 }

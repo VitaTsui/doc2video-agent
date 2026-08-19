@@ -292,3 +292,27 @@ def test_a_reply_that_is_simply_not_json_still_fails():
 
     with _pytest.raises(ToolFailed):
         parse_json_reply("我不能回答这个问题。")
+
+
+def test_the_catalogue_says_which_local_cli_is_actually_installed(monkeypatch):
+    """Offering a CLI that is not there is offering a failure.
+
+    Every other provider's availability depends on a key the app cannot see,
+    so the list stays a list. The local ones are knowable, and a machine with
+    only one of them should be told so here rather than at the first request —
+    which is where it surfaced as "模型没有给出可用的决定".
+    """
+    from doc2video.tools.llm import models as catalogue_module
+
+    monkeypatch.setattr(
+        "shutil.which", lambda name: "/usr/local/bin/claude" if name == "claude" else None
+    )
+    rows = {row["id"]: row for row in catalogue_module.catalogue_payload()["agent_cli"]}
+
+    assert rows["claude-code"]["installed"] is True
+    assert "/usr/local/bin/claude" in rows["claude-code"]["note"]
+    assert rows["codex"]["installed"] is False
+    assert "未检测到" in rows["codex"]["note"]
+
+    # Nothing else grows the field: their availability is not knowable here.
+    assert "installed" not in catalogue_module.catalogue_payload()["anthropic"][0]
