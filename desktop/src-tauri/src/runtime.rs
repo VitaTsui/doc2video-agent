@@ -176,7 +176,7 @@ pub fn install(
             &base_url(base),
             &scratch,
             "base.tar.gz",
-            &format!("取不到 base 的校验和，这个平台的运行时可能还没发布（{}）", target()),
+            &format!("取不到 base 的校验和（{}，{}）", target(), BASE_VERSION.trim()),
             &mut on_progress,
         )?;
 
@@ -196,7 +196,7 @@ pub fn install(
         &app_url(version),
         app_data,
         "app.tar.gz",
-        &format!("取不到 app 的校验和，这个版本可能还没发布（{version}）"),
+        &format!("取不到 app 的校验和（{version}）"),
         &mut on_progress,
     )?;
     if !live.join("runtime.json").exists() {
@@ -216,7 +216,15 @@ fn fetch_part(
     missing: &str,
     on_progress: &mut impl FnMut(Phase, u64, u64),
 ) -> Result<()> {
-    let expected = fetch_checksum(&format!("{base}.sha256")).context(missing.to_string())?;
+    let expected = match fetch_checksum(&format!("{base}.sha256")) {
+        Ok(value) => value,
+        Err(error) => {
+            // Written down as well as returned: a dialog gets dismissed, and
+            // this is the line that says which URL and which failure.
+            log(&format!("取校验和失败：{base}.sha256 → {error:#}"));
+            return Err(error).context(missing.to_string());
+        }
+    };
     let archive = into.join(name);
     let digest = fetch_with_resume(&format!("{base}.tar.gz"), &archive, &mut |done, total| {
         on_progress(Phase::Download, done, total)

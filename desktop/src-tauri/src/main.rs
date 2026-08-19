@@ -101,7 +101,11 @@ async fn install_runtime(
     })
     .await
     .map_err(|e| format!("安装被打断：{e}"))?
-    .map_err(|e| e.to_string())?;
+    // `{:#}` rather than `{}`: anyhow's plain Display prints only the outermost
+    // context, so "取不到 base 的校验和" arrived without the 404, the timeout or
+    // the TLS failure that caused it — and the guess we appended about the
+    // platform not being published read like a diagnosis.
+    .map_err(|e| format!("{e:#}"))?;
 
     restart(&app, &state)
 }
@@ -149,14 +153,14 @@ fn restart(app: &tauri::AppHandle, state: &State<'_, AppState>) -> Result<Connec
 
 fn start_backend(app: &tauri::AppHandle) -> Result<Backend, String> {
     let dir = app_data(app)?;
-    let paths = Paths::resolve(&dir).map_err(|e| e.to_string())?;
+    let paths = Paths::resolve(&dir).map_err(|e| format!("{e:#}"))?;
 
     // Keys from the keychain, the model choice from disk — both only reach the
     // backend as environment variables at spawn, which is why changing either
     // means starting a new one.
     let mut env = secrets::as_env();
     env.extend(prefs::load(&dir).as_env());
-    Backend::start(&paths, env).map_err(|e| e.to_string())
+    Backend::start(&paths, env).map_err(|e| format!("{e:#}"))
 }
 
 /// Stop the backend when the process is signalled.
