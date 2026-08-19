@@ -22,6 +22,21 @@ import { LedgerCard } from './chat/LedgerCard'
 
 type Tab = 'deck' | 'video' | 'pages' | 'ledger'
 
+/**
+ * The quality dimensions, named in the language the rest of the window is in.
+ *
+ * They are English in the schema because that is where they are computed and
+ * compared; leaving them English on screen made five of the six words in that
+ * panel the only ones a reader has to translate.
+ */
+const DIMENSION: Record<string, string> = {
+  completeness: '完整度',
+  pacing: '节奏',
+  originality: '原创度',
+  direction: '镜头',
+  subtitles: '字幕',
+}
+
 export interface ArtifactSet {
   projectId: string
   scenes: Scene[]
@@ -98,7 +113,7 @@ export function Artifacts({
               </div>
               {set.quality?.dimensions.map((dimension) => (
                 <div key={dimension.name} className="panel__dim">
-                  <span className="muted">{dimension.name}</span>
+                  <span className="muted">{DIMENSION[dimension.name] ?? dimension.name}</span>
                   <div className="bar">
                     <div className="bar__fill" style={{ width: `${dimension.score}%` }} />
                   </div>

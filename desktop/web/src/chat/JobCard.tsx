@@ -24,7 +24,11 @@ export function JobCard({ job }: { job: JobState | null }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
         <span>{label}</span>
         <span className="muted">
-          {job.total > 0 ? `${job.done}/${job.total}` : job.detail}
+          {/* Nothing on the right once it is done. `detail` on a finished job
+              is the agent's reply, and that arrives as its own message a line
+              below — printing it here too showed the same three paragraphs
+              twice, once squeezed into a progress card. */}
+          {job.total > 0 ? `${job.done}/${job.total}` : finished ? '' : job.detail}
         </span>
       </div>
       <div className="bar">
