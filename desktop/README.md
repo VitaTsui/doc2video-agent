@@ -47,8 +47,36 @@ Tauri 外壳时，桩掉 `invoke` 和几个健康检查请求，于是 `pnpm --d
 后端的配置在进程生命周期内是冻结的（`get_settings` 是 `lru_cache`），重启是
 唯一诚实的生效方式。
 
+## 自更新
+
+壳自己更新，运行时不跟着走——壳十几兆，运行时四百兆。
+
+启动时静默查一次，有新版就在对话里说一句；设置页里能手动查、手动更新。
+不自动装：装意味着重启，而后端是壳的子进程，正在渲染的话那几分钟就没了。
+所以正在生成时更新按钮是禁用的。
+
+安全性全在签名上：应用只认 `tauri.conf.json` 里那一个公钥签出来的包，
+GitHub Release 被换掉也装不进去。CI 用 `TAURI_SIGNING_PRIVATE_KEY` 签，
+签完由 `scripts/updater_manifest.py` 汇成 `latest.json` 挂到 Release 上。
+没签名的平台不会进清单——列进去只会让应用下载一个注定被拒的包，用户看到
+的是「更新失败」，而正确的表现是什么都不该发生。
+
+发版前仓库要配两个 secret：
+
+| Secret | 内容 |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | `pnpm exec tauri signer generate` 生成的私钥文件**整段内容** |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 生成时设的密码；没设就留空 |
+
+私钥丢了就再也签不出能被现有安装接受的包，只能改公钥重新发一版，
+已装的用户得手动重装。
+
 ## 还没做
 
-- 运行时包的下载与校验（M7）：现在只能跑在有源码和 uv 的机器上。
-- Windows / Linux 构建（M7）：语音在非 macOS 上还是静音，字幕字体也还没补。
-- 自更新（M8）。
+- 壳更新之后运行时会整包重下：`runtime.json` 的版本是和壳版本对齐的，
+  而运行时里装着 doc2video 本体，每次发版都变。要省掉这四百兆，得把
+  重的部分（解释器、Node、Remotion、chrome-headless-shell、音色、字体）
+  和几百 KB 的本体分开发布。
+- Intel macOS 构建：`macos-13` 的 runner 排不到队。
+- 代码签名与公证：macOS 会弹 Gatekeeper，Windows 会被 SmartScreen 拦。
+  卡在账号和钱上，不卡在代码上。

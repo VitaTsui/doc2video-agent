@@ -215,9 +215,12 @@ class VirtualizedCLILLM(LLMTool):
             if kind == "model.result":
                 return self._output_of(message.get("result") or {})
             if kind == "model.error":
-                raise ToolFailed(
-                    f"{PACKAGE} 报错", detail={"error": str(message.get("error"))[:300]}
-                )
+                # The bridge's own words, not just "it failed": its errors are
+                # about paths and credentials, and a caller that logs only the
+                # summary leaves someone guessing at an ENOENT it could have
+                # simply shown them.
+                reason = str(message.get("error"))[:300]
+                raise ToolFailed(f"{PACKAGE} 报错：{reason}", detail={"error": reason})
             if kind == "tool.call":
                 # Should not happen with an empty Action Space, but the CLI loop
                 # is suspended until we answer — never leave it hanging.
@@ -298,9 +301,14 @@ def _resolve_config(settings: Settings) -> Path:
     from a CLI the user is, in fact, logged into, because the spawned process
     never saw their home directory.
     """
+    # Absolute throughout: the bridge is spawned with the renderer as its
+    # working directory (that is where its node_modules live), so a relative
+    # path — and `storage_dir` defaults to the relative `./storage` — resolves
+    # against the wrong directory and comes back as ENOENT from a process that
+    # cannot say which path it meant.
     configured = settings.agent_cli_config.strip()
     if configured:
-        path = Path(configured).expanduser()
+        path = Path(configured).expanduser().resolve()
         if not path.exists():
             raise RuntimeError(f"agent-virtualization 配置文件不存在：{path}")
         return path
@@ -314,7 +322,7 @@ def _resolve_config(settings: Settings) -> Path:
 
     # One file per runtime: switching between them must not silently reuse the
     # other's config, which differs in how credentials are inherited.
-    path = settings.storage_dir / f"agent-virtualization.{runtime}.json"
+    path = (settings.storage_dir / f"agent-virtualization.{runtime}.json").resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(_default_config(runtime, settings), ensure_ascii=False, indent=2),

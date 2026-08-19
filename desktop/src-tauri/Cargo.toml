@@ -3,7 +3,7 @@
 # in Python and stays there.
 [package]
 name = "doc2video-desktop"
-version = "0.6.0"
+version = "0.7.0"
 description = "Doc2Video 桌面版：把 PPT / PDF 变成讲解视频"
 license = "MIT"
 repository = "https://github.com/VitaTsui/doc2video-agent"
@@ -30,6 +30,8 @@ ureq = "2"
 flate2 = "1"
 tar = "0.4"
 sha2 = "0.10"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [target."cfg(unix)".dependencies]
 # The window's own close path runs Drop; a signal does not, and a backend left

@@ -8,6 +8,7 @@ published package was broken. A clean checkout catches it; so does this.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -96,3 +97,49 @@ def test_every_surface_reports_the_same_version():
     assert version() == declared
     assert create_app().version == declared
     assert build_server().version == declared
+
+
+def test_an_unsigned_package_is_left_out_of_the_update_manifest(tmp_path):
+    """Listing it would be worse than omitting it.
+
+    The app trusts one key and nothing else. A platform listed without a valid
+    signature sends it to download a package it is bound to reject — the user
+    sees "更新失败" where they should have seen nothing at all.
+    """
+    import sys
+
+    art = tmp_path / "artifacts"
+    art.mkdir()
+    (art / "Doc2Video_9.9.9_aarch64.app.tar.gz").touch()
+    (art / "Doc2Video_9.9.9_aarch64.app.tar.gz.sig").write_text("dW50cnVzdGVk", encoding="utf-8")
+    (art / "doc2video_9.9.9_amd64.AppImage").touch()  # built without the key
+
+    out = tmp_path / "latest.json"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "updater_manifest.py"
+    subprocess.run([sys.executable, str(script), str(art), "9.9.9", str(out)], check=True)
+
+    manifest = json.loads(out.read_text(encoding="utf-8"))
+    assert list(manifest["platforms"]) == ["darwin-aarch64"]
+    assert manifest["platforms"]["darwin-aarch64"]["url"].endswith(
+        "/v9.9.9/Doc2Video_9.9.9_aarch64.app.tar.gz"
+    )
+
+
+def test_the_updater_trusts_exactly_the_key_the_release_signs_with():
+    """A public key in the config is the whole of the update's security.
+
+    Without it any host answering the endpoint could install anything; with a
+    stale one every update is rejected and the app quietly stops updating. It
+    is the sort of value that only breaks in production, so it is pinned here.
+    """
+    config = json.loads(
+        (Path(__file__).resolve().parents[1] / "desktop/src-tauri/tauri.conf.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    updater = config["plugins"]["updater"]
+    assert updater["pubkey"].strip(), "没有公钥，自更新等于没有校验"
+    assert config["bundle"]["createUpdaterArtifacts"] is True, "不产出可更新的包，公钥也没用"
+    assert updater["endpoints"] == [
+        "https://github.com/VitaTsui/doc2video-agent/releases/latest/download/latest.json"
+    ]

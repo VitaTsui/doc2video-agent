@@ -57,6 +57,17 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
             librsvg2-dev patchelf libssl-dev
 
+      # 缺 key 的话 Tauri 会在构建到一半时报一句很难懂的话，而三个平台都会
+      # 报——先在这里说清楚是哪个 secret 没配。
+      - name: 检查签名密钥
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "缺少 secret TAURI_SIGNING_PRIVATE_KEY：自更新的包必须签名。" >&2
+            echo "用 pnpm tauri signer generate 生成，把私钥内容整段贴进仓库 secret。" >&2
+            exit 1
+          fi
+
       - name: 版本号
         id: ver
         shell: bash
@@ -86,8 +97,13 @@ jobs:
               "$GITHUB_WORKSPACE/dist/runtime/python/bin/python3" -m doc2video.cli doctor)
           fi
 
+      # 签名是自更新的全部安全性所在：应用只认这一个公钥签出来的包，
+      # 所以 GitHub Release 被替换了也装不进去。
       - name: 构建安装包
         working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           pnpm install
           pnpm tauri build
@@ -97,9 +113,11 @@ jobs:
         run: |
           mkdir -p out
           cp dist/*.tar.gz dist/*.sha256 out/ 2>/dev/null || true
+          # .app.tar.gz 和 .sig 是给自更新用的，dmg/msi/deb 是给人下载的。
           find desktop/src-tauri/target/release/bundle \
             -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
-            -o -name '*.AppImage' -o -name '*.deb' \) -exec cp {} out/ \;
+            -o -name '*.AppImage' -o -name '*.deb' \
+            -o -name '*.app.tar.gz' -o -name '*.sig' \) -exec cp {} out/ \;
           ls -la out
 
       - uses: actions/upload-artifact@v4
@@ -107,9 +125,41 @@ jobs:
           name: desktop-${{ matrix.target }}
           path: out/*
 
+      # 手动触发也要能上传：用 GITHUB_TOKEN 创建的 Release 不会触发别的工作流
+      # （GitHub 防递归），所以 release 事件在这个仓库里根本不会到来——只认它
+      # 等于这一步永远跑不到。
       - name: 挂到 Release
-        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: gh release upload "v${{ steps.ver.outputs.version }}" out/* --clobber
+
+  # latest.json 必须等三个平台都构建完：它是一份清单，缺一个平台就等于那个
+  # 平台的用户永远收不到更新提示。
+  manifest:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 版本号
+        id: ver
+        shell: bash
+        run: |
+          version="${{ github.event.inputs.version }}"
+          [ -n "$version" ] || version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 生成 latest.json
+        shell: bash
+        run: python3 scripts/updater_manifest.py artifacts "${{ steps.ver.outputs.version }}" latest.json
+
+      - name: 挂到 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "v${{ steps.ver.outputs.version }}" latest.json --clobber

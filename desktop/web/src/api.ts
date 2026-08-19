@@ -32,6 +32,9 @@ export interface JobState {
   total: number
   project_id: string | null
   error: { code: string; message: string } | null
+  /** What the agent said, for a chat turn. */
+  reply: string
+  result: { output_path: string | null } | null
 }
 
 export interface PageView {
@@ -61,11 +64,89 @@ export interface Scene {
   narration: string
 }
 
+export interface LedgerArtifact {
+  label: string
+  kind: 'image' | 'audio' | 'video' | 'text' | 'json'
+  path: string
+  text: string
+  scene_id: string
+}
+
+export interface LedgerEntry {
+  seq: number
+  kind: 'stage' | 'decision' | 'degradation' | 'note'
+  name: string
+  detail: string
+  status: string
+  duration_s: number
+  artifacts: LedgerArtifact[]
+}
+
+/** How this project got made, step by step, with what each step produced. */
+export async function ledger(projectId: string) {
+  const body = await request<{ items: LedgerEntry[] }>(`/projects/${projectId}/ledger`)
+  return body.items
+}
+
+export interface ProjectSummary {
+  project_id: string
+  title: string
+  source: string
+  status: string
+  updated_at: string | null
+  duration: number
+  output: string | null
+}
+
+/** Every project on this machine, most recently touched first. */
+export async function projects() {
+  const body = await request<{ items: ProjectSummary[] }>('/projects')
+  return body.items
+}
+
+export interface Turn {
+  /** user | agent | tool | summary */
+  speaker: string
+  text: string
+  /** Which of the loop's four operations this turn was, if any. */
+  action: string
+}
+
+/**
+ * What was said about this project last time.
+ *
+ * The transcript is written turn by turn beside the project, so it already
+ * survived the process — until this route only the model could read it, which
+ * left an agent that remembered the conversation talking to a window that had
+ * forgotten it.
+ */
+export async function session(projectId: string) {
+  return request<{ items: Turn[]; compacted: number }>(`/projects/${projectId}/session`)
+}
+
 export interface Quality {
   score: number
   errors: number
   warnings: number
   dimensions: { name: string; score: number; weight: number; detail: string }[]
+}
+
+/**
+ * Whatever was thrown, as something worth showing someone.
+ *
+ * Tauri's `invoke` rejects with the raw value its command returned — a plain
+ * string, not an Error — so reading `.message` off it yields `undefined`. A UI
+ * that then renders `error && <card>` shows nothing at all: the install
+ * appeared to "just go back to the button" with no explanation, which is the
+ * worst way for a 400MB download to fail.
+ */
+export function describeError(thrown: unknown): string {
+  if (typeof thrown === 'string') return thrown
+  if (thrown instanceof Error) return thrown.message
+  if (thrown && typeof thrown === 'object' && 'message' in thrown) {
+    return String((thrown as { message: unknown }).message)
+  }
+  return String(thrown)
 }
 
 export class ApiError extends Error {
@@ -169,6 +250,21 @@ export async function runAgent(projectId: string, message: string) {
   return request<{ job_id: string }>('/agent/run', {
     method: 'POST',
     body: JSON.stringify({ project_id: projectId, message }),
+  })
+}
+
+/**
+ * Say something and let the agent decide what to do about it.
+ *
+ * The route this replaced ran a regex over the message and a fixed pipeline
+ * over whatever it guessed. This one hands the message to a model that can see
+ * the deck, the current script and the last quality report — and can therefore
+ * answer "第 3 页太长了" by actually rewriting that page.
+ */
+export async function chat(projectId: string, message: string) {
+  return request<{ job_id: string }>(`/projects/${projectId}/chat`, {
+    method: 'POST',
+    body: JSON.stringify({ message }),
   })
 }
 
@@ -283,6 +379,27 @@ export async function catalogue() {
   return request<{ providers: ProviderInfo[]; models: Record<string, ModelInfo[]> }>(
     '/health/models',
   )
+}
+
+export interface UpdateInfo {
+  available: boolean
+  version: string
+  notes: string
+  current: string
+}
+
+/**
+ * Whether a newer shell exists. Never throws into the UI's path: no network,
+ * a rate limit and a release without a manifest all mean "not now", and none
+ * of them is worth interrupting someone over.
+ */
+export async function checkUpdate(): Promise<UpdateInfo | null> {
+  return invoke<UpdateInfo>('check_update').catch(() => null)
+}
+
+/** Download it, replace this binary, and restart into the new one. */
+export async function installUpdate(): Promise<void> {
+  return invoke<void>('install_update')
 }
 
 export interface RuntimeStatus {

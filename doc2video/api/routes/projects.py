@@ -25,6 +25,10 @@ class NarrationsIn(BaseModel):
 class SceneNarrationIn(BaseModel):
     narration: str
 
+
+class ChatIn(BaseModel):
+    message: str
+
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
@@ -100,6 +104,23 @@ def revise_scene(project_id: str, scene_id: str, body: SceneNarrationIn) -> dict
     return {"job_id": job.id, "status": job.status}
 
 
+@router.post("/{project_id}/chat")
+def chat(project_id: str, body: ChatIn) -> dict:
+    """Say something about this project and let the agent decide what to do.
+
+    The difference from ``POST /projects/{id}/narrations`` is who chooses: there
+    the caller supplies the script and the pipeline runs it; here the agent
+    reads the deck, the current script and the last quality report, and picks
+    among the same operations. Returns a job id — a turn may render more than
+    once, so it cannot be a request that waits.
+    """
+    _load(project_id)
+    job = get_jobs().submit(
+        JobRequest(message=body.message, project_id=project_id, chat=True)
+    )
+    return {"job_id": job.id, "status": job.status}
+
+
 @router.get("/{project_id}/narration-guide")
 def narration_guide(project_id: str) -> dict:
     """Per-page seconds and character budget to write the script against."""
@@ -125,6 +146,45 @@ def get_quality(project_id: str) -> dict:
             detail={"code": "quality_not_ready", "message": "工程尚未质检"},
         )
     return quality.model_dump(mode="json")
+
+
+@router.get("/{project_id}/ledger")
+def get_ledger(project_id: str) -> dict:
+    """How this project got made, step by step, with what each step produced.
+
+    Separate from `/telemetry`, which answers an operator's questions (is it
+    slow, did something quietly degrade). This answers the one the person
+    watching a render actually has: what did that step make, and can I look at
+    it? File-backed artifacts carry a project-relative path, servable through
+    the same `/assets/` route the window already uses for slide thumbnails.
+    """
+    _load(project_id)
+    return {"items": [e.model_dump(mode="json") for e in get_agent().read_ledger(project_id)]}
+
+
+@router.get("/{project_id}/session")
+def get_session(project_id: str) -> dict:
+    """What was said about this project, so a reopened window is not amnesiac.
+
+    The transcript already survived the process — it is written turn by turn
+    beside the project. Without this route only the model could read it, which
+    left the odd situation of an agent that remembered the conversation and a
+    window that did not.
+
+    Compacted turns come back as they are stored: one SUMMARY turn standing in
+    for the ones folded away. Showing it is honest — the earlier exchange is
+    gone, and pretending otherwise would leave the user quoting things the
+    agent can no longer see.
+    """
+    _load(project_id)
+    from ...agent.session import SESSION_FILE, SessionStore
+
+    store = get_agent().store
+    session = SessionStore(store.project_dir(project_id) / SESSION_FILE).load(project_id)
+    return {
+        "items": [turn.model_dump(mode="json") for turn in session.turns],
+        "compacted": session.compacted,
+    }
 
 
 @router.get("/{project_id}/telemetry")

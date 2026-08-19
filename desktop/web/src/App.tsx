@@ -111,13 +111,62 @@ export function App() {
             : '好，讲稿由你来写。留空的页会是占位文本。',
         })
       } catch (error) {
-        say({ role: 'assistant', kind: 'text', text: `切换失败：${(error as Error).message}` })
+        say({ role: 'assistant', kind: 'text', text: `切换失败：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
     },
     [say],
   )
+
+  /**
+   * Put the last conversation back on screen, if there was one.
+   *
+   * Only the replies are replayed. Each turn of the loop also records the
+   * reason behind its decision and what the tools did, and those already have
+   * a home — the ledger under the video, where they sit next to the render
+   * they caused. Repeating them here would be the same story told twice.
+   */
+  const resume = useCallback(async () => {
+    const [latest] = await api.projects()
+    if (!latest) return false
+    const past = await api.session(latest.project_id)
+    if (past.items.length === 0) return false
+
+    setProjectId(latest.project_id)
+    const spoken: MessageDraft[] = []
+    for (const turn of past.items) {
+      if (turn.speaker === 'summary') {
+        // Say so rather than quietly showing a shorter history: those turns
+        // are gone for the agent too, and a user quoting them would be
+        // quoting something it can no longer see.
+        spoken.push({ role: 'assistant', kind: 'text', text: `（更早的对话已折叠）${turn.text}` })
+      } else if (turn.speaker === 'user') {
+        spoken.push({ role: 'user', kind: 'text', text: turn.text })
+      } else if (turn.speaker === 'agent' && !turn.action) {
+        spoken.push({ role: 'assistant', kind: 'text', text: turn.text })
+      }
+    }
+    spoken.forEach(say)
+
+    if (latest.output) {
+      const [scenes, quality, chain] = await Promise.all([
+        api.scenes(latest.project_id),
+        api.quality(latest.project_id).catch(() => null),
+        api.ledger(latest.project_id).catch(() => []),
+      ])
+      say({
+        role: 'assistant',
+        kind: 'video',
+        text: `上次做到这里：《${latest.title || latest.source}》，${Math.round(latest.duration)} 秒。`,
+        projectId: latest.project_id,
+        scenes,
+        quality,
+        ledger: chain,
+      })
+    }
+    return true
+  }, [say])
 
   /** Connect, learn what the backend can do, and open the conversation. */
   const begin = useCallback(async () => {
@@ -126,12 +175,30 @@ export function App() {
     const caps = await api.capabilities().catch(() => null)
     setHasModel(Boolean(caps?.llm.available))
     void loadModels()
+
+    // Silent: a check that pops a dialog before the user has done anything is
+    // an interruption, and installing costs a restart. Mentioned once, in the
+    // transcript, where it waits until they care.
+    void api.checkUpdate().then((update) => {
+      if (update?.available) {
+        say({
+          role: 'assistant',
+          kind: 'text',
+          text: `有新版本 ${update.version}（当前 ${update.current}），在设置里可以更新。`,
+        })
+      }
+    })
+
+    // A returning user gets their conversation back instead of a greeting they
+    // have already read.
+    if (await resume().catch(() => false)) return
+
     say({
       role: 'assistant',
       kind: 'text',
       text: caps?.llm.available ? GREETING_WITH_MODEL(caps.llm.provider) : GREETING_WITHOUT_MODEL,
     })
-  }, [loadModels, say])
+  }, [loadModels, resume, say])
 
   useEffect(() => {
     if (greeted.current) return
@@ -158,7 +225,7 @@ export function App() {
       try {
         final = await api.watchJob(jobId, (state) => amend(id, { job: state }), abort.current.signal)
       } catch (error) {
-        amend(id, { kind: 'text', text: `没能跟上进度：${(error as Error).message}` })
+        amend(id, { kind: 'text', text: `没能跟上进度：${api.describeError(error)}` })
         return
       }
       amend(id, { job: final })
@@ -172,18 +239,29 @@ export function App() {
         return
       }
 
-      const [scenes, quality] = await Promise.all([
+      const [scenes, quality, chain] = await Promise.all([
         api.scenes(final.project_id),
         api.quality(final.project_id).catch(() => null),
+        api.ledger(final.project_id).catch(() => []),
       ])
-      say({
-        role: 'assistant',
-        kind: 'video',
-        text: '好了。',
-        projectId: final.project_id,
-        scenes,
-        quality,
-      })
+
+      // A turn can end without a video — the agent asked something, or stopped
+      // before rendering. Showing a player pointed at a file that does not
+      // exist would be worse than saying only what happened.
+      const rendered = Boolean(final.result?.output_path)
+      say(
+        rendered
+          ? {
+              role: 'assistant',
+              kind: 'video',
+              text: final.reply || '好了。',
+              projectId: final.project_id,
+              scenes,
+              quality,
+              ledger: chain,
+            }
+          : { role: 'assistant', kind: 'text', text: final.reply || '这一轮没有出片。' },
+      )
     },
     [amend, say],
   )
@@ -209,7 +287,7 @@ export function App() {
           hasModel,
         })
       } catch (error) {
-        amend(thinking, { kind: 'text', text: `解析失败：${(error as Error).message}` })
+        amend(thinking, { kind: 'text', text: `解析失败：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
@@ -231,10 +309,10 @@ export function App() {
       }
       setBusy(true)
       try {
-        const { job_id } = await api.runAgent(projectId, text)
-        await follow(job_id, '好，我来改。')
+        const { job_id } = await api.chat(projectId, text)
+        await follow(job_id, '我看看现在这一版，想想该改什么。')
       } catch (error) {
-        say({ role: 'assistant', kind: 'text', text: `没能开始：${(error as Error).message}` })
+        say({ role: 'assistant', kind: 'text', text: `没能开始：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
@@ -248,16 +326,24 @@ export function App() {
       setBusy(true)
       amend(id, { locked: true })
       try {
-        const { job_id } = await api.submitNarrations(projectId, narrations)
+        // Written pages are an instruction, so they go straight down the
+        // pipeline. An empty form with a model configured is the opposite —
+        // it means "you decide" — and that belongs in the loop, where the
+        // agent can read its own quality report afterwards and fix a page.
+        const written = Object.values(narrations).some((text) => text.trim())
+        const { job_id } =
+          !written && hasModel
+            ? await api.chat(projectId, '按这份文档生成视频。')
+            : await api.submitNarrations(projectId, narrations)
         await follow(job_id, '开始了，渲染要几分钟。')
       } catch (error) {
         amend(id, { locked: false })
-        say({ role: 'assistant', kind: 'text', text: `没能开始：${(error as Error).message}` })
+        say({ role: 'assistant', kind: 'text', text: `没能开始：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
     },
-    [amend, follow, projectId, say],
+    [amend, follow, hasModel, projectId, say],
   )
 
   if (runtime && !runtime.ready) {
@@ -309,6 +395,7 @@ export function App() {
 
       <SettingsDrawer
         open={settingsOpen}
+        busy={busy}
         onClose={() => setSettingsOpen(false)}
         onReconnected={async (next) => {
           setConnection(next)

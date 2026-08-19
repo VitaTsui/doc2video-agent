@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..core import flags, telemetry
+from ..core import flags, ledger, telemetry
 from ..core.config import Settings, get_settings
 from ..core.errors import InvalidRequest
 from ..core.ids import new_project_id
@@ -21,6 +21,7 @@ from ..storage import ProjectStore
 from ..storage.run_log import RunLog
 from ..tools.parsers import detect_source_type
 from .executor import Executor, ProgressFn
+from .loop import Outcome
 from .planner import REVISION_STAGES as _REVISION_STAGES
 from .planner import ExecutionPlan, Planner
 
@@ -92,7 +93,10 @@ class Doc2VideoAgent:
         """
         project = self.create_project(source_file)
         plan = self.planner.prepare_plan(brief, project)
-        with telemetry.run(project.project_id, flags=self._flags(project)) as recorder:
+        with (
+            telemetry.run(project.project_id, flags=self._flags(project)) as recorder,
+            ledger.recording(self._ledger_path(project), recorder.record.run_id),
+        ):
             try:
                 ctx = SkillContext.build(project, store=self.store, settings=self.settings)
                 project = Executor(ctx).run(plan, message=brief)
@@ -123,7 +127,10 @@ class Doc2VideoAgent:
 
         active = self._flags(project)
 
-        with telemetry.run(project.project_id, flags=active) as recorder:
+        with (
+            telemetry.run(project.project_id, flags=active) as recorder,
+            ledger.recording(self._ledger_path(project), recorder.record.run_id),
+        ):
             try:
                 with recorder.stage_scope("plan"):
                     if narrations:
@@ -149,6 +156,77 @@ class Doc2VideoAgent:
             self._persist_run(project, record)
 
         return AgentRunResult.from_project(project, plan)
+
+    def chat(
+        self,
+        *,
+        project_id: str,
+        message: str,
+        progress: ProgressFn | None = None,
+    ) -> Outcome:
+        """One turn of conversation, with the model deciding what to do.
+
+        The alternative — and what this replaces — was a regex guessing at the
+        message and a fixed pipeline running whatever it guessed. Here the model
+        sees the deck, the current script and the last quality report, and picks
+        among the operations that already existed. It gains no new powers over
+        the machine; it gains the ability to look at the result and decide the
+        next thing.
+        """
+        from ..tools.llm import get_llm
+        from .loop import AgentLoop
+        from .session import SESSION_FILE, SessionStore
+
+        project = self.store.load(project_id)
+        llm = get_llm(self.settings, rollout_key=project_id)
+        sessions = SessionStore(self.store.project_dir(project_id) / SESSION_FILE)
+
+        def render_all(narrations: dict[int, str]) -> None:
+            self.run(message=message, project_id=project_id, narrations=narrations,
+                     progress=progress)
+
+        def render_scene(scene_id: str, narration: str) -> None:
+            self.run(message=message, project_id=project_id,
+                     scene_narrations={scene_id: narration}, progress=progress)
+
+        loop = AgentLoop(
+            project,
+            llm,
+            sessions,
+            render_all=render_all,
+            render_scene=render_scene,
+            reload=lambda: self.store.load(project_id),
+        )
+        # Opened here rather than inside `run`, so the decisions land in the
+        # account too — they happen between the renders, not during one.
+        with ledger.recording(self._ledger_path(project)):
+            return loop.run(message)
+
+    def describe(self, project_id: str) -> AgentRunResult:
+        """A project's current state in the shape a job reports.
+
+        Used after a chat turn, which may have rendered several times: what
+        matters afterwards is where the project ended up, not which of those
+        renders was last.
+        """
+        project = self.store.load(project_id)
+        return AgentRunResult(
+            project_id=project.project_id,
+            status=project.status.value,
+            summary="",
+            scene_count=len(project.scenes),
+            duration=round(project.total_duration(), 1),
+            output_path=project.render.output_path,
+            review=[f.model_dump(mode="json") for f in project.review],
+            quality=project.quality.score if project.quality else None,
+        )
+
+    def _ledger_path(self, project: VideoProject) -> Path:
+        return self.store.project_dir(project.project_id) / ledger.LEDGER_FILE
+
+    def read_ledger(self, project_id: str) -> list:
+        """The account of how this project got made, oldest first."""
+        return ledger.read(self.store.project_dir(project_id) / ledger.LEDGER_FILE)
 
     def _flags(self, project: VideoProject) -> dict[str, bool]:
         return flags.active_flags(project.project_id, self.settings)

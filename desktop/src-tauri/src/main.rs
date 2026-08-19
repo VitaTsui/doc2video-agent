@@ -12,6 +12,7 @@ mod prefs;
 mod runtime;
 mod secrets;
 mod sidecar;
+mod update;
 
 use std::sync::Mutex;
 
@@ -191,6 +192,8 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             connection,
@@ -200,7 +203,9 @@ fn main() {
             save_key,
             model_prefs,
             save_model_prefs,
-            restart_backend
+            restart_backend,
+            update::check_update,
+            update::install_update
         ])
         .setup(|app| {
             let handle = app.handle().clone();

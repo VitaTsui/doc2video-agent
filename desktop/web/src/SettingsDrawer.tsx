@@ -40,10 +40,13 @@ export function SettingsDrawer({
   open,
   onClose,
   onReconnected,
+  busy,
 }: {
   open: boolean
   onClose: () => void
   onReconnected: (connection: Connection) => void
+  /** A render is in flight. Installing restarts the process that owns it. */
+  busy: boolean
 }) {
   const [configured, setConfigured] = useState<string[]>([])
   const [catalogue, setCatalogue] = useState<Awaited<ReturnType<typeof api.catalogue>> | null>(null)
@@ -52,12 +55,15 @@ export function SettingsDrawer({
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [update, setUpdate] = useState<api.UpdateInfo | null>(null)
+  const [updating, setUpdating] = useState(false)
 
   useEffect(() => {
     if (!open) return
     void api.configuredKeys().then(setConfigured)
     void api.capabilities().then(setCaps).catch(() => setCaps(null))
     void api.catalogue().then(setCatalogue).catch(() => setCatalogue(null))
+    void api.checkUpdate().then(setUpdate)
     void api.modelPrefs().then(setPrefs)
   }, [open])
 
@@ -73,7 +79,7 @@ export function SettingsDrawer({
       onReconnected(await api.saveModelPrefs(next))
       setCaps(await api.capabilities())
     } catch (e) {
-      setError((e as Error).message)
+      setError(api.describeError(e))
     } finally {
       setSaving(null)
     }
@@ -88,7 +94,7 @@ export function SettingsDrawer({
       setConfigured(await api.configuredKeys())
       setCaps(await api.capabilities())
     } catch (e) {
-      setError((e as Error).message)
+      setError(api.describeError(e))
     } finally {
       setSaving(null)
     }
@@ -120,6 +126,42 @@ export function SettingsDrawer({
             关闭
           </button>
         </div>
+
+        {update && (
+          <div className="card" style={{ marginTop: 12 }}>
+            <Row label="版本">
+              {update.available ? `${update.current} → ${update.version}` : update.current}
+            </Row>
+            {update.available && (
+              <>
+                {update.notes && (
+                  <p className="muted" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>
+                    {update.notes.slice(0, 400)}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="composer__send"
+                  style={{ width: 'auto', height: BUTTON_HEIGHT, padding: '0 14px', borderRadius: 7, fontSize: 13, marginTop: 8 }}
+                  disabled={busy || updating}
+                  onClick={() => {
+                    setUpdating(true)
+                    api.installUpdate().catch((thrown) => {
+                      setError(api.describeError(thrown))
+                      setUpdating(false)
+                    })
+                  }}
+                >
+                  {updating ? '下载中…' : '更新并重启'}
+                </button>
+                {/* Installing restarts the shell, and the backend is its
+                    child — a render in flight would go with it, minutes of
+                    work for a version number. */}
+                {busy && <div className="muted" style={{ marginTop: 6 }}>正在生成，等这一次跑完再更新。</div>}
+              </>
+            )}
+          </div>
+        )}
 
         <p className="muted" style={{ marginTop: 12 }}>
           不配 Key 也能用——那样讲稿由你自己写，或者由调用方通过 MCP 传进来。配了模型，留空的页
