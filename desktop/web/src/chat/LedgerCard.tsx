@@ -23,8 +23,17 @@ const KIND_MARK: Record<string, string> = {
   note: '',
 }
 
-export function LedgerCard({ projectId, entries }: { projectId: string; entries: LedgerEntry[] }) {
-  const [open, setOpen] = useState(false)
+export function LedgerCard({
+  projectId,
+  entries,
+  startOpen = false,
+}: {
+  projectId: string
+  entries: LedgerEntry[]
+  /** Open from the start when it is the point of the view it sits in. */
+  startOpen?: boolean
+}) {
+  const [open, setOpen] = useState(startOpen)
   const total = entries.reduce((sum, e) => sum + e.duration_s, 0)
 
   if (entries.length === 0) return null

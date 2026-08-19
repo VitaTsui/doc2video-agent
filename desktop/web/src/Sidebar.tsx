@@ -11,6 +11,7 @@
  */
 
 import type { ProjectSummary } from './api'
+import { GearIcon, PanelIcon, PlusIcon } from './Icon'
 
 function when(iso: string | null): string {
   if (!iso) return ''
@@ -44,14 +45,14 @@ export function Sidebar({
     return (
       <aside className="sidebar sidebar--collapsed">
         <button type="button" className="sidebar__icon" title="展开侧边栏" onClick={onToggle}>
-          ☰
+          <PanelIcon open={false} size={20} />
         </button>
         <button type="button" className="sidebar__icon" title="新会话" onClick={onNew}>
-          ＋
+          <PlusIcon size={20} />
         </button>
         <div style={{ marginTop: 'auto' }}>
           <button type="button" className="sidebar__icon" title="设置" onClick={onSettings}>
-            ⚙
+            <GearIcon size={19} />
           </button>
         </div>
       </aside>
@@ -63,12 +64,13 @@ export function Sidebar({
       <div className="sidebar__head">
         <span className="sidebar__brand">Doc2Video</span>
         <button type="button" className="sidebar__icon" title="收起侧边栏" onClick={onToggle}>
-          ☰
+          <PanelIcon open size={20} />
         </button>
       </div>
 
       <button type="button" className="sidebar__new" onClick={onNew}>
-        ＋ 新会话
+        <PlusIcon size={17} />
+        新会话
       </button>
 
       <div className="sidebar__section">工程</div>
@@ -105,7 +107,8 @@ export function Sidebar({
       </div>
 
       <button type="button" className="sidebar__foot" onClick={onSettings}>
-        ⚙ 设置
+        <GearIcon size={17} />
+        设置
       </button>
     </aside>
   )

@@ -16,6 +16,7 @@
 import { useEffect, useState } from 'react'
 
 import * as api from './api'
+import { ChevronIcon } from './Icon'
 import type { Connection } from './api'
 
 /** Which vendor key belongs to which provider in the catalogue. */
@@ -304,7 +305,8 @@ function ProviderForm({
       />
 
       <button type="button" className="provider__more" onClick={() => setAdvanced((v) => !v)}>
-        {advanced ? '▾' : '▸'} 自定义设置
+        <ChevronIcon open={advanced} size={15} />
+        自定义设置
       </button>
       {advanced && (
         <>

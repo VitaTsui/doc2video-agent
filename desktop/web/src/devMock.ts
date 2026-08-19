@@ -48,6 +48,29 @@ const PROJECTS = [
   },
 ]
 
+const SCENES = [
+  { scene_id: 'scene_01', source_page: 1, title: '封面', duration: 24, narration: '各位评审专家，下面汇报的是面向石化化工方向的应用场景揭榜方案。', actions: [] },
+  { scene_id: 'scene_02', source_page: 2, title: '目录', duration: 29, narration: '汇报分五个部分。先交代这次揭榜的背景，以及我们作为技术牵头方的能力来源。', actions: [] },
+  { scene_id: 'scene_03', source_page: 3, title: '一、背景', duration: 20, narration: '先看背景和技术牵头方。这一部分回答两个问题。', actions: [] },
+]
+
+const QUALITY = {
+  score: 100,
+  errors: 0,
+  warnings: 0,
+  dimensions: [
+    { name: 'completeness', score: 100, weight: 0.35, detail: '0 处不完整' },
+    { name: 'pacing', score: 100, weight: 0.2, detail: '节奏均匀' },
+    { name: 'originality', score: 100, weight: 0.2, detail: '无照读页面文字' },
+  ],
+}
+
+const LEDGER = [
+  { seq: 1, kind: 'stage', name: '解析文档', detail: '', status: 'ok', duration_s: 2.3, artifacts: [], run_id: 'r1' },
+  { seq: 2, kind: 'decision', name: '决定写讲稿', detail: '还没有讲稿，先按页写一版', status: 'ok', duration_s: 0, artifacts: [], run_id: 'r1' },
+  { seq: 3, kind: 'stage', name: '渲染合成', detail: '', status: 'ok', duration_s: 263, artifacts: [], run_id: 'r1' },
+]
+
 const SESSION = [
   { speaker: 'user', text: '给评审专家讲这份揭榜方案，六分钟左右。', action: '' },
   { speaker: 'agent', text: '不确定受众偏技术还是偏业务，先按评审专家来写。', action: 'ask' },
@@ -115,6 +138,9 @@ export function installDevMock() {
     // Enough of a history for the sidebar to have something to be: a list
     // styled only against the empty case is a list nobody has looked at.
     if (url.includes('/session')) return json({ items: SESSION, compacted: 0 })
+    if (url.includes('/scenes')) return json({ items: SCENES })
+    if (url.includes('/quality')) return json(QUALITY)
+    if (url.includes('/ledger')) return json({ items: LEDGER })
     if (url.match(/\/projects(\?|$)/)) return json({ items: PROJECTS })
     return real(input as RequestInfo, init)
   }
