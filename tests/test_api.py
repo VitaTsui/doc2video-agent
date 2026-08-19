@@ -12,8 +12,26 @@ from doc2video.core import flags
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(create_app())
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """A backend whose storage is this test's, not this machine's.
+
+    The app reads the settings singleton, which defaults `storage_dir` to a
+    relative `./storage` — the repository's own. Tests asserting "nothing has
+    run yet" then passed only on a checkout where nobody had ever run the
+    pipeline, and turned red on any machine that had.
+    """
+    from doc2video.api import deps
+    from doc2video.core import config
+
+    monkeypatch.setenv("D2V_STORAGE_DIR", str(tmp_path / "storage"))
+    for cached in (config.get_settings, deps.get_agent, deps.get_jobs):
+        cached.cache_clear()
+    try:
+        yield TestClient(create_app())
+    finally:
+        # The next test to build one must not inherit this directory.
+        for cached in (config.get_settings, deps.get_agent, deps.get_jobs):
+            cached.cache_clear()
 
 
 def test_health(client: TestClient):

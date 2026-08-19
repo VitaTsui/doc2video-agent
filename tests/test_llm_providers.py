@@ -206,3 +206,56 @@ def test_each_runtime_gets_the_credential_option_it_understands(tmp_path: Path):
 def test_an_unknown_runtime_is_refused_by_name(tmp_path: Path):
     settings = Settings(storage_dir=tmp_path, llm_provider="agent_cli", llm_model="emacs")
     assert isinstance(get_llm(settings), MockLLM)
+
+
+def test_the_bridge_is_told_where_its_config_is_in_absolute_terms(tmp_path, monkeypatch):
+    """A relative path here resolves against the wrong directory.
+
+    The bridge runs with the renderer as its working directory — that is where
+    its node_modules are — while `storage_dir` defaults to a relative
+    `./storage`. Handing it `storage/x.json` made it open
+    `renderer/storage/x.json` and fail with an ENOENT naming a path nobody
+    configured. Downstream that surfaced as an agent with no model: the deck
+    was understood by heuristics and the loop answered "我没想清楚下一步".
+    """
+    import shutil as shutil_module
+
+    from doc2video.tools.llm import virtualized
+
+    monkeypatch.setattr(virtualized.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.chdir(tmp_path)
+    assert shutil_module.which  # the real one is untouched outside the module
+
+    path = virtualized._resolve_config(Settings(storage_dir=Path("storage")))
+    assert path.is_absolute(), path
+    assert path.parent == (tmp_path / "storage").resolve()
+
+
+def test_the_bridges_own_words_survive_the_exception(tmp_path):
+    """"报错" alone is not a diagnosis.
+
+    Its failures are about paths and credentials — the useful half is the
+    sentence it wrote. Keeping that only in a `detail` dict meant the log line
+    someone actually reads said nothing at all.
+    """
+    import json as json_module
+    import subprocess
+
+    from doc2video.core.errors import ToolFailed
+    from doc2video.tools.llm.virtualized import PROTOCOL, VirtualizedCLILLM
+
+    llm = VirtualizedCLILLM.__new__(VirtualizedCLILLM)
+    llm._timeout = 5
+    reply = json_module.dumps(
+        {"protocol": PROTOCOL, "type": "model.error", "error": "ENOENT: /nowhere/x.json"}
+    )
+    process = subprocess.Popen(
+        ["cat"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    try:
+        with pytest.raises(ToolFailed) as caught:
+            llm._exchange(process, json_module.loads(reply), "r1")
+    finally:
+        process.kill()
+
+    assert "ENOENT: /nowhere/x.json" in str(caught.value)
