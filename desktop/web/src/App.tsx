@@ -117,23 +117,6 @@ export function App() {
       api.quality(projectId).catch(() => null),
       api.ledger(projectId).catch(() => []),
     ])
-    // What the model wrote goes into the boxes it wrote it for.
-    //
-    // Otherwise the script exists in two places that cannot see each other:
-    // read-only under 逐页, and an empty editor still saying 「留空则由模型
-    // 来写」 — so changing one page meant retyping it. Seeded here because
-    // this runs at the two moments the stored script is the truth: a turn
-    // just finished, or a project was just opened.
-    if (scenes.length > 0) {
-      setDrafts(
-        Object.fromEntries(
-          scenes
-            .filter((scene) => scene.source_page && scene.narration)
-            .map((scene) => [String(scene.source_page), scene.narration]),
-        ),
-      )
-    }
-
     // The deck is not re-fetched here; it belongs to the parse that produced
     // it, and dropping it would empty the tab someone is looking at.
     let carried: ArtifactSet['deck']
@@ -340,17 +323,6 @@ export function App() {
                 }
               : current,
           )
-          // The script as it is written, page by page. Safe to overwrite
-          // what is in the boxes: they are locked while a run is going.
-          if (scenes?.length) {
-            setDrafts(
-              Object.fromEntries(
-                scenes
-                  .filter((scene) => scene.source_page && scene.narration)
-                  .map((scene) => [String(scene.source_page), scene.narration]),
-              ),
-            )
-          }
         })
       }, 1500)
 
