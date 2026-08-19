@@ -50,6 +50,8 @@ export function App() {
   // The script being typed: written in the panel, committed from the
   // conversation, so neither of them can own it.
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  /** The model writing the script, and how far it has got. Null when it isn't. */
+  const [drafting, setDrafting] = useState<{ done: number; total: number } | null>(null)
   const [running, setRunning] = useState(false)
   const [greeting, setGreeting] = useState('')
   const [notice, setNotice] = useState('')
@@ -395,6 +397,11 @@ export function App() {
     [amend, projectId, say],
   )
 
+  /** Put the run record into the panel, if it still belongs to this project. */
+  const showRecord = useCallback((entries: api.LedgerEntry[]) => {
+    setArtifacts((current) => (current ? { ...current, ledger: entries } : current))
+  }, [])
+
   /**
    * Step two: write the script for a deck that has just been parsed.
    *
@@ -406,30 +413,41 @@ export function App() {
    * spinner.
    */
   const draftScript = useCallback(
-    async (project: string) => {
+    async (project: string, total: number) => {
+      // How many pages have words on them is the progress — measured, not
+      // estimated. The job reports stages, and "writing" is one stage however
+      // long the deck is; the page count is the thing that actually moves.
       const fill = (written: api.PageView[]) => {
         const filled = written.filter((page) => page.narration)
+        setDrafting({ done: filled.length, total })
         if (filled.length === 0) return 0
         setDrafts(Object.fromEntries(filled.map((p) => [String(p.index), p.narration])))
         return filled.length
       }
 
+      setDrafting({ done: 0, total })
       const jobId = await api.draftScript(project)
       const poll = window.setInterval(() => {
         void api
           .pages(project)
           .then(fill)
           .catch(() => 0)
+        // The record grows through this step as much as through a render —
+        // this is where the model is deciding things — so it is read here too.
+        void api.ledger(project).then(showRecord).catch(() => undefined)
       }, 1500)
+      let done = 0
       try {
         await api.watchJob(jobId, () => {})
+        // The last batch may have landed between polls.
+        done = fill(await api.pages(project).catch(() => []))
       } finally {
         window.clearInterval(poll)
+        setDrafting(null)
       }
-      // The last batch may have landed between polls.
-      return fill(await api.pages(project).catch(() => []))
+      return done
     },
-    [],
+    [showRecord],
   )
 
   /** A deck arrives: parse it, then report what is in it and what it will cost. */
@@ -467,25 +485,32 @@ export function App() {
           deck: { pages: prepared.pages, guide, hasModel, locked: false },
         })
         setPanelOpen(true)
+        // Parsing and reading the deck are decisions too, and they were
+        // already recorded by the time this returned. Without this read the
+        // 过程 tab stayed empty until a render, which made it look like
+        // nothing had happened yet.
+        void api.ledger(prepared.project_id).then(showRecord).catch(() => undefined)
 
-        // Now the words, against the deck that is already on screen.
+        // Now the words, against the deck that is already on screen. No turn
+        // of its own: the deck card is what fills in, and it shows how far the
+        // writing has got — a second line counting the same pages next to it
+        // would be the same fact twice.
         if (hasModel) {
-          const writing = say({
-            role: 'assistant',
-            kind: 'text',
-            text: '正在逐页写讲稿，写好一页就填进去，你可以直接在上面改。',
-            pending: true,
-          })
           try {
-            const written = await draftScript(prepared.project_id)
-            amend(writing, {
-              pending: false,
-              text: written
-                ? `讲稿写好了，${written} 页。改完按「开始生成」。`
-                : '讲稿没写出来，可以自己写，或者留空让占位文本顶上。',
-            })
+            const written = await draftScript(prepared.project_id, prepared.pages.length)
+            if (written === 0) {
+              say({
+                role: 'assistant',
+                kind: 'text',
+                text: '讲稿没写出来，可以自己写，或者留空让占位文本顶上。',
+              })
+            }
           } catch (error) {
-            amend(writing, { pending: false, text: `写讲稿失败：${api.describeError(error)}` })
+            say({
+              role: 'assistant',
+              kind: 'text',
+              text: `写讲稿失败：${api.describeError(error)}`,
+            })
           }
         }
       } catch (error) {
@@ -494,7 +519,7 @@ export function App() {
         setBusy(false)
       }
     },
-    [amend, draftScript, hasModel, loadProjects, say],
+    [amend, draftScript, hasModel, loadProjects, say, showRecord],
   )
 
   /**
@@ -684,6 +709,7 @@ export function App() {
             deck={{
               written: Object.values(drafts).filter((text) => text.trim()).length,
               locked: Boolean(artifacts?.deck?.locked),
+              drafting,
               // A script that came out of a render, rather than out of the
               // boxes: the same fields, a different sentence.
               generated: (artifacts?.scenes.length ?? 0) > 0,

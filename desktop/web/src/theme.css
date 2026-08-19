@@ -1157,6 +1157,20 @@ body {
   margin-top: 0;
 }
 
+/* While the model writes: the count and a bar in place of the button, taking
+   the space the button would have had so the row does not jump when it
+   finishes and the button appears. */
+.deckgate__writing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.deckgate__writing .bar {
+  width: 96px;
+}
+
 /* Its own button, not the icon button with overrides. `.composer__send` is a
    32px square laid out as a grid to centre one glyph; widening it and adding
    padding left the label sitting off to one side, because the grid area it
