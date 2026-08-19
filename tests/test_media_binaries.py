@@ -143,3 +143,30 @@ def test_dependency_report_names_the_source():
     assert "soffice" in report
     if ffmpeg_entry["available"]:
         assert os.path.basename(str(ffmpeg_entry["path"]))
+
+
+def test_no_spawn_passes_a_bare_name_that_was_only_which_checked():
+    """The Windows shim trap, guarded at the level it keeps recurring.
+
+    `npx`, `pnpm` and `uv` install as `.cmd` files. `shutil.which` finds them
+    because it consults PATHEXT; `CreateProcess` will not run one by its bare
+    name. Code that checks with `which` and then spawns the literal string
+    passes its own check and fails at the spawn with `[WinError 2]`, naming a
+    program that is plainly installed. It has happened three times here.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "doc2video"
+    offenders = []
+    for source in root.rglob("*.py"):
+        text = source.read_text(encoding="utf-8")
+        # A command list whose first element is a bare shim name.
+        for match in re.finditer(r'\[\s*"(npx|pnpm|uv|node|soffice)"', text):
+            offenders.append(f"{source.relative_to(root)}: {match.group(1)}")
+
+    assert not offenders, (
+        "这些地方在用裸名启动进程，Windows 上会是 [WinError 2]：\n  "
+        + "\n  ".join(offenders)
+        + "\n用 core.programs.find/require 拿到解析后的路径。"
+    )

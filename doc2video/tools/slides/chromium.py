@@ -17,6 +17,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ...core import programs
 from ...core.config import Settings, get_settings, which
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
@@ -68,7 +69,9 @@ class ChromiumSlideRenderer:
         )
 
         cmd = [
-            "npx", "remotion", "render",
+            # Resolved, not bare — see core.programs.
+            programs.require("npx", "未安装 Node.js / npx"),
+            "remotion", "render",
             "src/index.ts", COMPOSITION_ID,
             str(work_dir.resolve()),
             f"--props={props_path.resolve()}",

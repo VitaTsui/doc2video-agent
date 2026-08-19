@@ -16,6 +16,7 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Emu
 
+from ...core import programs
 from ...core.config import Settings, which
 from ...core.errors import UnsupportedSource
 from ...core.ids import element_id
@@ -351,7 +352,15 @@ def _render_with_libreoffice(
     with tempfile.TemporaryDirectory() as tmp:
         try:
             subprocess.run(
-                ["soffice", "--headless", "--convert-to", "pdf", "--outdir", tmp, str(source)],
+                [
+                    programs.require("soffice", "未安装 LibreOffice"),
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    tmp,
+                    str(source),
+                ],
                 check=True,
                 capture_output=True,
                 timeout=SOFFICE_TIMEOUT,
@@ -406,7 +415,16 @@ def _convert_legacy_ppt(path: Path, assets_dir: Path) -> Path:
     out_dir = assets_dir / "_converted"
     out_dir.mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        ["soffice", "--headless", "--convert-to", "pptx", "--outdir", str(out_dir), str(path)],
+        [
+            # Resolved for the same reason as npx — see core.programs.
+            programs.require("soffice", "未安装 LibreOffice"),
+            "--headless",
+            "--convert-to",
+            "pptx",
+            "--outdir",
+            str(out_dir),
+            str(path),
+        ],
         check=True,
         capture_output=True,
         timeout=SOFFICE_TIMEOUT,
