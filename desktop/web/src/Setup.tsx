@@ -11,7 +11,7 @@
  * why their new 6MB app is pulling 400MB.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 
 import * as api from './api'
@@ -31,6 +31,10 @@ export function Setup({
     total: number
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Measured here rather than reported from Rust: what matters is the rate the
+  // person is actually experiencing, and this is where it lands.
+  const rate = useRef<{ at: number; done: number; mbps: number } | null>(null)
+  const [mbps, setMbps] = useState<number | null>(null)
 
   useEffect(() => {
     const stop = listen<['download' | 'unpack', number, number]>(
@@ -38,6 +42,24 @@ export function Setup({
       (event) => {
         const [phase, done, total] = event.payload
         setProgress({ phase, done, total })
+
+        if (phase !== 'download') {
+          setMbps(null)
+          rate.current = null
+          return
+        }
+        const now = Date.now()
+        const previous = rate.current
+        if (previous && now > previous.at) {
+          const instant = ((done - previous.done) / (now - previous.at) / 1024 / 1024) * 1000
+          // Smoothed: a raw per-event figure jitters between 2 and 40 and
+          // tells nobody anything.
+          const smoothed = previous.mbps ? previous.mbps * 0.7 + instant * 0.3 : instant
+          rate.current = { at: now, done, mbps: smoothed }
+          setMbps(smoothed)
+        } else {
+          rate.current = { at: now, done, mbps: 0 }
+        }
       },
     )
     return () => {
@@ -110,6 +132,7 @@ export function Setup({
                 <span>{unpacking ? '正在解压（文件很多，会慢一些）' : '正在下载运行环境'}</span>
                 <span className="muted">
                   {unpacking || percent !== null ? `${percent ?? 0}%` : `${downloadedMb}MB`}
+                  {mbps !== null && mbps > 0 && ` · ${mbps.toFixed(1)}MB/s`}
                 </span>
               </div>
               <div className="bar">

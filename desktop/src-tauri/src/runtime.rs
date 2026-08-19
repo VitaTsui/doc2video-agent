@@ -267,10 +267,90 @@ const ATTEMPTS: u32 = 6;
 /// the install forever, which from the outside looks exactly like a very slow
 /// one — and the user has no way to tell which they are looking at.
 fn http_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+    let mut builder = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(30))
-        .timeout_read(std::time::Duration::from_secs(60))
-        .build()
+        .timeout_read(std::time::Duration::from_secs(60));
+
+    // The browser on the same machine did 419MB in forty seconds; this client
+    // managed 0.10MB/s. The difference was not the code — it was that a
+    // browser uses the machine's proxy and `ureq` does not, so every request
+    // here went out direct on a route that barely worked, and kept being cut.
+    if let Some(url) = system_proxy() {
+        match ureq::Proxy::new(&url) {
+            Ok(proxy) => {
+                log(&format!("走代理：{url}"));
+                builder = builder.proxy(proxy);
+            }
+            // A proxy we cannot parse is worth saying out loud rather than
+            // silently ignoring — silently ignoring is what put us here.
+            Err(error) => log(&format!("代理地址无法解析，改为直连：{url}（{error}）")),
+        }
+    }
+    builder.build()
+}
+
+/// What this machine says its proxy is, in the order the machine means it.
+///
+/// The environment wins: someone who exports `HTTPS_PROXY` for a single run
+/// means that run. Otherwise Windows' own setting — the one the browser obeys,
+/// which is exactly the discrepancy this exists to close.
+pub fn system_proxy() -> Option<String> {
+    for name in ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"]
+    {
+        if let Ok(value) = std::env::var(name) {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    windows_proxy()
+}
+
+#[cfg(windows)]
+fn windows_proxy() -> Option<String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let settings = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        .ok()?;
+    let enabled: u32 = settings.get_value("ProxyEnable").ok()?;
+    if enabled == 0 {
+        return None;
+    }
+    let server: String = settings.get_value("ProxyServer").ok()?;
+
+    // Either "host:port" for everything, or "http=…;https=…;socks=…" per
+    // scheme. We want the one that carries HTTPS.
+    let server = server.trim();
+    if !server.contains('=') {
+        return Some(with_scheme(server));
+    }
+    for part in server.split(';') {
+        if let Some(rest) = part.trim().strip_prefix("https=") {
+            return Some(with_scheme(rest));
+        }
+    }
+    for part in server.split(';') {
+        if let Some(rest) = part.trim().strip_prefix("http=") {
+            return Some(with_scheme(rest));
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn windows_proxy() -> Option<String> {
+    None
+}
+
+fn with_scheme(address: &str) -> String {
+    if address.contains("://") {
+        address.to_string()
+    } else {
+        format!("http://{address}")
+    }
 }
 
 /// Download to `to`, resuming whatever is already there, and return the digest
@@ -350,6 +430,12 @@ fn append_from(url: &str, to: &Path, on_progress: &mut impl FnMut(u64, u64)) -> 
 
     let response = request.call().context("下载失败")?;
     let resuming = response.status() == 206;
+    if resuming {
+        // Worth a line: a bar that opens at 6% looks like a download that went
+        // very fast and then stalled, when nothing was downloaded at all —
+        // those bytes were left by an earlier attempt.
+        log(&format!("从上次的 {have} 字节继续：{url}"));
+    }
     if have > 0 && !resuming {
         // The server ignored the range and is sending the whole file again;
         // start over rather than concatenating two copies.
@@ -487,6 +573,31 @@ mod tests {
         assert!(!status.ready);
         assert_eq!(status.installed, None);
         assert_eq!(status.required, "9.9.9");
+    }
+
+    #[test]
+    fn an_exported_proxy_beats_whatever_the_machine_is_configured_with() {
+        // Someone exporting HTTPS_PROXY for one run means that run.
+        std::env::set_var("HTTPS_PROXY", "http://127.0.0.1:7890");
+        assert_eq!(system_proxy().as_deref(), Some("http://127.0.0.1:7890"));
+        std::env::remove_var("HTTPS_PROXY");
+    }
+
+    #[test]
+    fn a_bare_host_and_port_is_given_a_scheme() {
+        // Windows stores "127.0.0.1:7890"; ureq needs a URL.
+        assert_eq!(with_scheme("127.0.0.1:7890"), "http://127.0.0.1:7890");
+        assert_eq!(with_scheme("socks5://127.0.0.1:7891"), "socks5://127.0.0.1:7891");
+    }
+
+    #[test]
+    fn an_empty_proxy_variable_is_not_a_proxy() {
+        // Set-but-empty is how a shell says "no proxy"; treating it as one
+        // would send every request at a host that is not there.
+        std::env::set_var("HTTPS_PROXY", "   ");
+        let found = system_proxy();
+        std::env::remove_var("HTTPS_PROXY");
+        assert!(found.is_none() || !found.unwrap().trim().is_empty());
     }
 
     #[test]
