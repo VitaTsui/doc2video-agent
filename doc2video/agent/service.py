@@ -133,17 +133,13 @@ class Doc2VideoAgent:
         ):
             try:
                 with recorder.stage_scope("plan"):
-                    if narrations:
-                        plan = self.planner.render_plan(narrations)
-                    elif project_id:
-                        plan = self.planner.edit_plan(message, project)
-                    else:
-                        plan = self.planner.initial_plan(message, project)
-                    if scene_narrations:
-                        # A revision names its scenes by supplying their text.
-                        plan.scene_narrations = dict(scene_narrations)
-                        plan.scene_ids = list(scene_narrations)
-                        plan.stages = _REVISION_STAGES
+                    plan = self._plan_for(
+                        message,
+                        project,
+                        narrations=narrations,
+                        scene_narrations=scene_narrations,
+                        editing=bool(project_id),
+                    )
                 ctx = SkillContext.build(
                     project, store=self.store, settings=self.settings
                 )
@@ -156,6 +152,39 @@ class Doc2VideoAgent:
             self._persist_run(project, record)
 
         return AgentRunResult.from_project(project, plan)
+
+    def _plan_for(
+        self,
+        message: str,
+        project: VideoProject,
+        *,
+        narrations: dict[int, str] | None,
+        scene_narrations: dict[str, str] | None,
+        editing: bool,
+    ) -> ExecutionPlan:
+        """Which plan this call is asking for.
+
+        The one distinction worth naming: `narrations` is None when no script
+        was supplied and `{}` when an empty one was. Both are falsy and they
+        mean opposite things — `{}` came from a caller that said "render this",
+        and treating it as "no script" sends the call down the edit branch,
+        where it matches no edit rule, skips narration and dies at render with
+        「没有可渲染的场景」. That is exactly what happened when the desktop
+        app's 开始生成 was pressed with nothing typed, a case its own copy
+        promises will fall back to placeholder text.
+        """
+        if narrations is not None:
+            plan = self.planner.render_plan(narrations)
+        elif editing:
+            plan = self.planner.edit_plan(message, project)
+        else:
+            plan = self.planner.initial_plan(message, project)
+        if scene_narrations:
+            # A revision names its scenes by supplying their text.
+            plan.scene_narrations = dict(scene_narrations)
+            plan.scene_ids = list(scene_narrations)
+            plan.stages = _REVISION_STAGES
+        return plan
 
     def chat(
         self,

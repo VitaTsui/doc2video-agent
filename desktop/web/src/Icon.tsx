@@ -71,6 +71,21 @@ export const GearIcon = (props: Props) =>
     props,
   )
 
+/**
+ * A page with a folded corner — what the panel behind this button holds.
+ *
+ * The panel's own toggle is the panel shape, because that control folds the
+ * panel away. This one opens onto the deck and the video, so it says so.
+ */
+export const FileIcon = (props: Props) =>
+  svg(
+    <>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+    </>,
+    props,
+  )
+
 export const CloseIcon = (props: Props) =>
   svg(
     <>

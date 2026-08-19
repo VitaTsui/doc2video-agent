@@ -12,7 +12,7 @@
  * where they stay put while the talking continues.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import * as api from './api'
 import { CloseIcon } from './Icon'
@@ -50,18 +50,29 @@ export interface ArtifactSet {
 
 export function Artifacts({
   set,
+  running,
   open,
   onClose,
   drafts,
   onDrafts,
 }: {
   set: ArtifactSet | null
+  /** A run is in flight, so the record is the thing to be looking at. */
+  running: boolean
   open: boolean
   onClose: () => void
   drafts: Record<string, string>
   onDrafts: (next: Record<string, string>) => void
 }) {
   const [tab, setTab] = useState<Tab>('deck')
+  // A finished video is what the run was for, so land on it — both when one
+  // has just been made and when an older project is opened from the sidebar.
+  const rendered = set?.rendered
+  const project = set?.projectId
+  useEffect(() => {
+    if (rendered) setTab('video')
+  }, [rendered, project])
+
   if (!open || !set) return null
 
   const total = set.scenes.reduce((sum, scene) => sum + scene.duration, 0)
@@ -75,7 +86,11 @@ export function Artifacts({
   // the project it was chosen in: opening an older one from the sidebar left
   // the panel showing an empty「文档」, because that deck belonged to a parse
   // this project never had.
-  const shown: Tab = has[tab] ? tab : (['deck', 'video', 'pages', 'ledger'] as Tab[]).find((t) => has[t]) ?? tab
+  // While something is running, the record is what there is to watch — it is
+  // the only view that grows as the work happens.
+  const order: Tab[] = running ? ['ledger', 'deck', 'video', 'pages'] : ['deck', 'video', 'pages', 'ledger']
+  const preferred = running && has.ledger ? 'ledger' : tab
+  const shown: Tab = has[preferred] ? preferred : (order.find((t) => has[t]) ?? tab)
 
   return (
     <aside className="panel">
