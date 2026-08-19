@@ -515,20 +515,37 @@ fn hash_file(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-/// How many files the runtime holds, near enough to draw a bar with.
+/// Counts how much of the archive has been consumed, for the progress bar.
 ///
-/// The exact count is only knowable by reading the archive twice, and the
-/// second read costs as much as the unpack. An estimate that is wrong by a few
-/// percent still tells someone the thing is moving, which is the entire point.
-const APPROX_ENTRIES: u64 = 21_000;
+/// This replaced a hardcoded guess at the number of files. The guess came from
+/// the macOS tree; Windows holds more, so its bar climbed past 100% and then
+/// snapped back when the final report arrived. Position in the compressed file
+/// is exact on every platform, needs nothing published alongside the archive,
+/// and cannot disagree with itself — the total is simply the file's size.
+struct Counting<R> {
+    inner: R,
+    seen: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl<R: Read> Read for Counting<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.inner.read(buffer)?;
+        self.seen
+            .fetch_add(count as u64, std::sync::atomic::Ordering::Relaxed);
+        Ok(count)
+    }
+}
 
 fn unpack(archive: &Path, into: &Path, mut on_progress: impl FnMut(u64, u64)) -> Result<()> {
+    let total = fs::metadata(archive)?.len();
+    let seen = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let file = fs::File::open(archive)?;
     // Buffered on purpose. The decoder otherwise reads the file in small
     // chunks, one syscall each, and on Windows syscalls are expensive enough
     // that this alone dominated the unpack of a 21,000-file tree.
     let buffered = std::io::BufReader::with_capacity(1 << 20, file);
-    let decoder = flate2::read::GzDecoder::new(buffered);
+    let counted = Counting { inner: buffered, seen: seen.clone() };
+    let decoder = flate2::read::GzDecoder::new(counted);
     let mut tar = tar::Archive::new(decoder);
     // Preserve the executable bits: without them the interpreter unpacks as a
     // file the system will not run.
@@ -561,7 +578,7 @@ fn unpack(archive: &Path, into: &Path, mut on_progress: impl FnMut(u64, u64)) ->
         done += 1;
         // Reporting each file would be twenty thousand IPC messages.
         if done % 200 == 0 {
-            on_progress(done, APPROX_ENTRIES);
+            on_progress(seen.load(std::sync::atomic::Ordering::Relaxed), total);
         }
     }
 
@@ -581,7 +598,7 @@ fn unpack(archive: &Path, into: &Path, mut on_progress: impl FnMut(u64, u64)) ->
         }
     }
 
-    on_progress(APPROX_ENTRIES, APPROX_ENTRIES);
+    on_progress(total, total);
     Ok(())
 }
 

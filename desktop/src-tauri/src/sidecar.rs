@@ -101,6 +101,12 @@ impl Backend {
         #[cfg(unix)]
         command.process_group(0);
 
+        // The backend is a console program, and Windows gives console programs
+        // a console — a black window that opens beside the app, belongs to
+        // nothing the user asked for, and closing it kills the backend.
+        #[cfg(windows)]
+        no_window(&mut command);
+
         for (name, value) in keys {
             command.env(name, value);
         }
@@ -172,13 +178,26 @@ impl Drop for Backend {
 }
 
 /// Signal a whole process group, politely and then not.
+/// Spawn without handing the child a console window.
+///
+/// `CREATE_NO_WINDOW`. Applies to every process this shell starts: the backend
+/// itself, and the `taskkill` that stops it — a window that flashes for a
+/// tenth of a second on quit is still a window nobody asked for.
+#[cfg(windows)]
+fn no_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
 fn stop_group(pid: u32) {
     #[cfg(windows)]
     {
         // /T takes the tree; there are no process groups to address.
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .output();
+        let mut command = Command::new("taskkill");
+        command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        no_window(&mut command);
+        let _ = command.output();
     }
 
     #[cfg(not(windows))]
