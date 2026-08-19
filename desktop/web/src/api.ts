@@ -381,6 +381,27 @@ export async function catalogue() {
   )
 }
 
+export interface UpdateInfo {
+  available: boolean
+  version: string
+  notes: string
+  current: string
+}
+
+/**
+ * Whether a newer shell exists. Never throws into the UI's path: no network,
+ * a rate limit and a release without a manifest all mean "not now", and none
+ * of them is worth interrupting someone over.
+ */
+export async function checkUpdate(): Promise<UpdateInfo | null> {
+  return invoke<UpdateInfo>('check_update').catch(() => null)
+}
+
+/** Download it, replace this binary, and restart into the new one. */
+export async function installUpdate(): Promise<void> {
+  return invoke<void>('install_update')
+}
+
 export interface RuntimeStatus {
   ready: boolean
   installed: string | null

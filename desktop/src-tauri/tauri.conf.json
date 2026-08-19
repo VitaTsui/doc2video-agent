@@ -34,6 +34,15 @@
     ],
     "macOS": {
       "minimumSystemVersion": "11.0"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/VitaTsui/doc2video-agent/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ4MkUxMUMxMjRBOTJGMDYKUldRR0w2a2t3UkV1U0xJQ1RyWnpzWk1oYTl1UmQ2NkJJdjNITjF3VUZaZTZlK2tVcFRaQitnWGIK"
     }
   }
 }

@@ -176,6 +176,19 @@ export function App() {
     setHasModel(Boolean(caps?.llm.available))
     void loadModels()
 
+    // Silent: a check that pops a dialog before the user has done anything is
+    // an interruption, and installing costs a restart. Mentioned once, in the
+    // transcript, where it waits until they care.
+    void api.checkUpdate().then((update) => {
+      if (update?.available) {
+        say({
+          role: 'assistant',
+          kind: 'text',
+          text: `有新版本 ${update.version}（当前 ${update.current}），在设置里可以更新。`,
+        })
+      }
+    })
+
     // A returning user gets their conversation back instead of a greeting they
     // have already read.
     if (await resume().catch(() => false)) return
@@ -382,6 +395,7 @@ export function App() {
 
       <SettingsDrawer
         open={settingsOpen}
+        busy={busy}
         onClose={() => setSettingsOpen(false)}
         onReconnected={async (next) => {
           setConnection(next)
