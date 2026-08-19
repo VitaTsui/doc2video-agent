@@ -409,7 +409,7 @@ wheels = [
 
 [[package]]
 name = "doc2video-agent"
-version = "0.8.4"
+version = "0.8.5"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
