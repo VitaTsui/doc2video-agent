@@ -287,15 +287,29 @@ fn fetch_with_resume(
     let mut last: Option<anyhow::Error> = None;
 
     for attempt in 0..ATTEMPTS {
+        let before = fs::metadata(to).map(|m| m.len()).unwrap_or(0);
         match append_from(url, to, on_progress) {
-            Ok(()) => return hash_file(to),
+            Ok(()) => {
+                log(&format!("下完了：{url} 共 {} 字节", fs::metadata(to).map(|m| m.len()).unwrap_or(0)));
+                return hash_file(to);
+            }
             Err(error) => {
                 // A connection that dropped mid-stream leaves bytes worth
                 // keeping; back off a little and ask for the rest.
+                //
+                // The byte counts are the point of this line. Without them a
+                // log of six identical "中断" tells you nothing about whether
+                // the resume is working — whether each attempt is inching
+                // forward or whether every one of them starts from zero, which
+                // are different bugs with different fixes.
+                let after = fs::metadata(to).map(|m| m.len()).unwrap_or(0);
                 log(&format!(
-                    "第 {} 次尝试中断（{}），{} 秒后从已下载的位置继续",
+                    "第 {} 次尝试中断（{}），这次从 {} 下到 {}（+{}），{} 秒后继续",
                     attempt + 1,
                     error,
+                    before,
+                    after,
+                    after.saturating_sub(before),
                     2 * (attempt + 1)
                 ));
                 last = Some(error);
