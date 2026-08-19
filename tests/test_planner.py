@@ -76,3 +76,31 @@ def test_execution_plan_for_camera_only_change_skips_narration():
 
     assert Stage.NARRATE not in plan.stages
     assert Stage.DIRECT in plan.stages
+
+
+def test_an_empty_script_still_asks_for_a_render(settings, store):
+    """`{}` is a script, `None` is the absence of one.
+
+    Both are falsy, and the desktop app sends `{}` whenever 开始生成 is pressed
+    with nothing typed — a case its own copy promises will render with
+    placeholder text. Reading it as "no script" routed the call into the edit
+    branch, which matched no rule, skipped narration and died at render.
+    """
+    from doc2video.agent import Doc2VideoAgent
+
+    agent = Doc2VideoAgent(settings, store)
+    project = _project()
+
+    empty = agent._plan_for(
+        "按调用方讲稿生成视频", project, narrations={}, scene_narrations=None, editing=True
+    )
+    assert Stage.NARRATE in empty.stages
+    assert Stage.RENDER in empty.stages
+
+    # The whole deck, not whatever the message happened to parse as.
+    assert empty.scene_ids == []
+
+    absent = agent._plan_for(
+        "第 7 页太长了", project, narrations=None, scene_narrations=None, editing=True
+    )
+    assert absent.scene_ids == ["scene_07"]

@@ -55,7 +55,12 @@ class JobRequest:
     files: list[Path] = field(default_factory=list)
     # The caller's script. By page index for a whole run, by scene id for a
     # targeted revision — this service writes neither.
-    narrations: dict[int, str] = field(default_factory=dict)
+    #
+    # None and {} mean different things and the difference decides which plan
+    # runs: None is "no script supplied, work out what to do", while {} is a
+    # script that happens to be empty — still an instruction to render, with
+    # every page falling back to placeholder text.
+    narrations: dict[int, str] | None = None
     scene_narrations: dict[str, str] = field(default_factory=dict)
     # Set when the agent should decide for itself what to do with `message`,
     # rather than being handed a script. A chat turn may render several times,

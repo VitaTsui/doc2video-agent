@@ -20,7 +20,7 @@ import { Composer } from './chat/Composer'
 import { MessageList } from './chat/MessageList'
 import type { Message, MessageDraft, MessagePatch } from './chat/types'
 import { Settings } from './Settings'
-import { PanelIcon } from './Icon'
+import { FileIcon } from './Icon'
 import { Sidebar } from './Sidebar'
 import { Artifacts } from './Artifacts'
 import type { ArtifactSet } from './Artifacts'
@@ -50,6 +50,7 @@ export function App() {
   // The script being typed: written in the panel, committed from the
   // conversation, so neither of them can own it.
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [running, setRunning] = useState(false)
   const [greeting, setGreeting] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
@@ -312,12 +313,63 @@ export function App() {
       abort.current?.abort()
       abort.current = new AbortController()
 
+      // Everything here is written step by step, so it can be read step by
+      // step: the executor saves the project after every stage and the record
+      // is appended as each one ends. Waiting for the finish turned the views
+      // that explain a slow run into things you could only consult once the
+      // run was over.
+      setRunning(true)
+      setPanelOpen(true)
+      // Which project to read while it works — taken from the job rather than
+      // from state, because the first run of all creates its project inside
+      // the job and nothing out here knows the id until it reports one.
+      const watching = { current: projectId }
+      const poll = window.setInterval(() => {
+        const id = watching.current
+        if (!id) return
+        void Promise.all([
+          api.ledger(id).catch(() => null),
+          api.scenes(id).catch(() => null),
+        ]).then(([entries, scenes]) => {
+          setArtifacts((current) =>
+            current?.projectId === id
+              ? {
+                  ...current,
+                  ledger: entries ?? current.ledger,
+                  scenes: scenes ?? current.scenes,
+                }
+              : current,
+          )
+          // The script as it is written, page by page. Safe to overwrite
+          // what is in the boxes: they are locked while a run is going.
+          if (scenes?.length) {
+            setDrafts(
+              Object.fromEntries(
+                scenes
+                  .filter((scene) => scene.source_page && scene.narration)
+                  .map((scene) => [String(scene.source_page), scene.narration]),
+              ),
+            )
+          }
+        })
+      }, 1500)
+
       let final: JobState
       try {
-        final = await api.watchJob(jobId, (state) => amend(id, { job: state }), abort.current.signal)
+        final = await api.watchJob(
+          jobId,
+          (state) => {
+            if (state.project_id) watching.current = state.project_id
+            amend(id, { job: state })
+          },
+          abort.current.signal,
+        )
       } catch (error) {
         amend(id, { kind: 'text', text: `没能跟上进度：${api.describeError(error)}` })
         return
+      } finally {
+        window.clearInterval(poll)
+        setRunning(false)
       }
       amend(id, { job: final })
       // A finished turn changes a project's duration, its output, and its
@@ -359,7 +411,7 @@ export function App() {
           : { role: 'assistant', kind: 'text', text: final.reply || '这一轮没有出片。' },
       )
     },
-    [amend, say],
+    [amend, projectId, say],
   )
 
   /** A deck arrives: parse it, then report what is in it and what it will cost. */
@@ -572,7 +624,7 @@ export function App() {
             title="打开产物面板"
             onClick={() => setPanelOpen(true)}
           >
-            <PanelIcon open={false} size={19} />
+            <FileIcon size={19} />
           </button>
         )}
         {/* Before there is a project the composer belongs in the middle of the
@@ -618,6 +670,7 @@ export function App() {
 
       <Artifacts
         set={artifacts}
+        running={running}
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
         drafts={drafts}
