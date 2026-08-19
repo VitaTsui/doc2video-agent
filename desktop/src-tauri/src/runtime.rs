@@ -300,6 +300,23 @@ fn fetch_with_resume(
         .context(format!("重试 {ATTEMPTS} 次仍未下完"))
 }
 
+/// How much has to arrive before the window is told again.
+///
+/// A TLS record is about 8KB, so `read` returns that much at a time and a
+/// 419MB download is fifty thousand of them. Reporting each one sends fifty
+/// thousand events across the IPC boundary, and every one of those is a
+/// serialize, a hop into the webview and a React render — measured against a
+/// browser doing the same download in forty seconds, the client had managed
+/// one percent. The bar does not need more than a few hundred updates.
+const REPORT_EVERY: u64 = 2 << 20;
+
+/// …but never let this long pass in silence.
+///
+/// Bytes alone are the wrong clock for the people this matters most to: on a
+/// link doing 100KB/s, two megabytes is twenty seconds of a bar that appears
+/// frozen — which is exactly the impression we are trying to stop giving.
+const REPORT_AT_LEAST_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// One attempt: ask for everything after what is already on disk.
 fn append_from(url: &str, to: &Path, on_progress: &mut impl FnMut(u64, u64)) -> Result<()> {
     let have = fs::metadata(to).map(|m| m.len()).unwrap_or(0);
@@ -331,18 +348,45 @@ fn append_from(url: &str, to: &Path, on_progress: &mut impl FnMut(u64, u64)) -> 
         .open(to)
         .context("无法写入下载文件")?;
 
+    // Buffered for the same reason: fifty thousand 8KB writes are fifty
+    // thousand syscalls, and on Windows each one passes under the antivirus.
+    let mut file = std::io::BufWriter::with_capacity(1 << 20, file);
+
     let mut buffer = vec![0u8; 1 << 20];
     let mut done = have;
+    let mut reported = have;
+    let mut reported_at = std::time::Instant::now();
+    // Kept rather than propagated at once: a dropped connection is the case
+    // this whole function exists for, and the bytes it did deliver still have
+    // to be flushed and still have to be reported. Letting `?` out of the loop
+    // threw both away — the window froze at whatever the last throttled report
+    // had said, and the retry then appeared to start from there.
+    let mut interrupted: Option<std::io::Error> = None;
     loop {
-        let read = source.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
+        let read = match source.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(error) => {
+                interrupted = Some(error);
+                break;
+            }
+        };
         std::io::Write::write_all(&mut file, &buffer[..read])?;
         done += read as u64;
-        on_progress(done, total);
+        if done - reported >= REPORT_EVERY || reported_at.elapsed() >= REPORT_AT_LEAST_EVERY {
+            reported = done;
+            reported_at = std::time::Instant::now();
+            on_progress(done, total);
+        }
     }
+    std::io::Write::flush(&mut file)?;
+    on_progress(done, total);
 
+    if let Some(error) = interrupted {
+        // Reported as bytes rather than as an io error: what the next attempt
+        // needs to know is where to resume from.
+        bail!("连接中断（{error}）：已下 {done} 字节");
+    }
     if total > 0 && done < total {
         bail!("连接中断：已下 {done}/{total} 字节");
     }
@@ -540,9 +584,94 @@ mod resume_tests {
         // Progress must never jump backwards: the second attempt starts from
         // what was already on disk, which is the whole point.
         assert!(seen.windows(2).all(|w| w[1] >= w[0]), "进度回退了：{seen:?}");
-        assert!(seen.iter().any(|&d| d > 0 && d < body.len() as u64));
+        // The interrupted attempt must have reported what it did manage —
+        // otherwise a stalled download looks frozen at the last throttled
+        // number rather than at the point it actually reached.
+        assert!(
+            seen.iter().any(|&d| d > 0 && d < body.len() as u64),
+            "中断时的进度没有上报：{seen:?}"
+        );
 
         drop(server);
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod throughput_tests {
+    use super::*;
+
+    /// A real download must not flood the window with progress events.
+    ///
+    /// This is the whole of the bug it guards: `read` returns one TLS record —
+    /// about 8KB — so reporting every read meant fifty thousand IPC hops for a
+    /// 419MB file, and the download crawled at a fiftieth of what the same
+    /// machine's browser managed.
+    #[test]
+    #[ignore]
+    fn a_download_reports_progress_a_few_hundred_times_not_fifty_thousand() {
+        let url = format!(
+            "{REPO}/releases/download/runtime-base-ddb04e343cce/\
+             d2v-base-ddb04e343cce-macos-arm64.tar.gz"
+        );
+        let to = std::env::temp_dir().join("d2v-progress-test.bin");
+        let _ = fs::remove_file(&to);
+
+        let mut calls = 0u64;
+        let started = std::time::Instant::now();
+        // Twenty megabytes is enough to show the ratio without fetching 419.
+        let _ = append_from(&url, &to, &mut |_done, _total| calls += 1);
+        let seconds = started.elapsed().as_secs_f64();
+        let size = fs::metadata(&to).map(|m| m.len()).unwrap_or(0);
+        println!(
+            "{:.0}MB / {:.1}s = {:.1}MB/s，回调 {} 次",
+            size as f64 / 1e6,
+            seconds,
+            size as f64 / 1e6 / seconds,
+            calls
+        );
+
+        // One per 2MB or per half-second, whichever comes first, plus the
+        // final one — so the bound is against the slower of the two clocks.
+        let ceiling = size / REPORT_EVERY + (seconds * 2.0) as u64 + 2;
+        assert!(calls <= ceiling, "回调 {calls} 次，上限 {ceiling}");
+        let _ = fs::remove_file(&to);
+    }
+
+    /// How fast the HTTP layer alone can pull bytes, and in what size pieces.
+    ///
+    /// Run deliberately — it downloads twenty megabytes:
+    ///     cargo test -- --ignored --nocapture throughput
+    #[test]
+    #[ignore]
+    fn throughput() {
+        let url = format!("{REPO}/releases/download/runtime-base-ddb04e343cce/d2v-base-ddb04e343cce-macos-arm64.tar.gz");
+        let response = http_agent()
+            .get(&url)
+            .set("Range", "bytes=0-20000000")
+            .call()
+            .expect("请求失败");
+        let mut source = response.into_reader();
+
+        let mut buffer = vec![0u8; 1 << 20];
+        let (mut done, mut reads) = (0u64, 0u64);
+        let started = std::time::Instant::now();
+        loop {
+            let read = source.read(&mut buffer).expect("读取失败");
+            if read == 0 {
+                break;
+            }
+            done += read as u64;
+            reads += 1;
+        }
+        let seconds = started.elapsed().as_secs_f64();
+        println!(
+            "纯 ureq：{:.1}MB / {:.1}s = {:.1}MB/s，{} 次 read，平均每次 {:.0}KB",
+            done as f64 / 1e6,
+            seconds,
+            done as f64 / 1e6 / seconds,
+            reads,
+            done as f64 / reads as f64 / 1024.0,
+        );
     }
 }
