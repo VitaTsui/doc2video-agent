@@ -37,12 +37,14 @@ export function Artifacts({
   set,
   open,
   onClose,
-  onRender,
+  drafts,
+  onDrafts,
 }: {
   set: ArtifactSet | null
   open: boolean
   onClose: () => void
-  onRender: (narrations: Record<string, string>) => void
+  drafts: Record<string, string>
+  onDrafts: (next: Record<string, string>) => void
 }) {
   const [tab, setTab] = useState<Tab>('deck')
   if (!open || !set) return null
@@ -81,7 +83,8 @@ export function Artifacts({
             hasModel={set.deck.hasModel}
             locked={set.deck.locked}
             projectId={set.projectId}
-            onRender={onRender}
+            drafts={drafts}
+            onDrafts={onDrafts}
           />
         )}
 

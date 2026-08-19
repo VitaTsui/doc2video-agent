@@ -46,6 +46,9 @@ export function App() {
   const [collapsed, setCollapsed] = useState(false)
   const [artifacts, setArtifacts] = useState<ArtifactSet | null>(null)
   const [panelOpen, setPanelOpen] = useState(false)
+  // The script being typed: written in the panel, committed from the
+  // conversation, so neither of them can own it.
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [hasModel, setHasModel] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -182,6 +185,7 @@ export function App() {
     setMessages([])
     setArtifacts(null)
     setPanelOpen(false)
+    setDrafts({})
     greeted.current = false
   }, [])
 
@@ -311,6 +315,7 @@ export function App() {
           hasModel,
         })
         // The deck itself goes to the panel; the sentence above stays here.
+        setDrafts({})
         setArtifacts({
           projectId: prepared.project_id,
           scenes: [],
@@ -382,8 +387,9 @@ export function App() {
   )
 
   const startRender = useCallback(
-    async (narrations: Record<string, string>) => {
+    async () => {
       if (!projectId) return
+      const narrations = drafts
       setBusy(true)
       // The deck lives in the panel, so locking it is a panel-side fact now.
       setArtifacts((current) =>
@@ -409,7 +415,7 @@ export function App() {
         setBusy(false)
       }
     },
-    [follow, hasModel, projectId, say],
+    [drafts, follow, hasModel, projectId, say],
   )
 
   if (runtime && !runtime.ready) {
@@ -496,6 +502,11 @@ export function App() {
         ) : (
           <MessageList
             messages={messages}
+            deck={{
+              written: Object.values(drafts).filter((text) => text.trim()).length,
+              locked: Boolean(artifacts?.deck?.locked),
+              onRender: () => void startRender(),
+            }}
             onShow={(id) => {
               void loadArtifacts(id, true)
               setPanelOpen(true)
@@ -518,7 +529,8 @@ export function App() {
         set={artifacts}
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
-        onRender={(narrations) => void startRender(narrations)}
+        drafts={drafts}
+        onDrafts={setDrafts}
       />
 
       <Settings

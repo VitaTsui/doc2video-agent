@@ -23,7 +23,8 @@ export function DeckCard({
   hasModel,
   locked,
   projectId,
-  onRender,
+  drafts,
+  onDrafts,
 }: {
   pages: PageView[]
   guide: GuideRow[]
@@ -31,12 +32,14 @@ export function DeckCard({
   /** Set once generation starts, so the card stops accepting edits. */
   locked: boolean
   projectId: string
-  onRender: (narrations: Record<string, string>) => void
+  /** Held by the caller, because the button that uses them is not here —
+      starting a render is a decision, and decisions stay in the conversation
+      where the person is looking; this panel is where the pages are read. */
+  drafts: Record<string, string>
+  onDrafts: (next: Record<string, string>) => void
 }) {
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [open, setOpen] = useState<number | null>(hasModel ? null : pages[0]?.index)
   const budgets = Object.fromEntries(guide.map((row) => [row.page, row]))
-  const written = Object.values(drafts).filter((t) => t.trim()).length
 
   return (
     <div className="card card--flush">
@@ -88,7 +91,7 @@ export function DeckCard({
                         : `这一页讲 ${budget?.target_seconds} 秒左右，约 ${budget?.target_chars} 字`
                     }
                     onChange={(e) =>
-                      setDrafts((prev) => ({ ...prev, [page.index]: e.target.value }))
+                      onDrafts({ ...drafts, [page.index]: e.target.value })
                     }
                     style={{
                       width: '100%',
@@ -112,31 +115,6 @@ export function DeckCard({
         )
       })}
 
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '12px 16px',
-        }}
-      >
-        <span className="muted">
-          {hasModel
-            ? written
-              ? `你写了 ${written} 页，其余由模型补`
-              : '全部由模型来写'
-            : `已写 ${written} / ${pages.length} 页，没写的会是占位文本`}
-        </span>
-        <button
-          type="button"
-          className="composer__send"
-          disabled={locked}
-          onClick={() => onRender(drafts)}
-          style={{ width: 'auto', padding: '6px 16px', borderRadius: 8 }}
-        >
-          {locked ? '已开始' : '开始生成'}
-        </button>
-      </div>
     </div>
   )
 }

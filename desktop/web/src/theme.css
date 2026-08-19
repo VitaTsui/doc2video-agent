@@ -1108,3 +1108,20 @@ body {
   font-size: 13px;
   margin: 10px 0 0;
 }
+
+/* The one gate that stays in the conversation: what is written, and the
+   button that spends the next few minutes. */
+.deckgate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.deckgate__go {
+  width: auto;
+  padding: 6px 16px;
+  border-radius: 999px;
+  margin-left: auto;
+}
