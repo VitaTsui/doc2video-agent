@@ -88,9 +88,10 @@ export function App() {
         .filter((provider) => (provider.protocol === 'agent_cli') === free)
         .map((provider) => ({
           value: provider.id,
-          // Their own name for it. A gateway called "公司网关" is more use
-          // here than the protocol it happens to speak.
-          label: provider.model ? `${provider.name}｜${provider.model}` : provider.name,
+          // The model, and nothing in front of it. The name of the entry is
+          // already in the settings list; repeating it here only pushed the
+          // one word being chosen off the end of a narrow field.
+          label: provider.model || provider.name,
         }))
 
     setGroups([
