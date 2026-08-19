@@ -10,8 +10,11 @@
  * was last touched, which is the order someone looks for things in.
  */
 
+// Deep import, as elsewhere: the barrel pulls half the library in with it.
+import SecondConf from '@hsu-react/ui/es/components/SecondConf'
+
 import type { ProjectSummary } from './api'
-import { CloseIcon, GearIcon, PanelIcon, PlusIcon } from './Icon'
+import { GearIcon, PanelIcon, PlusIcon, TrashIcon } from './Icon'
 
 function when(iso: string | null): string {
   if (!iso) return ''
@@ -108,15 +111,25 @@ export function Sidebar({
                 </span>
               </button>
               {/* Appears on hover: a delete that is always visible in a list
-                  is a delete that eventually gets hit by accident. */}
-              <button
-                type="button"
-                className="sidebar__delete"
-                title="删除这个工程"
-                onClick={() => onDelete(project)}
+                  is a delete that eventually gets hit by accident. And it asks
+                  first — in the window rather than through `window.confirm`,
+                  which is the webview's dialog and not the app's.
+
+                  The trigger form of SecondConf keeps its own open state, so a
+                  list of any length needs no flag per row, and it stops the
+                  click from reaching the row underneath — which would
+                  otherwise open the very project being deleted. */}
+              <SecondConf
+                contentTitle={`删除《${project.title || project.source || '这个工程'}》`}
+                contentText="生成出来的视频、讲稿和音频都会一起清掉，上传的原文件不动。"
+                okText="删除"
+                cancelText="不删了"
+                onOk={() => onDelete(project)}
               >
-                <CloseIcon size={15} />
-              </button>
+                <button type="button" className="sidebar__delete" title="删除这个工程">
+                  <TrashIcon size={15} />
+                </button>
+              </SecondConf>
             </div>
           ))
         )}

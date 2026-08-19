@@ -214,15 +214,14 @@ export function App() {
   /**
    * Delete a project and everything it produced.
    *
-   * Confirmed first, and the sentence says what survives: the uploaded file
-   * stays where it was, so this costs the video and not the deck.
+   * The asking happens at the button, in the window's own dialog — this runs
+   * only once someone has said yes. `window.confirm` used to do it here, and
+   * that dialog belongs to the webview: it is the browser's, styled by the
+   * platform, and on some of them it does not open at all, which turns a
+   * confirmed delete into an unconfirmed one.
    */
   const removeProject = useCallback(
     async (project: ProjectSummary) => {
-      const name = project.title || project.source || '这个工程'
-      if (!window.confirm(`删除《${name}》及其生成的全部内容？\n\n上传的原文件不会被删除。`)) {
-        return
-      }
       try {
         await api.deleteProject(project.project_id)
       } catch (error) {

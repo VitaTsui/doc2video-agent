@@ -16,6 +16,9 @@ const WANTED = {
   'heroicons-outline': ['paper-clip', 'x'],
   tabler: ['arrow-up'],
   'eos-icons': ['loading'],
+  // SecondConf draws this one itself; without it the confirm dialog opens
+  // with a blank square where the question mark goes.
+  mingcute: ['question-line'],
 }
 
 const icons = {}
