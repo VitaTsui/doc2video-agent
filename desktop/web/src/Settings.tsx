@@ -16,6 +16,7 @@
 import { useEffect, useState } from 'react'
 
 import * as api from './api'
+import { ChevronIcon } from './Icon'
 import type { Connection } from './api'
 
 type Tab = 'models' | 'general'
@@ -34,7 +35,11 @@ export function Settings({
 }) {
   const [tab, setTab] = useState<Tab>('models')
   const [configured, setConfigured] = useState<string[]>([])
-  const [prefs, setPrefs] = useState<api.ModelPrefs>({ providers: [], active: '' })
+  const [prefs, setPrefs] = useState<api.ModelPrefs>({
+    providers: [],
+    active: '',
+    active_model: '',
+  })
   const [catalogue, setCatalogue] = useState<Awaited<ReturnType<typeof api.catalogue>> | null>(null)
   const [caps, setCaps] = useState<Awaited<ReturnType<typeof api.capabilities>> | null>(null)
   const [update, setUpdate] = useState<api.UpdateInfo | null>(null)
@@ -78,10 +83,12 @@ export function Settings({
 
   async function remove(entry: api.Provider) {
     const next = {
+      ...prefs,
       providers: prefs.providers.filter((provider) => provider.id !== entry.id),
       // Removing what was answering leaves no model rather than silently
       // promoting one nobody chose.
       active: prefs.active === entry.id ? '' : prefs.active,
+      active_model: prefs.active === entry.id ? '' : prefs.active_model,
     }
     setError(null)
     try {
@@ -155,7 +162,7 @@ export function Settings({
                           {ready && <span className="provider__dot" title="可用" />}
                           <span className="muted" style={{ marginLeft: 8 }}>
                             {protocol?.label ?? entry.protocol}
-                            {entry.model && ` · ${entry.model}`}
+                            {entry.models.length > 0 && ` · ${entry.models.length} 个模型`}
                             {entry.id === prefs.active && ' · 使用中'}
                           </span>
                         </span>
@@ -216,11 +223,14 @@ export function Settings({
                         setAdding(null)
                         void commit(
                           {
+                            ...prefs,
                             providers: [...prefs.providers, edited],
                             // The first one configured becomes the one in use:
                             // adding a model and then having to go and switch
                             // to it is a step nobody wants.
                             active: prefs.active || edited.id,
+                            active_model:
+                              prefs.active_model || edited.models[0]?.id || '',
                           },
                           edited,
                           key,
@@ -239,7 +249,7 @@ export function Settings({
                       name: '',
                       protocol: 'compatible',
                       base_url: '',
-                      model: '',
+                      models: [],
                     })
                   }
                 >
@@ -368,49 +378,8 @@ function ProviderForm({
         </p>
       )}
 
-      {local ? (
+      {!local && (
         <>
-          <label className="provider__label">用哪个 CLI</label>
-          <select
-            className="provider__input"
-            value={draft.model}
-            onChange={(event) => setDraft({ ...draft, model: event.target.value })}
-          >
-            <option value="">选一个</option>
-            {detected.map((cli) => (
-              <option key={cli.id} value={cli.id} disabled={cli.installed === false}>
-                {cli.label}
-                {cli.installed === false ? '（未安装）' : ''}
-              </option>
-            ))}
-          </select>
-          <ul className="providers" style={{ marginTop: 0 }}>
-            {detected.map((cli) => (
-              <li key={cli.id} className="provider__detected">
-                <span>
-                  {cli.label}
-                  {cli.installed && <span className="provider__dot" title="已安装" />}
-                </span>
-                <span className="muted" style={{ overflowWrap: 'anywhere', textAlign: 'right' }}>
-                  {cli.note}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : (
-        <>
-          <label className="provider__label">模型 id</label>
-          <input
-            className="provider__input"
-            value={draft.model}
-            // Never validated: an id we have not heard of is far more likely
-            // to be new than wrong, and refusing it would make this app the
-            // reason someone cannot use a model released last week.
-            placeholder="原样传给提供方，例如 deepseek-chat、claude-opus-5"
-            onChange={(event) => setDraft({ ...draft, model: event.target.value })}
-          />
-
           <label className="provider__label">
             Base URL{draft.protocol === 'compatible' ? '' : '（留空用官方地址）'}
           </label>
@@ -434,6 +403,20 @@ function ProviderForm({
         </>
       )}
 
+      <label className="provider__label">模型目录</label>
+      {local && (
+        <p className="muted" style={{ marginTop: -4 }}>
+          {detected.map((cli) => `${cli.label}：${cli.note}`).join('；') || '没有检测到本机 CLI'}
+        </p>
+      )}
+      <ModelRows
+        models={draft.models}
+        // For the local CLIs the id is not free text — it names which CLI
+        // answers, and only the ones on this machine can.
+        suggest={local ? detected.filter((cli) => cli.installed !== false) : []}
+        onChange={(models) => setDraft({ ...draft, models })}
+      />
+
       <div className="provider__actions">
         <button type="button" className="modal__ghost" onClick={onCancel}>
           取消
@@ -447,6 +430,104 @@ function ProviderForm({
           {saving ? '保存中…' : '保存'}
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * The models a provider offers: id on the wire, name on screen.
+ *
+ * Two columns rather than one, because they answer to different people. A row
+ * opens for the note, which is the line the picker shows underneath — the one
+ * thing that makes a menu of six model ids readable.
+ */
+function ModelRows({
+  models,
+  suggest,
+  onChange,
+}: {
+  models: api.Model[]
+  suggest: api.ModelInfo[]
+  onChange: (models: api.Model[]) => void
+}) {
+  const [open, setOpen] = useState<number | null>(null)
+
+  const edit = (index: number, patch: Partial<api.Model>) =>
+    onChange(models.map((model, at) => (at === index ? { ...model, ...patch } : model)))
+
+  return (
+    <div className="models">
+      {models.map((model, index) => (
+        <div key={index} className="models__entry">
+          <div className="models__row">
+            {suggest.length > 0 ? (
+              <select
+                className="provider__input"
+                value={model.id}
+                onChange={(event) => {
+                  const picked = suggest.find((cli) => cli.id === event.target.value)
+                  edit(index, { id: event.target.value, name: model.name || picked?.label || '' })
+                }}
+              >
+                <option value="">选一个</option>
+                {suggest.map((cli) => (
+                  <option key={cli.id} value={cli.id}>
+                    {cli.id}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="provider__input"
+                value={model.id}
+                placeholder="模型 id，原样传给提供方"
+                onChange={(event) => edit(index, { id: event.target.value })}
+              />
+            )}
+            <input
+              className="provider__input"
+              value={model.name}
+              placeholder="显示名"
+              onChange={(event) => edit(index, { name: event.target.value })}
+            />
+            <button
+              type="button"
+              className="models__icon"
+              title="说明"
+              onClick={() => setOpen(open === index ? null : index)}
+            >
+              <ChevronIcon open={open === index} size={15} />
+            </button>
+            <button
+              type="button"
+              className="models__icon"
+              title="删除"
+              onClick={() => onChange(models.filter((_, at) => at !== index))}
+            >
+              ✕
+            </button>
+          </div>
+          {open === index && (
+            <>
+              <label className="provider__label">说明</label>
+              <input
+                className="provider__input"
+                value={model.note}
+                placeholder="选择模型时显示在名字下面的一行"
+                onChange={(event) => edit(index, { note: event.target.value })}
+              />
+            </>
+          )}
+        </div>
+      ))}
+
+      <button
+        type="button"
+        className="modal__ghost"
+        onClick={() => onChange([...models, { id: '', name: '', note: '' }])}
+      >
+        添加模型
+      </button>
     </div>
   )
 }

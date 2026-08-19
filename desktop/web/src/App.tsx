@@ -17,7 +17,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from './api'
 import type { Connection, JobState, ProjectSummary } from './api'
 import { Composer } from './chat/Composer'
-import type { ModelGroup } from './chat/Composer'
 import { MessageList } from './chat/MessageList'
 import type { Message, MessageDraft, MessagePatch } from './chat/types'
 import { Settings } from './Settings'
@@ -50,9 +49,11 @@ export function App() {
   const [busy, setBusy] = useState(false)
   const [hasModel, setHasModel] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [groups, setGroups] = useState<ModelGroup[]>([])
-  const [model, setModel] = useState('')
-  const [, setPrefs] = useState<api.ModelPrefs | null>(null)
+  const [prefs, setPrefs] = useState<api.ModelPrefs>({
+    providers: [],
+    active: '',
+    active_model: '',
+  })
 
   const abort = useRef<AbortController | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -70,54 +71,27 @@ export function App() {
     setMessages((prev) => prev.map((m) => (m.id === id ? ({ ...m, ...patch } as Message) : m)))
   }, [])
 
-  /**
-   * What the picker offers: the providers this person configured.
-   *
-   * It used to offer a compiled-in catalogue of model names, which meant the
-   * only reachable vendors were the ones a release had named. Now the list is
-   * theirs — the picker just shows it, grouped by whether it costs anything
-   * per run, because that is the distinction that decides which one you want
-   * for a given job.
-   */
+  /** The configured providers, which is everything the picker shows. */
   const loadModels = useCallback(async () => {
-    const prefs = await api.modelPrefs()
-    setPrefs(prefs)
-
-    const of = (free: boolean) =>
-      prefs.providers
-        .filter((provider) => (provider.protocol === 'agent_cli') === free)
-        .map((provider) => ({
-          value: provider.id,
-          // The model, and nothing in front of it. The name of the entry is
-          // already in the settings list; repeating it here only pushed the
-          // one word being chosen off the end of a narrow field.
-          label: provider.model || provider.name,
-        }))
-
-    setGroups([
-      { label: '不用模型', models: [{ value: '', label: '讲稿我自己写' }] },
-      { label: '本机 CLI · 不要 Key', models: of(true) },
-      { label: '需要 API Key', models: of(false) },
-    ])
-    setModel(prefs.active)
+    setPrefs(await api.modelPrefs())
   }, [])
 
   /** Switching model restarts the backend — its settings are frozen per process. */
   const switchModel = useCallback(
-    async (value: string) => {
-      setModel(value)
+    async (providerId: string, modelId: string) => {
       setBusy(true)
       try {
         const current = await api.modelPrefs()
-        const next = await api.saveModelPrefs({ ...current, active: value })
-        setConnection(next)
+        const next = { ...current, active: providerId, active_model: modelId }
+        setPrefs(next)
+        setConnection(await api.saveModelPrefs(next))
         const caps = await api.capabilities().catch(() => null)
         setHasModel(Boolean(caps?.llm.available))
         say({
           role: 'assistant',
           kind: 'text',
           text: caps?.llm.available
-            ? `换成 ${caps.llm.provider}｜${caps.llm.model} 了，之后留空的页我来写。`
+            ? `换成 ${caps.llm.model} 了，之后留空的页我来写。`
             : '好，讲稿由你来写。留空的页会是占位文本。',
         })
       } catch (error) {
@@ -129,14 +103,6 @@ export function App() {
     [say],
   )
 
-  /**
-   * Put the last conversation back on screen, if there was one.
-   *
-   * Only the replies are replayed. Each turn of the loop also records the
-   * reason behind its decision and what the tools did, and those already have
-   * a home — the ledger under the video, where they sit next to the render
-   * they caused. Repeating them here would be the same story told twice.
-   */
   /** Collect a project's outputs for the side panel. */
   const loadArtifacts = useCallback(async (projectId: string, rendered: boolean) => {
     const [scenes, quality, chain] = await Promise.all([
@@ -524,9 +490,8 @@ export function App() {
           onSend={acceptMessage}
           onDeck={acceptDeck}
           hint={projectId ? '想改哪里就直接说' : '说说你想要什么样的视频，并附上文档'}
-          groups={groups}
-          model={model}
-          onModel={(value) => void switchModel(value)}
+          prefs={prefs}
+          onPick={(providerId, modelId) => void switchModel(providerId, modelId)}
         />
       </main>
 

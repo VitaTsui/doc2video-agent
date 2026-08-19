@@ -440,22 +440,38 @@ export async function installRuntime(): Promise<Connection> {
   return next
 }
 
-/** One configured way to reach a model. */
+/**
+ * One model a provider offers.
+ *
+ * `id` goes on the wire, `name` is what the picker shows. Two fields because
+ * they are for two readers: `deepseek-chat` is the API's word, "DeepSeek V4"
+ * is the person's, and showing only the first makes you translate every time.
+ */
+export interface Model {
+  id: string
+  name: string
+  /** One muted line under the name in the picker. */
+  note: string
+}
+
+/** One configured way to reach models. */
 export interface Provider {
   /** Stable; also its account in the keychain. */
   id: string
-  /** Whatever the user calls it. */
+  /** Whatever the user calls it. Becomes a group heading in the picker. */
   name: string
   /** anthropic | openai | gemini | compatible | agent_cli */
   protocol: string
   base_url: string
-  model: string
+  models: Model[]
 }
 
 export interface ModelPrefs {
   providers: Provider[]
-  /** The id that answers. Empty is a supported state: no model at all. */
+  /** The provider that answers. Empty is a supported state: no model at all. */
   active: string
+  /** And which of its models. Empty falls back to the provider's first. */
+  active_model: string
 }
 
 /**

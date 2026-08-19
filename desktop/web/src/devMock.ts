@@ -79,16 +79,29 @@ const SESSION = [
 
 const PREFS: ModelPrefs = {
   providers: [
-    { id: 'p_cli', name: '本机 Claude Code', protocol: 'agent_cli', base_url: '', model: 'claude-code' },
     {
       id: 'p_ds',
       name: 'DeepSeek',
       protocol: 'compatible',
       base_url: 'https://api.deepseek.com/v1',
-      model: 'deepseek-chat',
+      models: [
+        { id: 'deepseek-chat', name: 'DeepSeek-V4-Flash', note: '快，日常够用' },
+        { id: 'deepseek-reasoner', name: 'DeepSeek-V4-Pro', note: '会推理，长稿更稳' },
+      ],
+    },
+    {
+      id: 'p_cli',
+      name: '本机 CLI',
+      protocol: 'agent_cli',
+      base_url: '',
+      models: [
+        { id: 'codex', name: 'Codex CLI', note: '用这台机器上装好的 codex，不消耗 API 额度' },
+        { id: 'claude-code', name: 'Claude Code CLI', note: '用这台机器上装好的 claude，不消耗 API 额度' },
+      ],
     },
   ],
   active: 'p_cli',
+  active_model: 'claude-code',
 }
 
 const CATALOGUE = {

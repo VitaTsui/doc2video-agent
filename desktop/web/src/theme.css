@@ -909,3 +909,157 @@ body {
 .provider__form select.provider__input {
   appearance: auto;
 }
+
+/* -- model picker -------------------------------------------------------- */
+
+.picker {
+  position: relative;
+}
+
+.picker__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.picker__button:hover:not(:disabled) {
+  border-color: var(--ink-soft);
+}
+
+.picker__button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Opens upward: it lives at the foot of the window, and a menu that grows
+   down would be drawn off the bottom edge. */
+.picker__menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 260px;
+  max-height: 380px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 12%);
+  z-index: 40;
+}
+
+.picker__group {
+  color: var(--ink-soft);
+  font-size: 12px;
+  padding: 8px 10px 4px;
+}
+
+.picker__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.picker__item:hover {
+  background: var(--user-bg);
+}
+
+.picker__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.picker__name {
+  line-height: 1.4;
+}
+
+/* One line, clipped. A note that wraps turns the menu into paragraphs. */
+.picker__note {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker__tick {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.picker__empty {
+  color: var(--ink-soft);
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+/* The picker sits in its own row above the input, right where the library's
+   own select used to be — that control cannot render two lines, so it is not
+   passed a model list at all. */
+.composer__row {
+  display: flex;
+  justify-content: flex-start;
+  padding: 0 0 6px;
+}
+
+/* -- model catalogue inside a provider ----------------------------------- */
+
+.models {
+  margin-bottom: 10px;
+}
+
+.models__entry {
+  margin-bottom: 6px;
+}
+
+.models__row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Both halves share the row. Only the id was told to flex, so the name kept
+   its default width and squeezed the id down to nothing. */
+.models__row .provider__input {
+  margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.models__icon {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  padding: 4px 6px;
+  border-radius: 7px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.models__icon:hover {
+  background: var(--user-bg);
+  color: var(--ink);
+}
