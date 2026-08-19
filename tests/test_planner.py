@@ -106,26 +106,27 @@ def test_an_empty_script_still_asks_for_a_render(settings, store):
     assert absent.scene_ids == ["scene_07"]
 
 
-def test_preparing_writes_a_script_only_when_asked(settings, store):
-    """Who writes the words is the difference between the two callers.
+def test_reading_the_deck_and_writing_it_are_two_steps(settings, store):
+    """The parse must not wait behind the words.
 
-    Over MCP the calling model reads the deck and writes the script itself, so
-    handing it one would be answering a question it did not ask. A client with
-    a model of its own has the opposite problem: leave the pages blank and the
-    script is written at render time, arriving with the finished video — too
-    late to read, let alone edit.
+    Parsing takes seconds and writing takes as long as the model takes. Folded
+    into one step the deck appears only once the whole script is written, and
+    the wait is spent looking at nothing; split, the pages are on screen first
+    and fill in as they are written.
     """
     from doc2video.agent import Doc2VideoAgent
 
     agent = Doc2VideoAgent(settings, store)
-    project = _project()
 
-    waiting = agent.planner.prepare_plan("讲三分钟", project)
-    assert waiting.stages == [Stage.PARSE, Stage.UNDERSTAND]
+    reading = agent.planner.prepare_plan("讲三分钟", _project())
+    assert reading.stages == [Stage.PARSE, Stage.UNDERSTAND]
 
-    drafting = agent.planner.prepare_plan("讲三分钟", project, draft=True)
-    assert drafting.stages == [Stage.PARSE, Stage.UNDERSTAND, Stage.NARRATE]
-    # And it stops there: nothing is voiced or rendered from a draft nobody
-    # has looked at yet.
-    assert Stage.VOICE not in drafting.stages
-    assert Stage.RENDER not in drafting.stages
+    writing = agent.planner.draft_plan()
+    assert writing.stages == [Stage.NARRATE]
+    # And it stops at the script: nothing is voiced or rendered from a draft
+    # nobody has looked at yet.
+    assert Stage.VOICE not in writing.stages
+    assert Stage.RENDER not in writing.stages
+
+    # The deck is not re-read to write against it — it was read in step one.
+    assert Stage.PARSE not in writing.stages

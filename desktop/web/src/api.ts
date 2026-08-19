@@ -247,17 +247,19 @@ export async function pages(projectId: string) {
   return body.items
 }
 
-/** Parse a deck and stop — everything the script needs to be written.
- *
- * With `draft`, the script is written here too, so the pages come back with
- * words on them and editing can start immediately. Costs a model call and the
- * wait that comes with it, which is why it is the caller's decision.
- */
-export async function prepare(uploadId: string, brief: string, draft: boolean) {
+/** Parse a deck and stop — fast, and everything the script needs to be written. */
+export async function prepare(uploadId: string, brief: string) {
   return request<{ project_id: string; title: string; pages: PageView[] }>('/agent/prepare', {
     method: 'POST',
-    body: JSON.stringify({ upload_id: uploadId, brief, draft }),
+    body: JSON.stringify({ upload_id: uploadId, brief }),
   })
+}
+
+/** Write a first script for a parsed deck. Returns a job: it takes a while,
+ *  and each page is saved as it is written, so `pages` fills in as it goes. */
+export async function draftScript(projectId: string) {
+  const body = await request<{ job_id: string }>(`/projects/${projectId}/draft`, { method: 'POST' })
+  return body.job_id
 }
 
 export async function narrationGuide(projectId: string) {

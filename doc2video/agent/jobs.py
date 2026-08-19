@@ -62,6 +62,9 @@ class JobRequest:
     # every page falling back to placeholder text.
     narrations: dict[int, str] | None = None
     scene_narrations: dict[str, str] = field(default_factory=dict)
+    # Set when the job's only work is writing a first script, for a deck that
+    # has already been parsed.
+    draft: bool = False
     # Set when the agent should decide for itself what to do with `message`,
     # rather than being handed a script. A chat turn may render several times,
     # which is why it is a job like any other instead of a request that waits.
@@ -242,6 +245,7 @@ class JobManager:
                     progress=progress,
                     narrations=job.request.narrations,
                     scene_narrations=job.request.scene_narrations,
+                    draft=job.request.draft,
                 )
             job.result = result
             job.status = "succeeded"

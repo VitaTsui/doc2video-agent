@@ -111,28 +111,28 @@ class Planner:
     def initial_intent(self, message: str, *, page_count: int, current: VideoIntent) -> VideoIntent:
         return self._sanitize_intent(parse_intent_rules(message, current), page_count)
 
-    def prepare_plan(
-        self, message: str, project: VideoProject, *, draft: bool = False
-    ) -> ExecutionPlan:
-        """Parse and understand, and with `draft`, write a first script too.
-
-        Without it this stops before anything needs a script — the shape MCP
-        depends on, where the calling model reads the deck and writes the words
-        itself. With it the script is written here, which is what a client that
-        owns its own model wants: the words exist while the deck is still on
-        screen, so they can be edited before anything is voiced or rendered
-        rather than arriving with the finished video.
-        """
+    def prepare_plan(self, message: str, project: VideoProject) -> ExecutionPlan:
+        """Parse and understand only — stop before anything needs a script."""
         intent = self.initial_intent(
             message, page_count=project.source.page_count, current=project.intent
         )
         return ExecutionPlan(
-            summary="解析文档，起草讲稿" if draft else "解析文档，等待讲稿",
-            stages=[Stage.PARSE, Stage.UNDERSTAND, Stage.NARRATE]
-            if draft
-            else [Stage.PARSE, Stage.UNDERSTAND],
+            summary="解析文档，等待讲稿",
+            stages=[Stage.PARSE, Stage.UNDERSTAND],
             intent=intent,
         )
+
+    def draft_plan(self) -> ExecutionPlan:
+        """Write a first script for a deck that has already been read.
+
+        Its own step, after the parse rather than inside it, for two reasons.
+        The parse takes seconds and writing takes as long as the model takes,
+        so folding them together would hold the deck back behind the words —
+        and the deck is what makes the wait for the words legible. And it stops
+        at the script: nothing is voiced or rendered from a draft nobody has
+        looked at yet.
+        """
+        return ExecutionPlan(summary="逐页起草讲稿", stages=[Stage.NARRATE])
 
     def render_plan(self, narrations: dict[int, str]) -> ExecutionPlan:
         """Everything downstream of a script: adopt it, then voice and render.

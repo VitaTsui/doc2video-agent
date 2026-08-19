@@ -396,26 +396,54 @@ export function App() {
     [amend, projectId, say],
   )
 
+  /**
+   * Step two: write the script for a deck that has just been parsed.
+   *
+   * Separate from the parse because the two take very different amounts of
+   * time. The deck is on screen in seconds; the words take as long as the
+   * model takes, and they land page by page — every batch the model finishes
+   * is saved, and this reads them back into the boxes as they appear, so the
+   * wait is spent watching the script get written rather than watching a
+   * spinner.
+   */
+  const draftScript = useCallback(
+    async (project: string) => {
+      const fill = (written: api.PageView[]) => {
+        const filled = written.filter((page) => page.narration)
+        if (filled.length === 0) return 0
+        setDrafts(Object.fromEntries(filled.map((p) => [String(p.index), p.narration])))
+        return filled.length
+      }
+
+      const jobId = await api.draftScript(project)
+      const poll = window.setInterval(() => {
+        void api
+          .pages(project)
+          .then(fill)
+          .catch(() => 0)
+      }, 1500)
+      try {
+        await api.watchJob(jobId, () => {})
+      } finally {
+        window.clearInterval(poll)
+      }
+      // The last batch may have landed between polls.
+      return fill(await api.pages(project).catch(() => []))
+    },
+    [],
+  )
+
   /** A deck arrives: parse it, then report what is in it and what it will cost. */
   const acceptDeck = useCallback(
     async (file: File, brief: string, uploaded?: string) => {
       setBusy(true)
       say({ role: 'user', kind: 'text', text: brief || '按默认来', file: file.name })
-      const thinking = say({
-        role: 'assistant',
-        kind: 'text',
-        text: hasModel ? '正在解析，并起草讲稿…' : '正在解析…',
-        pending: true,
-      })
+      const thinking = say({ role: 'assistant', kind: 'text', text: '正在解析…', pending: true })
       try {
         // Already on the backend if the picker managed it; only a failed
         // upload has to be repeated here.
         const uploadId = uploaded ?? (await api.uploadSource(file))
-        // The script is written now, while the deck is on screen, rather than
-        // at render time — words that arrive with the finished video are words
-        // nobody got to change. Only with a model: without one this would draft
-        // placeholder text and pass it off as a starting point.
-        const prepared = await api.prepare(uploadId, brief, hasModel)
+        const prepared = await api.prepare(uploadId, brief)
         const guide = await api.narrationGuide(prepared.project_id)
         setProjectId(prepared.project_id)
         void loadProjects()
@@ -430,13 +458,7 @@ export function App() {
           hasModel,
         })
         // The deck itself goes to the panel; the sentence above stays here.
-        setDrafts(
-          Object.fromEntries(
-            prepared.pages
-              .filter((page) => page.narration)
-              .map((page) => [String(page.index), page.narration]),
-          ),
-        )
+        setDrafts({})
         setArtifacts({
           projectId: prepared.project_id,
           scenes: [],
@@ -446,13 +468,34 @@ export function App() {
           deck: { pages: prepared.pages, guide, hasModel, locked: false },
         })
         setPanelOpen(true)
+
+        // Now the words, against the deck that is already on screen.
+        if (hasModel) {
+          const writing = say({
+            role: 'assistant',
+            kind: 'text',
+            text: '正在逐页写讲稿，写好一页就填进去，你可以直接在上面改。',
+            pending: true,
+          })
+          try {
+            const written = await draftScript(prepared.project_id)
+            amend(writing, {
+              pending: false,
+              text: written
+                ? `讲稿写好了，${written} 页。改完按「开始生成」。`
+                : '讲稿没写出来，可以自己写，或者留空让占位文本顶上。',
+            })
+          } catch (error) {
+            amend(writing, { pending: false, text: `写讲稿失败：${api.describeError(error)}` })
+          }
+        }
       } catch (error) {
         amend(thinking, { pending: false, kind: 'text', text: `解析失败：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
     },
-    [amend, hasModel, loadProjects, say],
+    [amend, draftScript, hasModel, loadProjects, say],
   )
 
   /**

@@ -23,10 +23,6 @@ TRUTHY = {"1", "true", "yes", "on"}
 class PrepareIn(BaseModel):
     upload_id: str
     brief: str = ""
-    # Whether to write a first script here rather than leave the pages blank.
-    # Off by default: the caller that supplies its own script must not be
-    # handed one it did not ask for.
-    draft: bool = False
 
 
 @router.post("/prepare")
@@ -40,7 +36,7 @@ def prepare(body: PrepareIn) -> dict:
     settings = get_settings()
     try:
         source = resolve_upload(settings, body.upload_id)
-        project = get_agent().prepare(source, body.brief, draft=body.draft)
+        project = get_agent().prepare(source, body.brief)
     except Doc2VideoError as exc:
         raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
 

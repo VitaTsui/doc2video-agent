@@ -308,6 +308,12 @@ class NarrationSkill(Skill):
             for page in NarrationResult.model_validate(result).pages:
                 if page.narration.strip():
                     drafts[page.index] = page
+            # Save what has been written so far. A deck takes several calls to
+            # write and each one is a wait; a reader watching the pages fill in
+            # is being told the truth about where it has got to, where a blank
+            # list until the last batch lands is not.
+            self._build_scenes(pages, drafts)
+            self.ctx.store.save(self.project)
 
         wanted = {p.index for p in pages}
         missing = sorted(wanted - drafts.keys())
