@@ -768,13 +768,11 @@ body {
 
 /* The library draws its attachment and send icons at 14px, which next to
    16px body text looks like something that failed to load rather than a
-   button. Both are inside spans it does not let us name, so the size is set
-   on the svg itself. */
-.composer svg {
-  width: 19px;
-  height: 19px;
-}
-
+   button.
+   
+   Only the buttons. The first version of this matched every svg in the
+   composer, which caught the model select's own chevron — that one is sized
+   to its field and looked wrong blown up to match a control it is not. */
 .composer button svg {
   width: 20px;
   height: 20px;
