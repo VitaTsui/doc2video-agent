@@ -13,6 +13,8 @@ export type Message = {
   id: string
   role: 'user' | 'assistant'
   text: string
+  /** Still being worked on: shown with a turning ring rather than as a reply. */
+  pending?: boolean
 } & (
   | { kind: 'text'; file?: string }
   | {

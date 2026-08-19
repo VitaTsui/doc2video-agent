@@ -140,7 +140,16 @@ export function installDevMock() {
     invoke: async (cmd) => {
       switch (cmd) {
         case 'connection':
-          return { base_url: 'http://127.0.0.1:1', token: 'dev' }
+          // Point it at a running backend to look at real data instead of
+          // canned answers — a mock only ever shows the shapes you thought of:
+          //
+          //   D2V_STORAGE_DIR=storage D2V_API_TOKEN=t D2V_PORT=8477 \
+          //     D2V_CORS_ORIGINS='["http://localhost:5399"]' \
+          //     uv run python -m doc2video.cli serve
+          //   VITE_BACKEND=http://127.0.0.1:8477 VITE_TOKEN=t pnpm dev
+          return import.meta.env.VITE_BACKEND
+            ? { base_url: import.meta.env.VITE_BACKEND, token: import.meta.env.VITE_TOKEN ?? '' }
+            : { base_url: 'http://127.0.0.1:1', token: 'dev' }
         case 'runtime_status':
           // The preview always has its runtime; the download screen is looked
           // at by pointing this at `ready: false`.
@@ -149,7 +158,16 @@ export function installDevMock() {
           return PREFS
         case 'save_model_prefs':
         case 'save_key':
-          return { base_url: 'http://127.0.0.1:1', token: 'dev' }
+          // Point it at a running backend to look at real data instead of
+          // canned answers — a mock only ever shows the shapes you thought of:
+          //
+          //   D2V_STORAGE_DIR=storage D2V_API_TOKEN=t D2V_PORT=8477 \
+          //     D2V_CORS_ORIGINS='["http://localhost:5399"]' \
+          //     uv run python -m doc2video.cli serve
+          //   VITE_BACKEND=http://127.0.0.1:8477 VITE_TOKEN=t pnpm dev
+          return import.meta.env.VITE_BACKEND
+            ? { base_url: import.meta.env.VITE_BACKEND, token: import.meta.env.VITE_TOKEN ?? '' }
+            : { base_url: 'http://127.0.0.1:1', token: 'dev' }
         case 'configured_keys':
           return []
         default:
@@ -160,6 +178,9 @@ export function installDevMock() {
 
   // The backend is not there either; answer the handful of GETs the first
   // screen makes so the page reaches its resting state instead of an error.
+  // With a real backend behind it, the canned answers step aside.
+  if (import.meta.env.VITE_BACKEND) return
+
   const real = window.fetch.bind(window)
   window.fetch = async (input, init) => {
     const url = String(typeof input === 'string' ? input : (input as Request).url)

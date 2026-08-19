@@ -90,6 +90,9 @@ body {
   /* Room at the top: the first turn butted against the window edge, which
      read as content scrolled off rather than as the start of a conversation. */
   padding: 28px 20px 24px;
+  /* Always reserve the track, so the measure does not jump when a short
+     conversation grows long enough to scroll. */
+  scrollbar-gutter: stable;
 }
 
 .column {
@@ -149,9 +152,13 @@ body {
 
 /* -- composer ----------------------------------------------------------- */
 
+/* The same width lost on the same side as the transcript's scrollbar, or the
+   two centred columns sit a few pixels apart — visible on Windows, where the
+   scrollbar takes real width, and invisible on macOS, where it overlays.
+   `--gutter` is measured at runtime because only the platform knows it. */
 .composer {
   flex-shrink: 0;
-  padding: 0 20px 20px;
+  padding: 0 calc(20px + var(--gutter, 0px)) 20px 20px;
 }
 
 .composer__box {
@@ -755,6 +762,16 @@ body {
   font-size: 14px;
 }
 
+/* `.ant-input` names two different elements: the bare control, and the <input>
+   *inside* an affix wrapper — and there is always a wrapper here, because the
+   library's Input turns allowClear on for us. Sizing that inner one to 32px
+   makes it taller than the 22px the wrapper leaves between its padding, so it
+   hangs 5px out of the bottom and the text rides down onto the border. Only
+   the outer box carries the height; the inner input stays one line tall. */
+.provider__form .ant-input-affix-wrapper > .ant-input {
+  height: auto;
+}
+
 .provider__more {
   display: flex;
   align-items: center;
@@ -872,9 +889,12 @@ body {
 }
 
 /* A line in the transcript that opens the panel — the artifact's handle, not
-   the artifact. */
+   the artifact. On its own line: sitting at the end of the sentence it read
+   as part of it, and the eye had to find where the words stopped and the
+   control began. */
 .turn__artifact {
-  display: inline-flex;
+  display: flex;
+  width: fit-content;
   align-items: center;
   gap: 6px;
   margin-top: 8px;
@@ -1096,10 +1116,20 @@ body {
   color: var(--ink);
 }
 
-/* Pills, like dsh: 28px tall and fully rounded. antd draws its own radius from
-   the theme token, which the rest of the window wants at 8. */
+/* Pills, and tall enough to look like something you press. dsh's are 28px,
+   which next to this window's 15px body text reads as squashed — the type is
+   a size larger here, so the control has to be too. antd draws its own radius
+   from the theme token, which the rest of the window wants at 8. */
 .modal .ant-btn {
   border-radius: 999px;
+  height: 34px;
+  padding: 0 16px;
+}
+
+/* The two at the foot of a form are the same shape as the rest. */
+.provider__actions .ant-btn,
+.models .ant-btn {
+  height: 32px;
 }
 
 /* A note at the foot of a form, for the thing that is true but not a field. */
@@ -1119,9 +1149,195 @@ body {
   margin-top: 8px;
 }
 
+/* The reference button carries a top margin for when it stands alone under a
+   paragraph. In this row `align-items: center` centres the *margin* box, so
+   that 8px pushed it half a step below the other two and the three stopped
+   sharing a centre line. */
+.deckgate .turn__artifact {
+  margin-top: 0;
+}
+
+/* Its own button, not the icon button with overrides. `.composer__send` is a
+   32px square laid out as a grid to centre one glyph; widening it and adding
+   padding left the label sitting off to one side, because the grid area it
+   was being centred in was still the width of the text. */
 .deckgate__go {
-  width: auto;
-  padding: 6px 16px;
-  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-left: auto;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  border-radius: 999px;
+  padding: 6px 18px;
+  cursor: pointer;
+}
+
+.deckgate__go:hover:not(:disabled) {
+  background: #b8583a;
+}
+
+.deckgate__go:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The library's TextEllipsis does the clipping and the tooltip; this only
+   tells the flex row that it may shrink — without `min-width: 0` a flex item
+   refuses to go below its content width and nothing ever truncates. */
+.deck__title {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Stacked, not side by side. The panel is 400px wide; two columns there gave
+   the page render 200px and the script box whatever was left, which was not
+   enough to write a sentence in.
+   
+   `stretch`, because the row's own `align-items: flex-start` is a
+   side-by-side instruction: turned on its side it stops meaning "top-aligned"
+   and starts meaning "as narrow as your content", which left the script box a
+   fraction of the width it had just been given. */
+.panel .page-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.panel .page-row img {
+  width: 100%;
+}
+
+.page-row__shot {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+  display: block;
+  width: 100%;
+}
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgb(0 0 0 / 72%);
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  cursor: zoom-out;
+}
+
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 40%);
+}
+
+.panel__clip {
+  width: 100%;
+  border-radius: 8px;
+  background: #000;
+  margin: 6px 0;
+}
+
+/* Sits over the transcript's top-right corner: the panel's own toggle is gone
+   with the panel, so this is the only thing left that can bring it back. */
+.main__reopen {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-soft);
+  border-radius: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.main__reopen:hover {
+  color: var(--ink);
+  border-color: var(--ink-soft);
+}
+
+.main {
+  position: relative;
+}
+
+/* The greeting is prose, not a label: it needs a measure. */
+.empty__hint {
+  max-width: 34rem;
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+}
+
+/* Turning while something is running. Drawn rather than imported: it is one
+   ring, and a spinner that has to be fetched is a spinner that is missing at
+   exactly the moment it is needed. */
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Held between the send and the first progress event, when the transcript
+   would otherwise show nothing at all. */
+.thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+}
+
+/* A row is the entry plus the control that removes it. */
+.sidebar__row {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.sidebar__row:hover,
+.sidebar__row--on {
+  background: var(--user-bg);
+}
+
+.sidebar__row .sidebar__item:hover {
+  background: transparent;
+}
+
+/* Hidden until the row is under the pointer: a delete that is always on
+   screen in a list is one that is eventually hit by accident. */
+.sidebar__delete {
+  display: none;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  padding: 4px 8px 4px 4px;
+  border-radius: 7px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar__row:hover .sidebar__delete {
+  display: inline-flex;
+}
+
+.sidebar__delete:hover {
+  color: #b0562f;
 }

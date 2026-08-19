@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 
 from ..schemas import BBox, DocumentPage, Scene, SubtitleCue
-from ..tools.renderer.base import SUBTITLE_SAFE_BOTTOM
 
 # Roughly one comfortable line of CJK subtitle at 1080p.
 MAX_SUBTITLE_CHARS = 22
@@ -108,9 +107,24 @@ def to_frame_area(bbox: BBox, page: DocumentPage, width: int, height: int) -> BB
     return BBox(x=x, y=y, w=w, h=h)
 
 
-def avoids_subtitle_band(area: BBox) -> BBox:
-    """Nudge a highlight up when it would sit under the subtitle band."""
-    limit = 1.0 - SUBTITLE_SAFE_BOTTOM
-    if area.y + area.h <= limit:
-        return area
-    return BBox(x=area.x, y=area.y, w=area.w, h=max(0.02, limit - area.y))
+# How much air to leave around a highlight, in frame pixels.
+#
+# In pixels rather than as a ratio of the box, because this one is *drawn*: an
+# outline padded by 8% of each dimension separately gets 16px of air beside a
+# wide line of text and 2px above it, which is what made the box look loose on
+# the sides and clamped on the glyphs. `BBox.padded` stays as it is — a zoom
+# target genuinely does want a proportional margin.
+HIGHLIGHT_PAD_PX = 7.0
+
+
+def with_highlight_padding(area: BBox, width: int, height: int) -> BBox:
+    """The same amount of air on every side of a drawn outline."""
+    dx, dy = HIGHLIGHT_PAD_PX / width, HIGHLIGHT_PAD_PX / height
+    x = max(0.0, area.x - dx)
+    y = max(0.0, area.y - dy)
+    return BBox(
+        x=x,
+        y=y,
+        w=min(1.0 - x, area.w + 2 * dx),
+        h=min(1.0 - y, area.h + 2 * dy),
+    )

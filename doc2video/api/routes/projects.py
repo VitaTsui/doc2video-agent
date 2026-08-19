@@ -61,6 +61,10 @@ def get_scenes(project_id: str) -> dict:
                 "actions": [a.model_dump(mode="json") for a in scene.actions],
                 "visual": scene.visual.model_dump(mode="json"),
                 "audio": scene.audio.model_dump(mode="json"),
+                # The scene's own clip. It is rendered before the concatenation
+                # and kept — that is how an edit to one page re-renders one
+                # page — so there is no reason the window cannot play it.
+                "clip": project.render.scene_clips.get(scene.scene_id),
             }
             for scene in project.scenes
         ]
@@ -119,6 +123,19 @@ def chat(project_id: str, body: ChatIn) -> dict:
         JobRequest(message=body.message, project_id=project_id, chat=True)
     )
     return {"job_id": job.id, "status": job.status}
+
+
+@router.get("/{project_id}/pages")
+def get_pages(project_id: str) -> dict:
+    """The deck, for a project that was parsed at some point in the past.
+
+    The same list `POST /agent/prepare` returns. Without it the window can
+    only show the pages of a project it parsed in this session, so reopening
+    one from the sidebar left nowhere to read or edit its script.
+    """
+    from .agent import page_views
+
+    return {"items": page_views(_load(project_id))}
 
 
 @router.get("/{project_id}/narration-guide")

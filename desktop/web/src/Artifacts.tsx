@@ -22,6 +22,21 @@ import { LedgerCard } from './chat/LedgerCard'
 
 type Tab = 'deck' | 'video' | 'pages' | 'ledger'
 
+/**
+ * The quality dimensions, named in the language the rest of the window is in.
+ *
+ * They are English in the schema because that is where they are computed and
+ * compared; leaving them English on screen made five of the six words in that
+ * panel the only ones a reader has to translate.
+ */
+const DIMENSION: Record<string, string> = {
+  completeness: '完整度',
+  pacing: '节奏',
+  originality: '原创度',
+  direction: '镜头',
+  subtitles: '字幕',
+}
+
 export interface ArtifactSet {
   projectId: string
   scenes: Scene[]
@@ -98,7 +113,7 @@ export function Artifacts({
               </div>
               {set.quality?.dimensions.map((dimension) => (
                 <div key={dimension.name} className="panel__dim">
-                  <span className="muted">{dimension.name}</span>
+                  <span className="muted">{DIMENSION[dimension.name] ?? dimension.name}</span>
                   <div className="bar">
                     <div className="bar__fill" style={{ width: `${dimension.score}%` }} />
                   </div>
@@ -116,6 +131,19 @@ export function Artifacts({
               <div className="muted">
                 第 {scene.source_page} 页 · {scene.duration.toFixed(1)}s
               </div>
+              {/* This page on its own. Checking one page meant scrubbing the
+                  whole film to where it starts, which is the slowest possible
+                  way to answer "did that one come out right". Lazy: thirty
+                  clips fetched to render a list nobody has scrolled to is
+                  waste. */}
+              {scene.clip && (
+                <video
+                  src={api.assetUrl(set.projectId, scene.clip)}
+                  controls
+                  preload="none"
+                  className="panel__clip"
+                />
+              )}
               <div>{scene.narration}</div>
             </div>
           ))}
@@ -141,7 +169,7 @@ function Tabs({
     ['deck', '文档'],
     ['video', '成片'],
     ['pages', '逐页'],
-    ['ledger', '账本'],
+    ['ledger', '过程'],
   ]
   return (
     <>

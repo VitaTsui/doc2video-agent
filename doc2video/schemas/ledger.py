@@ -64,6 +64,11 @@ class LedgerEntry(BaseModel):
     kind: EntryKind
     name: str
     detail: str = ""
+    # Which tools actually did the work: the parser, the voice, the renderer,
+    # the model. A step named 「配音」 says what was attempted; `piper` or
+    # `macos_say` says what it came out of, and those differ in ways someone
+    # comparing two runs can hear.
+    tools: list[str] = Field(default_factory=list)
     status: str = "ok"  # ok | failed | skipped
     duration_s: float = 0.0
     at: datetime = Field(default_factory=_now)

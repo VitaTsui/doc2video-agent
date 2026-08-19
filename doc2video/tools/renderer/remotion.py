@@ -12,7 +12,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from ...core import programs
+from ...core import ledger, programs
 from ...core.config import Settings, get_settings, which
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
@@ -49,6 +49,7 @@ class RemotionAdapter(RendererAdapter):
         return f"Remotion 依赖未安装，请在 {self.renderer_dir} 下执行 pnpm install"
 
     def render_scene(self, plan: ScenePlan, out_path: Path) -> Path:
+        ledger.used(f"renderer:{self.name}")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         staged = self._stage_assets(plan)
         props_path = out_path.with_suffix(".props.json")

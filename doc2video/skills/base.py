@@ -21,7 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TypeVar
 
-from ..core import telemetry
+from ..core import ledger, telemetry
 from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
 from ..schemas import VideoProject
@@ -110,6 +110,10 @@ class Skill:
         if not self.llm.available:
             telemetry.record_degradation(what, "未配置模型")
             return fallback()
+        # Named before the call, so a failed one still shows what was tried.
+        # `source` already distinguishes "gpt-5 via OpenAI" from "gpt-5 via
+        # someone's gateway", which is the difference worth seeing here.
+        ledger.used(self.llm.source)
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001 - any failure degrades, none aborts

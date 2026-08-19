@@ -20,7 +20,7 @@ from ..schemas import (
 )
 from ..tools.renderer import PlanAction, PlanArea, PlanSubtitle, ScenePlan
 from .base import Skill
-from .layout import avoids_subtitle_band, build_subtitles, to_frame_area
+from .layout import build_subtitles, to_frame_area, with_highlight_padding
 
 
 class MotionSkill(Skill):
@@ -95,12 +95,17 @@ class MotionSkill(Skill):
             if action.target and page is not None:
                 element = page.element(action.target)
                 if element is not None:
+                    highlight = action.type is ActionType.HIGHLIGHT
+                    # A highlight marks the element, so it starts from the
+                    # element's own box and gains an even margin. A zoom is
+                    # framing a region, and wants a proportional one.
+                    source = element.bbox if highlight else element.bbox.padded()
                     frame_area = to_frame_area(
-                        element.bbox.padded(), page, timeline.width, timeline.height
+                        source, page, timeline.width, timeline.height
                     )
                     area = (
-                        avoids_subtitle_band(frame_area)
-                        if action.type is ActionType.HIGHLIGHT
+                        with_highlight_padding(frame_area, timeline.width, timeline.height)
+                        if highlight
                         else frame_area
                     )
             cues.append(

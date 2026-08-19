@@ -14,7 +14,7 @@ export function MessageList({
   /** Open the artifacts panel on this project. */
   onShow: (projectId: string) => void
   /** The gate: how much of the script is written, and how to start. */
-  deck: { written: number; locked: boolean; onRender: () => void }
+  deck: { written: number; locked: boolean; generated: boolean; onRender: () => void }
 }) {
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -30,7 +30,17 @@ export function MessageList({
             className={`turn turn--${message.role}`}
           >
             <div className="turn__body">
-              {message.text}
+              {/* A turn that is still being worked on says so with the same
+                  ring the progress card uses, so the wait never looks like a
+                  reply that simply stopped. */}
+              {message.pending ? (
+                <span className="thinking">
+                  <span className="spinner" />
+                  {message.text}
+                </span>
+              ) : (
+                message.text
+              )}
               {message.kind === 'text' && message.file && (
                 <div>
                   <span className="turn__file">{message.file}</span>
@@ -54,19 +64,24 @@ export function MessageList({
                     {' 页'}
                   </button>
                   <span className="muted">
-                    {message.hasModel
-                      ? deck.written
-                        ? `你写了 ${deck.written} 页，其余由模型补`
-                        : '全部由模型来写'
-                      : `已写 ${deck.written} / ${message.pages.length} 页，没写的会是占位文本`}
+                    {/* Once a script exists the counts stop being the point:
+                        saying "你写了 30 页" of pages the model wrote is worse
+                        than saying nothing. */}
+                    {deck.generated
+                      ? '讲稿在右侧，改完再点一次就重做'
+                      : message.hasModel
+                        ? deck.written
+                          ? `你写了 ${deck.written} 页，其余由模型补`
+                          : '全部由模型来写'
+                        : `已写 ${deck.written} / ${message.pages.length} 页，没写的会是占位文本`}
                   </span>
                   <button
                     type="button"
-                    className="composer__send deckgate__go"
+                    className="deckgate__go"
                     disabled={deck.locked}
                     onClick={deck.onRender}
                   >
-                    {deck.locked ? '已开始' : '开始生成'}
+                    {deck.locked ? '已开始' : deck.generated ? '重新生成' : '开始生成'}
                   </button>
                 </div>
               )}

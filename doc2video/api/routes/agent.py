@@ -45,22 +45,31 @@ def prepare(body: PrepareIn) -> dict:
         "title": project.document.title,
         "topic": project.document.topic,
         "intent": project.intent.model_dump(mode="json"),
-        "pages": [
-            {
-                "index": page.index,
-                "title": page.title,
-                "page_type": page.page_type.value,
-                "summary": page.summary,
-                "image": page.image_path,
-                "elements": [
-                    {"id": e.id, "kind": e.kind.value, "text": e.text}
-                    for e in page.elements
-                    if e.text
-                ],
-            }
-            for page in project.document.ordered_pages()
-        ],
+        "pages": page_views(project),
     }
+
+
+def page_views(project) -> list[dict]:
+    """The deck as the window shows it, in presentation order.
+
+    Shared with `GET /projects/{id}/pages` rather than written twice: the two
+    render the same list, and a drift between them would be a project that
+    looks different depending on whether you had just parsed it or reopened
+    it from the sidebar.
+    """
+    return [
+        {
+            "index": page.index,
+            "title": page.title,
+            "page_type": page.page_type.value,
+            "summary": page.summary,
+            "image": page.image_path,
+            "elements": [
+                {"id": e.id, "kind": e.kind.value, "text": e.text} for e in page.elements if e.text
+            ],
+        }
+        for page in project.document.ordered_pages()
+    ]
 
 
 @router.post("/run")

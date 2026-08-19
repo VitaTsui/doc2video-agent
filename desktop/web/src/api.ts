@@ -57,6 +57,8 @@ export interface GuideRow {
 }
 
 export interface Scene {
+  /** This scene's own clip, when one has been rendered. */
+  clip?: string | null
   scene_id: string
   source_page: number
   title: string
@@ -80,6 +82,8 @@ export interface LedgerEntry {
   status: string
   duration_s: number
   artifacts: LedgerArtifact[]
+  /** Which tools did the work: the parser, the voice, the renderer, the model. */
+  tools: string[]
 }
 
 /** How this project got made, step by step, with what each step produced. */
@@ -102,6 +106,16 @@ export interface ProjectSummary {
 export async function projects() {
   const body = await request<{ items: ProjectSummary[] }>('/projects')
   return body.items
+}
+
+/**
+ * Remove a project and everything it produced.
+ *
+ * Not the uploaded file: that lives under `uploads/` and the project only ever
+ * held a copy, so deleting a video does not cost you the deck it came from.
+ */
+export async function deleteProject(projectId: string) {
+  return request<{ deleted: string }>(`/projects/${projectId}`, { method: 'DELETE' })
 }
 
 export interface Turn {
@@ -223,6 +237,12 @@ export async function uploadSource(file: File): Promise<string> {
   form.append('file', file)
   const body = await request<{ upload_id: string }>('/uploads', { method: 'POST', body: form })
   return body.upload_id
+}
+
+/** A parsed project's pages, for one that was not parsed in this session. */
+export async function pages(projectId: string) {
+  const body = await request<{ items: PageView[] }>(`/projects/${projectId}/pages`)
+  return body.items
 }
 
 /** Parse a deck and stop — fast, and everything the script needs to be written. */
