@@ -39,6 +39,7 @@ export function DeckCard({
   onDrafts: (next: Record<string, string>) => void
 }) {
   const [open, setOpen] = useState<number | null>(hasModel ? null : pages[0]?.index)
+  const [preview, setPreview] = useState<number | null>(null)
   const budgets = Object.fromEntries(guide.map((row) => [row.page, row]))
 
   return (
@@ -66,9 +67,14 @@ export function DeckCard({
                 textAlign: 'left',
               }}
             >
-              <span style={{ color: 'var(--ink-soft)', width: 44 }}>第 {page.index} 页</span>
-              <span style={{ flex: 1 }}>{page.title || '无标题'}</span>
-              <span className="muted">
+              <span style={{ color: 'var(--ink-soft)', flexShrink: 0 }}>第 {page.index} 页</span>
+              {/* One line, clipped. A long title wrapped to three and pushed
+                  the budget around it, so a list of thirty pages stopped
+                  being a list you could run your eye down. */}
+              <span className="deck__title" title={page.title || '无标题'}>
+                {page.title || '无标题'}
+              </span>
+              <span className="muted" style={{ flexShrink: 0 }}>
                 {hasModel && !draft
                   ? `约 ${budget?.target_chars} 字`
                   : `${draft.length}/${budget?.target_chars}`}
@@ -78,7 +84,17 @@ export function DeckCard({
             {expanded && (
               <div className="page-row" style={{ padding: '0 16px 14px' }}>
                 {page.image && (
-                  <img src={api.assetUrl(projectId, page.image)} alt={`第 ${page.index} 页`} />
+                  // Clickable: at this width the render is a thumbnail, and
+                  // deciding what a page should say means being able to read
+                  // what is on it.
+                  <button
+                    type="button"
+                    className="page-row__shot"
+                    onClick={() => setPreview(page.index)}
+                    title="点开放大"
+                  >
+                    <img src={api.assetUrl(projectId, page.image)} alt={`第 ${page.index} 页`} />
+                  </button>
                 )}
                 <div style={{ flex: 1 }}>
                   <textarea
@@ -115,6 +131,16 @@ export function DeckCard({
         )
       })}
 
+      {preview !== null && (
+        // Click anywhere to close: the only thing to do here is look, so
+        // there is nothing that wants a target of its own.
+        <div className="lightbox" onClick={() => setPreview(null)}>
+          <img
+            src={api.assetUrl(projectId, pages.find((p) => p.index === preview)?.image ?? '')}
+            alt={`第 ${preview} 页`}
+          />
+        </div>
+      )}
     </div>
   )
 }

@@ -62,7 +62,7 @@ export function MessageList({
                   </span>
                   <button
                     type="button"
-                    className="composer__send deckgate__go"
+                    className="deckgate__go"
                     disabled={deck.locked}
                     onClick={deck.onRender}
                   >

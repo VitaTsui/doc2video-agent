@@ -755,6 +755,16 @@ body {
   font-size: 14px;
 }
 
+/* `.ant-input` names two different elements: the bare control, and the <input>
+   *inside* an affix wrapper — and there is always a wrapper here, because the
+   library's Input turns allowClear on for us. Sizing that inner one to 32px
+   makes it taller than the 22px the wrapper leaves between its padding, so it
+   hangs 5px out of the bottom and the text rides down onto the border. Only
+   the outer box carries the height; the inner input stays one line tall. */
+.provider__form .ant-input-affix-wrapper > .ant-input {
+  height: auto;
+}
+
 .provider__more {
   display: flex;
   align-items: center;
@@ -1096,10 +1106,20 @@ body {
   color: var(--ink);
 }
 
-/* Pills, like dsh: 28px tall and fully rounded. antd draws its own radius from
-   the theme token, which the rest of the window wants at 8. */
+/* Pills, and tall enough to look like something you press. dsh's are 28px,
+   which next to this window's 15px body text reads as squashed — the type is
+   a size larger here, so the control has to be too. antd draws its own radius
+   from the theme token, which the rest of the window wants at 8. */
 .modal .ant-btn {
   border-radius: 999px;
+  height: 34px;
+  padding: 0 16px;
+}
+
+/* The two at the foot of a form are the same shape as the rest. */
+.provider__actions .ant-btn,
+.models .ant-btn {
+  height: 32px;
 }
 
 /* A note at the foot of a form, for the thing that is true but not a field. */
@@ -1119,9 +1139,90 @@ body {
   margin-top: 8px;
 }
 
+/* The reference button carries a top margin for when it stands alone under a
+   paragraph. In this row `align-items: center` centres the *margin* box, so
+   that 8px pushed it half a step below the other two and the three stopped
+   sharing a centre line. */
+.deckgate .turn__artifact {
+  margin-top: 0;
+}
+
+/* Its own button, not the icon button with overrides. `.composer__send` is a
+   32px square laid out as a grid to centre one glyph; widening it and adding
+   padding left the label sitting off to one side, because the grid area it
+   was being centred in was still the width of the text. */
 .deckgate__go {
-  width: auto;
-  padding: 6px 16px;
-  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-left: auto;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  border-radius: 999px;
+  padding: 6px 18px;
+  cursor: pointer;
+}
+
+.deckgate__go:hover:not(:disabled) {
+  background: #b8583a;
+}
+
+.deckgate__go:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* One line, clipped — see DeckCard. */
+.deck__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Stacked, not side by side. The panel is 400px wide; two columns there gave
+   the page render 200px and the script box whatever was left, which was not
+   enough to write a sentence in.
+   
+   `stretch`, because the row's own `align-items: flex-start` is a
+   side-by-side instruction: turned on its side it stops meaning "top-aligned"
+   and starts meaning "as narrow as your content", which left the script box a
+   fraction of the width it had just been given. */
+.panel .page-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.panel .page-row img {
+  width: 100%;
+}
+
+.page-row__shot {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+  display: block;
+  width: 100%;
+}
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgb(0 0 0 / 72%);
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  cursor: zoom-out;
+}
+
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 40%);
 }
