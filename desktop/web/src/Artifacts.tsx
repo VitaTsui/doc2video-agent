@@ -131,6 +131,19 @@ export function Artifacts({
               <div className="muted">
                 第 {scene.source_page} 页 · {scene.duration.toFixed(1)}s
               </div>
+              {/* This page on its own. Checking one page meant scrubbing the
+                  whole film to where it starts, which is the slowest possible
+                  way to answer "did that one come out right". Lazy: thirty
+                  clips fetched to render a list nobody has scrolled to is
+                  waste. */}
+              {scene.clip && (
+                <video
+                  src={api.assetUrl(set.projectId, scene.clip)}
+                  controls
+                  preload="none"
+                  className="panel__clip"
+                />
+              )}
               <div>{scene.narration}</div>
             </div>
           ))}

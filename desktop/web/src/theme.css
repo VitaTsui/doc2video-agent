@@ -882,9 +882,12 @@ body {
 }
 
 /* A line in the transcript that opens the panel — the artifact's handle, not
-   the artifact. */
+   the artifact. On its own line: sitting at the end of the sentence it read
+   as part of it, and the eye had to find where the words stopped and the
+   control began. */
 .turn__artifact {
-  display: inline-flex;
+  display: flex;
+  width: fit-content;
   align-items: center;
   gap: 6px;
   margin-top: 8px;
@@ -1224,4 +1227,37 @@ body {
   max-height: 100%;
   border-radius: 8px;
   box-shadow: 0 20px 60px rgb(0 0 0 / 40%);
+}
+
+.panel__clip {
+  width: 100%;
+  border-radius: 8px;
+  background: #000;
+  margin: 6px 0;
+}
+
+/* Sits over the transcript's top-right corner: the panel's own toggle is gone
+   with the panel, so this is the only thing left that can bring it back. */
+.main__reopen {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-soft);
+  border-radius: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.main__reopen:hover {
+  color: var(--ink);
+  border-color: var(--ink-soft);
+}
+
+.main {
+  position: relative;
 }

@@ -20,6 +20,7 @@ import { Composer } from './chat/Composer'
 import { MessageList } from './chat/MessageList'
 import type { Message, MessageDraft, MessagePatch } from './chat/types'
 import { Settings } from './Settings'
+import { PanelIcon } from './Icon'
 import { Sidebar } from './Sidebar'
 import { Artifacts } from './Artifacts'
 import type { ArtifactSet } from './Artifacts'
@@ -530,6 +531,18 @@ export function App() {
       />
 
       <main className={messages.length === 0 && !projectId ? 'main main--empty' : 'main'}>
+        {/* The way back in. Closing the panel used to be one-way: nothing on
+            screen said the deck and the video were still there. */}
+        {!panelOpen && artifacts && (
+          <button
+            type="button"
+            className="main__reopen"
+            title="打开产物面板"
+            onClick={() => setPanelOpen(true)}
+          >
+            <PanelIcon open={false} size={19} />
+          </button>
+        )}
         {/* Before there is a project the composer belongs in the middle of the
             window, not pinned to the bottom of an empty page — an empty
             transcript with an input bar under it reads as something that

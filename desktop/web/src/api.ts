@@ -57,6 +57,8 @@ export interface GuideRow {
 }
 
 export interface Scene {
+  /** This scene's own clip, when one has been rendered. */
+  clip?: string | null
   scene_id: string
   source_page: number
   title: string

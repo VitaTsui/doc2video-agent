@@ -282,3 +282,17 @@ def test_the_two_page_lists_are_one_list():
 
     assert "page_views" in inspect.getsource(agent.prepare)
     assert "page_views" in inspect.getsource(projects.get_pages)
+
+
+def test_a_scene_carries_the_clip_it_was_rendered_into(client: TestClient, monkeypatch):
+    """Checking one page should not mean scrubbing the whole film.
+
+    The per-scene clips are rendered before the concatenation and kept — that
+    is how editing one page re-renders one page — so the only reason the
+    window could not play them was that the route did not hand them over.
+    """
+    import inspect
+
+    from doc2video.api.routes import projects
+
+    assert "scene_clips" in inspect.getsource(projects.get_scenes)

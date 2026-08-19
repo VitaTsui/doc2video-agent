@@ -61,6 +61,10 @@ def get_scenes(project_id: str) -> dict:
                 "actions": [a.model_dump(mode="json") for a in scene.actions],
                 "visual": scene.visual.model_dump(mode="json"),
                 "audio": scene.audio.model_dump(mode="json"),
+                # The scene's own clip. It is rendered before the concatenation
+                # and kept — that is how an edit to one page re-renders one
+                # page — so there is no reason the window cannot play it.
+                "clip": project.render.scene_clips.get(scene.scene_id),
             }
             for scene in project.scenes
         ]
