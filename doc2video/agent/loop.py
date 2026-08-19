@@ -162,11 +162,23 @@ class AgentLoop:
             )
             return Decision.model_validate(answer)
         except Exception as exc:  # noqa: BLE001 - a broken answer ends the turn, not the app
-            log.warning("模型没有给出可用的决定：%s", exc)
+            # The cause, and a way out. What this said before — "我没想清楚下一步
+            # 该做什么" — is a dead end dressed as modesty: nothing on screen
+            # named the failure, and nothing said what the person could do
+            # instead. They are usually one click from either fix.
+            reason = str(exc)
+            detail = getattr(exc, "detail", None)
+            if detail:
+                reason += "｜" + "；".join(f"{k}={str(v)[:200]}" for k, v in detail.items())
+            log.warning("模型没有给出可用的决定：%s", reason)
             return Decision(
                 action="finish",
-                reason=f"模型没有给出可用的决定：{exc}",
-                message="我没想清楚下一步该做什么，你直接告诉我改哪里吧。",
+                reason=f"模型没有给出可用的决定：{reason}",
+                message=(
+                    f"模型这一步没答上来：{reason[:300]}\n\n"
+                    "两条路都能继续：在设置里换一个模型或补上 API Key；"
+                    "或者直接把讲稿写给我——在上面每页的框里填字，留空的页我不动。"
+                ),
             )
 
     def _execute(self, decision: Decision, session: Session) -> None:

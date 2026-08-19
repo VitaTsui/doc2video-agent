@@ -426,10 +426,13 @@ body {
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
-  font-size: 15px;
+  /* These are glyphs standing in for icons, and at body size they read as
+     punctuation rather than as controls. */
+  font-size: 19px;
+  line-height: 1;
   cursor: pointer;
   border-radius: 8px;
-  padding: 4px 8px;
+  padding: 6px 9px;
 }
 
 .sidebar__icon:hover {
@@ -749,4 +752,22 @@ body {
 
 .provider__actions .modal__primary {
   margin-top: 0;
+}
+
+/* The library draws its attachment and send icons at 14px, which next to
+   16px body text looks like something that failed to load rather than a
+   button. Both are inside spans it does not let us name, so the size is set
+   on the svg itself. */
+.composer svg {
+  width: 19px;
+  height: 19px;
+}
+
+.composer button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar__foot {
+  font-size: 15px;
 }

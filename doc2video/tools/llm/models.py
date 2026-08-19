@@ -53,8 +53,31 @@ CATALOGUE: dict[str, list[ModelInfo]] = {
 
 
 def catalogue_payload() -> dict[str, list[dict]]:
-    """JSON-ready copy for the API."""
-    return {provider: [asdict(m) for m in models] for provider, models in CATALOGUE.items()}
+    """JSON-ready copy for the API, with the local CLIs checked.
+
+    For every other provider a model is available if you hold a key, and the
+    app cannot tell from here. The local CLIs are the exception: whether
+    `claude` or `codex` is on this machine is knowable, and listing one that is
+    not installed offers a choice that fails at the first request — which is
+    exactly what a person picking from this list is trying to avoid.
+    """
+    import shutil
+
+    from .virtualized import RUNTIMES
+
+    payload: dict[str, list[dict]] = {}
+    for provider, models in CATALOGUE.items():
+        rows = []
+        for model in models:
+            row = asdict(model)
+            binary = RUNTIMES.get(model.id) if provider == "agent_cli" else None
+            if binary is not None:
+                found = shutil.which(binary)
+                row["installed"] = bool(found)
+                row["note"] = f"检测到 {found}" if found else f"未检测到 {binary}"
+            rows.append(row)
+        payload[provider] = rows
+    return payload
 
 
 def is_vision_model(provider: str, model_id: str) -> bool:

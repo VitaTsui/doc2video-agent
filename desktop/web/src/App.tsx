@@ -75,13 +75,17 @@ export function App() {
       catalogue.providers
         .filter((provider) => provider.needs_key === needsKey)
         .flatMap((provider) =>
-          (catalogue.models[provider.id] ?? []).map((entry) => ({
-            value: `${provider.id}/${entry.id}`,
-            // The vendor is already in the model's name — "Claude Opus 5",
-            // "GPT-5", "Gemini 2.5 Pro" — and the group heading carries what
-            // actually differs. Prefixing the provider only truncates.
-            label: entry.label,
-          })),
+          (catalogue.models[provider.id] ?? [])
+            // A local CLI that is not installed is not a choice; offering it
+            // produces a model that fails at its first request.
+            .filter((entry) => entry.installed !== false)
+            .map((entry) => ({
+              value: `${provider.id}/${entry.id}`,
+              // The vendor is already in the model's name — "Claude Opus 5",
+              // "GPT-5", "Gemini 2.5 Pro" — and the group heading carries what
+              // actually differs. Prefixing the provider only truncates.
+              label: entry.label,
+            })),
         )
 
     setGroups([

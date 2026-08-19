@@ -142,30 +142,27 @@ export function Settings({
                               it is usable. */}
                           {ready && <span className="provider__dot" title="可用" />}
                         </span>
-                        {provider.needs_key ? (
-                          <button
-                            type="button"
-                            className="modal__ghost"
-                            onClick={() =>
-                              setEditing(editing === provider.id ? null : provider.id)
-                            }
-                          >
-                            {editing === provider.id ? '收起' : '编辑'}
-                          </button>
-                        ) : (
-                          <span className="muted">不需要 Key</span>
-                        )}
+                        <button
+                          type="button"
+                          className="modal__ghost"
+                          onClick={() => setEditing(editing === provider.id ? null : provider.id)}
+                        >
+                          {editing === provider.id ? '收起' : provider.needs_key ? '编辑' : '查看'}
+                        </button>
                       </div>
 
-                      {editing === provider.id && (
-                        <ProviderForm
-                          provider={provider}
-                          configured={configured.includes(vendor)}
-                          saving={saving === provider.id}
-                          onCancel={() => setEditing(null)}
-                          onSave={(key, baseUrl) => void saveProvider(provider.id, key, baseUrl)}
-                        />
-                      )}
+                      {editing === provider.id &&
+                        (provider.needs_key ? (
+                          <ProviderForm
+                            provider={provider}
+                            configured={configured.includes(vendor)}
+                            saving={saving === provider.id}
+                            onCancel={() => setEditing(null)}
+                            onSave={(key, baseUrl) => void saveProvider(provider.id, key, baseUrl)}
+                          />
+                        ) : (
+                          <Detected models={catalogue?.models[provider.id] ?? []} />
+                        ))}
                     </li>
                   )
                 })}
@@ -237,6 +234,38 @@ export function Settings({
         </div>
       </div>
     </>
+  )
+}
+
+/**
+ * Which local CLIs this machine actually has.
+ *
+ * The list used to offer both regardless, so choosing one that was not
+ * installed produced a model that failed at its first request and said
+ * nothing useful about why. The backend checks the PATH; this shows what it
+ * found, including the path itself — on a machine with two shells and two
+ * installs, which one answered is the question.
+ */
+function Detected({ models }: { models: api.ModelInfo[] }) {
+  return (
+    <div className="provider__form">
+      <div className="provider__name">本机检测</div>
+      {models.map((model) => (
+        <div key={model.id} className="provider__row" style={{ padding: '6px 0' }}>
+          <span>
+            {model.label}
+            {model.installed && <span className="provider__dot" title="已安装" />}
+          </span>
+          <span className="muted" style={{ overflowWrap: 'anywhere', textAlign: 'right' }}>
+            {model.note}
+          </span>
+        </div>
+      ))}
+      <p className="muted" style={{ marginBottom: 0 }}>
+        装好并登录之后重开设置即可刷新。用它们不消耗 API 额度，但每次调用有固定开销，
+        批量出片仍建议配 Key。
+      </p>
+    </div>
   )
 }
 
