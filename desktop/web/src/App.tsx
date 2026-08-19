@@ -119,6 +119,55 @@ export function App() {
     [say],
   )
 
+  /**
+   * Put the last conversation back on screen, if there was one.
+   *
+   * Only the replies are replayed. Each turn of the loop also records the
+   * reason behind its decision and what the tools did, and those already have
+   * a home — the ledger under the video, where they sit next to the render
+   * they caused. Repeating them here would be the same story told twice.
+   */
+  const resume = useCallback(async () => {
+    const [latest] = await api.projects()
+    if (!latest) return false
+    const past = await api.session(latest.project_id)
+    if (past.items.length === 0) return false
+
+    setProjectId(latest.project_id)
+    const spoken: MessageDraft[] = []
+    for (const turn of past.items) {
+      if (turn.speaker === 'summary') {
+        // Say so rather than quietly showing a shorter history: those turns
+        // are gone for the agent too, and a user quoting them would be
+        // quoting something it can no longer see.
+        spoken.push({ role: 'assistant', kind: 'text', text: `（更早的对话已折叠）${turn.text}` })
+      } else if (turn.speaker === 'user') {
+        spoken.push({ role: 'user', kind: 'text', text: turn.text })
+      } else if (turn.speaker === 'agent' && !turn.action) {
+        spoken.push({ role: 'assistant', kind: 'text', text: turn.text })
+      }
+    }
+    spoken.forEach(say)
+
+    if (latest.output) {
+      const [scenes, quality, chain] = await Promise.all([
+        api.scenes(latest.project_id),
+        api.quality(latest.project_id).catch(() => null),
+        api.ledger(latest.project_id).catch(() => []),
+      ])
+      say({
+        role: 'assistant',
+        kind: 'video',
+        text: `上次做到这里：《${latest.title || latest.source}》，${Math.round(latest.duration)} 秒。`,
+        projectId: latest.project_id,
+        scenes,
+        quality,
+        ledger: chain,
+      })
+    }
+    return true
+  }, [say])
+
   /** Connect, learn what the backend can do, and open the conversation. */
   const begin = useCallback(async () => {
     const next = await api.connect()
@@ -126,12 +175,17 @@ export function App() {
     const caps = await api.capabilities().catch(() => null)
     setHasModel(Boolean(caps?.llm.available))
     void loadModels()
+
+    // A returning user gets their conversation back instead of a greeting they
+    // have already read.
+    if (await resume().catch(() => false)) return
+
     say({
       role: 'assistant',
       kind: 'text',
       text: caps?.llm.available ? GREETING_WITH_MODEL(caps.llm.provider) : GREETING_WITHOUT_MODEL,
     })
-  }, [loadModels, say])
+  }, [loadModels, resume, say])
 
   useEffect(() => {
     if (greeted.current) return

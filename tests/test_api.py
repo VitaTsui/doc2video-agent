@@ -121,6 +121,16 @@ def test_chat_is_a_job_because_a_turn_may_render_more_than_once(client: TestClie
     assert client.post("/projects/proj_nope/chat", json={}).status_code == 422
 
 
+def test_the_transcript_is_readable_by_something_other_than_the_model(client: TestClient):
+    """A session that survives the process is no use if only the prompt reads it.
+
+    It is written beside the project turn by turn; without this route a
+    reopened window greets you as a stranger while the agent remembers
+    everything you said.
+    """
+    assert client.get("/projects/proj_nope/session").status_code == 404
+
+
 def test_job_events_streams_and_closes(client: TestClient):
     """A late subscriber gets the outcome and a done event, not a hung stream."""
     assert client.get("/jobs/job_nope/events").status_code == 404

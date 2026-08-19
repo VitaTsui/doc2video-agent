@@ -162,6 +162,31 @@ def get_ledger(project_id: str) -> dict:
     return {"items": [e.model_dump(mode="json") for e in get_agent().read_ledger(project_id)]}
 
 
+@router.get("/{project_id}/session")
+def get_session(project_id: str) -> dict:
+    """What was said about this project, so a reopened window is not amnesiac.
+
+    The transcript already survived the process — it is written turn by turn
+    beside the project. Without this route only the model could read it, which
+    left the odd situation of an agent that remembered the conversation and a
+    window that did not.
+
+    Compacted turns come back as they are stored: one SUMMARY turn standing in
+    for the ones folded away. Showing it is honest — the earlier exchange is
+    gone, and pretending otherwise would leave the user quoting things the
+    agent can no longer see.
+    """
+    _load(project_id)
+    from ...agent.session import SESSION_FILE, SessionStore
+
+    store = get_agent().store
+    session = SessionStore(store.project_dir(project_id) / SESSION_FILE).load(project_id)
+    return {
+        "items": [turn.model_dump(mode="json") for turn in session.turns],
+        "compacted": session.compacted,
+    }
+
+
 @router.get("/{project_id}/telemetry")
 def get_telemetry(project_id: str) -> dict:
     """The last run's stage timings and degradations."""

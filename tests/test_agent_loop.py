@@ -172,7 +172,9 @@ def test_decisions_land_in_the_ledger_alongside_the_renders(tmp_path: Path) -> N
     loop = AgentLoop(
         _project(),
         _Scripted(
-            Decision(action="write_script", reason="还没有讲稿，先写一版", narrations={"1": "开场"}),
+            Decision(
+                action="write_script", reason="还没有讲稿，先写一版", narrations={"1": "开场"}
+            ),
             Decision(action="finish", reason="质检没问题", message="好了"),
         ),
         SessionStore(tmp_path / SESSION_FILE),
@@ -197,3 +199,31 @@ def _record_a_render(book: Path) -> None:
 
     with ledger.recording(book, run_id="run_1") as recorder, recorder.stage("渲染"):
         pass
+
+
+def test_a_finished_turn_can_be_read_back_from_disk(tmp_path: Path) -> None:
+    """What the window replays when it reopens.
+
+    The loop's own turns are the record: the user's message, the reasoning
+    behind each decision, what the tools did, and the reply. Only the last of
+    those belongs on screen — the rest is the ledger's job — so the shape has
+    to survive the round trip well enough to tell them apart.
+    """
+    store = SessionStore(tmp_path / SESSION_FILE)
+    loop = AgentLoop(
+        _project(),
+        _Scripted(Decision(action="ask", reason="不知道给谁看", message="这是给客户还是内部？")),
+        store,
+        render_all=lambda pages: None,  # noqa: ARG005
+        render_scene=lambda scene_id, narration: None,  # noqa: ARG005
+        reload=_project,
+    )
+    loop.run("帮我做个视频")
+
+    reloaded = store.load("proj_loop")
+    assert [(t.speaker.value, bool(t.action)) for t in reloaded.turns] == [
+        ("user", False),
+        ("agent", True),  # the reasoning, which belongs in the ledger
+        ("agent", False),  # the reply, which belongs on screen
+    ]
+    assert reloaded.turns[-1].text == "这是给客户还是内部？"

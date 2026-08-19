@@ -88,6 +88,42 @@ export async function ledger(projectId: string) {
   return body.items
 }
 
+export interface ProjectSummary {
+  project_id: string
+  title: string
+  source: string
+  status: string
+  updated_at: string | null
+  duration: number
+  output: string | null
+}
+
+/** Every project on this machine, most recently touched first. */
+export async function projects() {
+  const body = await request<{ items: ProjectSummary[] }>('/projects')
+  return body.items
+}
+
+export interface Turn {
+  /** user | agent | tool | summary */
+  speaker: string
+  text: string
+  /** Which of the loop's four operations this turn was, if any. */
+  action: string
+}
+
+/**
+ * What was said about this project last time.
+ *
+ * The transcript is written turn by turn beside the project, so it already
+ * survived the process — until this route only the model could read it, which
+ * left an agent that remembered the conversation talking to a window that had
+ * forgotten it.
+ */
+export async function session(projectId: string) {
+  return request<{ items: Turn[]; compacted: number }>(`/projects/${projectId}/session`)
+}
+
 export interface Quality {
   score: number
   errors: number
