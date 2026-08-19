@@ -18,6 +18,42 @@ interface TauriWindow {
   __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: unknown) => Promise<unknown> }
 }
 
+const PROJECTS = [
+  {
+    project_id: 'proj_a',
+    title: '石化AI商业情报中心-揭榜方案V1',
+    source: '石化方案.pdf',
+    status: 'completed',
+    updated_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    duration: 421,
+    output: 'out/final.mp4',
+  },
+  {
+    project_id: 'proj_b',
+    title: '产品介绍',
+    source: 'intro.pptx',
+    status: 'reviewed',
+    updated_at: new Date(Date.now() - 26 * 3600_000).toISOString(),
+    duration: 180,
+    output: 'out/final.mp4',
+  },
+  {
+    project_id: 'proj_c',
+    title: '',
+    source: '未命名草稿.pptx',
+    status: 'parsed',
+    updated_at: new Date(Date.now() - 9 * 86_400_000).toISOString(),
+    duration: 0,
+    output: null,
+  },
+]
+
+const SESSION = [
+  { speaker: 'user', text: '给评审专家讲这份揭榜方案，六分钟左右。', action: '' },
+  { speaker: 'agent', text: '不确定受众偏技术还是偏业务，先按评审专家来写。', action: 'ask' },
+  { speaker: 'agent', text: '成片已完成，共 30 页、约 7 分钟，质检 100 分。', action: '' },
+]
+
 const PREFS: ModelPrefs = { provider: 'agent_cli', model: 'claude-code', base_url: '' }
 
 const CATALOGUE = {
@@ -76,6 +112,10 @@ export function installDevMock() {
     const url = String(typeof input === 'string' ? input : (input as Request).url)
     if (url.includes('/health/models')) return json(CATALOGUE)
     if (url.includes('/health/capabilities')) return json(CAPABILITIES)
+    // Enough of a history for the sidebar to have something to be: a list
+    // styled only against the empty case is a list nobody has looked at.
+    if (url.includes('/session')) return json({ items: SESSION, compacted: 0 })
+    if (url.match(/\/projects(\?|$)/)) return json({ items: PROJECTS })
     return real(input as RequestInfo, init)
   }
 }

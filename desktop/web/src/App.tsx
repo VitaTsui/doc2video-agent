@@ -15,12 +15,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import * as api from './api'
-import type { Connection, JobState } from './api'
+import type { Connection, JobState, ProjectSummary } from './api'
 import { Composer } from './chat/Composer'
 import type { ModelGroup } from './chat/Composer'
 import { MessageList } from './chat/MessageList'
 import type { Message, MessageDraft, MessagePatch } from './chat/types'
-import { SettingsDrawer } from './SettingsDrawer'
+import { Settings } from './Settings'
+import { Sidebar } from './Sidebar'
 import { Setup } from './Setup'
 
 let counter = 0
@@ -40,6 +41,8 @@ export function App() {
   const [runtime, setRuntime] = useState<api.RuntimeStatus | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [projectId, setProjectId] = useState<string | null>(null)
+  const [projects, setProjects] = useState<ProjectSummary[]>([])
+  const [collapsed, setCollapsed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [hasModel, setHasModel] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -128,46 +131,71 @@ export function App() {
    * a home — the ledger under the video, where they sit next to the render
    * they caused. Repeating them here would be the same story told twice.
    */
-  const resume = useCallback(async () => {
-    const [latest] = await api.projects()
-    if (!latest) return false
-    const past = await api.session(latest.project_id)
-    if (past.items.length === 0) return false
+  /**
+   * Put one project's conversation on screen, replacing whatever is there.
+   *
+   * Only the replies are replayed. Each turn of the loop also records the
+   * reason behind its decision and what the tools did, and those already have
+   * a home — the ledger under the video, where they sit next to the render
+   * they caused. Repeating them here would be the same story told twice.
+   */
+  const openProject = useCallback(
+    async (summary: ProjectSummary, greeting?: string) => {
+      setProjectId(summary.project_id)
+      setMessages([])
 
-    setProjectId(latest.project_id)
-    const spoken: MessageDraft[] = []
-    for (const turn of past.items) {
-      if (turn.speaker === 'summary') {
-        // Say so rather than quietly showing a shorter history: those turns
-        // are gone for the agent too, and a user quoting them would be
-        // quoting something it can no longer see.
-        spoken.push({ role: 'assistant', kind: 'text', text: `（更早的对话已折叠）${turn.text}` })
-      } else if (turn.speaker === 'user') {
-        spoken.push({ role: 'user', kind: 'text', text: turn.text })
-      } else if (turn.speaker === 'agent' && !turn.action) {
-        spoken.push({ role: 'assistant', kind: 'text', text: turn.text })
+      const past = await api.session(summary.project_id).catch(() => ({ items: [], compacted: 0 }))
+      const spoken: MessageDraft[] = []
+      for (const turn of past.items) {
+        if (turn.speaker === 'summary') {
+          // Say so rather than quietly showing a shorter history: those turns
+          // are gone for the agent too, and a user quoting them would be
+          // quoting something it can no longer see.
+          spoken.push({ role: 'assistant', kind: 'text', text: `（更早的对话已折叠）${turn.text}` })
+        } else if (turn.speaker === 'user') {
+          spoken.push({ role: 'user', kind: 'text', text: turn.text })
+        } else if (turn.speaker === 'agent' && !turn.action) {
+          spoken.push({ role: 'assistant', kind: 'text', text: turn.text })
+        }
       }
-    }
-    spoken.forEach(say)
+      if (spoken.length === 0 && greeting) {
+        spoken.push({ role: 'assistant', kind: 'text', text: greeting })
+      }
+      spoken.forEach(say)
 
-    if (latest.output) {
-      const [scenes, quality, chain] = await Promise.all([
-        api.scenes(latest.project_id),
-        api.quality(latest.project_id).catch(() => null),
-        api.ledger(latest.project_id).catch(() => []),
-      ])
-      say({
-        role: 'assistant',
-        kind: 'video',
-        text: `上次做到这里：《${latest.title || latest.source}》，${Math.round(latest.duration)} 秒。`,
-        projectId: latest.project_id,
-        scenes,
-        quality,
-        ledger: chain,
-      })
-    }
-    return true
-  }, [say])
+      if (summary.output) {
+        const [scenes, quality, chain] = await Promise.all([
+          api.scenes(summary.project_id),
+          api.quality(summary.project_id).catch(() => null),
+          api.ledger(summary.project_id).catch(() => []),
+        ])
+        say({
+          role: 'assistant',
+          kind: 'video',
+          text: `《${summary.title || summary.source}》，${Math.round(summary.duration)} 秒。`,
+          projectId: summary.project_id,
+          scenes,
+          quality,
+          ledger: chain,
+        })
+      }
+    },
+    [say],
+  )
+
+  /** Everything on this machine, newest first — the sidebar's whole content. */
+  const loadProjects = useCallback(async () => {
+    const items = await api.projects().catch(() => [])
+    setProjects(items)
+    return items
+  }, [])
+
+  /** Start over: no project, an empty transcript, back to the opening screen. */
+  const startNew = useCallback(() => {
+    setProjectId(null)
+    setMessages([])
+    greeted.current = false
+  }, [])
 
   /** Connect, learn what the backend can do, and open the conversation. */
   const begin = useCallback(async () => {
@@ -192,14 +220,18 @@ export function App() {
 
     // A returning user gets their conversation back instead of a greeting they
     // have already read.
-    if (await resume().catch(() => false)) return
+    const items = await loadProjects()
+    if (items[0]) {
+      await openProject(items[0]).catch(() => undefined)
+      return
+    }
 
     say({
       role: 'assistant',
       kind: 'text',
       text: caps?.llm.available ? GREETING_WITH_MODEL(caps.llm.provider) : GREETING_WITHOUT_MODEL,
     })
-  }, [loadModels, resume, say])
+  }, [loadModels, loadProjects, openProject, say])
 
   useEffect(() => {
     if (greeted.current) return
@@ -230,6 +262,9 @@ export function App() {
         return
       }
       amend(id, { job: final })
+      // A finished turn changes a project's duration, its output, and its
+      // place in the list; the sidebar is stale until it is re-read.
+      void loadProjects()
 
       if (final.status !== 'succeeded' || !final.project_id) {
         say({
@@ -280,6 +315,7 @@ export function App() {
         const prepared = await api.prepare(uploadId, brief)
         const guide = await api.narrationGuide(prepared.project_id)
         setProjectId(prepared.project_id)
+        void loadProjects()
         const seconds = Math.round(guide.reduce((sum, row) => sum + row.page_seconds, 0))
         amend(thinking, {
           kind: 'deck',
@@ -295,7 +331,7 @@ export function App() {
         setBusy(false)
       }
     },
-    [amend, hasModel, say],
+    [amend, hasModel, loadProjects, say],
   )
 
   /**
@@ -404,7 +440,7 @@ export function App() {
 
   return (
     <div
-      className="shell"
+      className="layout"
       onDragOver={(event) => {
         event.preventDefault()
         setDragging(true)
@@ -434,27 +470,46 @@ export function App() {
           松手就开始解析
         </div>
       )}
-      <header className="topbar">
-        <span className="topbar__name">Doc2Video</span>
-        <button type="button" className="topbar__button" onClick={() => setSettingsOpen(true)}>
-          设置
-        </button>
-      </header>
-
-      <MessageList messages={messages} onRender={startRender} />
-
-      <Composer
-        disabled={!connection || busy}
-        uploadAction={connection ? api.uploadUrl() : ''}
-        onSend={acceptMessage}
-        onDeck={acceptDeck}
-        hint={projectId ? '想改哪里就直接说' : '说说你想要什么样的视频，并附上文档'}
-        groups={groups}
-        model={model}
-        onModel={(value) => void switchModel(value)}
+      <Sidebar
+        projects={projects}
+        current={projectId}
+        collapsed={collapsed}
+        onOpen={(id) => {
+          const summary = projects.find((p) => p.project_id === id)
+          if (summary) void openProject(summary)
+        }}
+        onNew={startNew}
+        onSettings={() => setSettingsOpen(true)}
+        onToggle={() => setCollapsed((v) => !v)}
       />
 
-      <SettingsDrawer
+      <main className={messages.length === 0 && !projectId ? 'main main--empty' : 'main'}>
+        {/* Before there is a project the composer belongs in the middle of the
+            window, not pinned to the bottom of an empty page — an empty
+            transcript with an input bar under it reads as something that
+            failed to load. */}
+        {messages.length === 0 && !projectId ? (
+          <div className="empty">
+            <h1 className="empty__title">把文档讲成视频</h1>
+            <p className="muted">拖一份 PPT 或 PDF 进来，再说一句你想要什么样的视频。</p>
+          </div>
+        ) : (
+          <MessageList messages={messages} onRender={startRender} />
+        )}
+
+        <Composer
+          disabled={!connection || busy}
+          uploadAction={connection ? api.uploadUrl() : ''}
+          onSend={acceptMessage}
+          onDeck={acceptDeck}
+          hint={projectId ? '想改哪里就直接说' : '说说你想要什么样的视频，并附上文档'}
+          groups={groups}
+          model={model}
+          onModel={(value) => void switchModel(value)}
+        />
+      </main>
+
+      <Settings
         open={settingsOpen}
         busy={busy}
         onClose={() => setSettingsOpen(false)}
