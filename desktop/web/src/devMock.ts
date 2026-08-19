@@ -77,7 +77,19 @@ const SESSION = [
   { speaker: 'agent', text: '成片已完成，共 30 页、约 7 分钟，质检 100 分。', action: '' },
 ]
 
-const PREFS: ModelPrefs = { provider: 'agent_cli', model: 'claude-code', base_url: '' }
+const PREFS: ModelPrefs = {
+  providers: [
+    { id: 'p_cli', name: '本机 Claude Code', protocol: 'agent_cli', base_url: '', model: 'claude-code' },
+    {
+      id: 'p_ds',
+      name: 'DeepSeek',
+      protocol: 'compatible',
+      base_url: 'https://api.deepseek.com/v1',
+      model: 'deepseek-chat',
+    },
+  ],
+  active: 'p_cli',
+}
 
 const CATALOGUE = {
   providers: [

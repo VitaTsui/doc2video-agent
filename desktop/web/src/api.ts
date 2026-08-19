@@ -440,11 +440,39 @@ export async function installRuntime(): Promise<Connection> {
   return next
 }
 
-export interface ModelPrefs {
-  provider: string
-  model: string
+/** One configured way to reach a model. */
+export interface Provider {
+  /** Stable; also its account in the keychain. */
+  id: string
+  /** Whatever the user calls it. */
+  name: string
+  /** anthropic | openai | gemini | compatible | agent_cli */
+  protocol: string
   base_url: string
+  model: string
 }
+
+export interface ModelPrefs {
+  providers: Provider[]
+  /** The id that answers. Empty is a supported state: no model at all. */
+  active: string
+}
+
+/**
+ * The four request shapes the pipeline implements, plus the local CLIs.
+ *
+ * This is the one part that cannot be typed in: they are different SDKs with
+ * different request formats, structured-output support and image handling.
+ * Everything else about a provider — its name, address and model id — is the
+ * user's to write, because vendors and model ids move faster than releases do.
+ */
+export const PROTOCOLS: { id: string; label: string; note: string }[] = [
+  { id: 'agent_cli', label: '本机 CLI', note: '用这台机器上装好的 Claude Code / Codex，不需要 Key' },
+  { id: 'anthropic', label: 'Anthropic', note: 'api.anthropic.com 的原生格式' },
+  { id: 'openai', label: 'OpenAI', note: 'api.openai.com 的原生格式' },
+  { id: 'gemini', label: 'Google Gemini', note: '' },
+  { id: 'compatible', label: 'OpenAI 兼容', note: 'DeepSeek、Kimi、通义、自建网关都走这条，必须填 Base URL' },
+]
 
 export async function modelPrefs(): Promise<ModelPrefs> {
   return invoke<ModelPrefs>('model_prefs')
