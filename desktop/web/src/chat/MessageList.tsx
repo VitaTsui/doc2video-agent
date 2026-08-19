@@ -13,8 +13,17 @@ export function MessageList({
   messages: Message[]
   /** Open the artifacts panel on this project. */
   onShow: (projectId: string) => void
-  /** The gate: how much of the script is written, and how to start. */
-  deck: { written: number; locked: boolean; generated: boolean; onRender: () => void }
+  /** The gate: how much of the script is written, and how to start.
+   *
+   * `drafting` is the model writing it right now — non-null only for as long
+   * as that takes. */
+  deck: {
+    written: number
+    locked: boolean
+    generated: boolean
+    drafting: { done: number; total: number } | null
+    onRender: () => void
+  }
 }) {
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -63,27 +72,47 @@ export function MessageList({
                     {message.pages.length}
                     {' 页'}
                   </button>
-                  <span className="muted">
-                    {/* Who wrote which page is not tracked, and now that the
-                        model drafts them all up front, guessing gets it wrong:
-                        「你写了 9 页」 of nine pages nobody touched is worse
-                        than saying nothing about authorship at all. */}
-                    {deck.generated
-                      ? '讲稿在右侧，改完再点一次就重做'
-                      : message.hasModel
-                        ? deck.written >= message.pages.length
-                          ? '讲稿在右侧，改完点开始生成'
-                          : `还有 ${message.pages.length - deck.written} 页空着，开始时由模型补`
-                        : `已写 ${deck.written} / ${message.pages.length} 页，没写的会是占位文本`}
-                  </span>
-                  <button
-                    type="button"
-                    className="deckgate__go"
-                    disabled={deck.locked}
-                    onClick={deck.onRender}
-                  >
-                    {deck.locked ? '已开始' : deck.generated ? '重新生成' : '开始生成'}
-                  </button>
+                  {deck.drafting ? (
+                    /* Still being written. The button is not shown rather than
+                       shown disabled: there is nothing to start yet, and a
+                       greyed 「开始生成」 invites the click it will refuse. */
+                    <span className="deckgate__writing">
+                      <span className="muted">
+                        {`正在写讲稿 ${deck.drafting.done} / ${deck.drafting.total} 页`}
+                      </span>
+                      <span className="bar">
+                        <span
+                          className="bar__fill"
+                          style={{
+                            width: `${Math.round((deck.drafting.done / Math.max(deck.drafting.total, 1)) * 100)}%`,
+                          }}
+                        />
+                      </span>
+                    </span>
+                  ) : (
+                    <>
+                      <span className="muted">
+                        {/* Who wrote which page is not tracked, and now that
+                            the model drafts them all up front, guessing gets
+                            it wrong: 「你写了 9 页」 of nine pages nobody
+                            touched is worse than saying nothing about
+                            authorship at all. */}
+                        {deck.generated
+                          ? '讲稿在右侧，改完再点一次就重做'
+                          : message.hasModel
+                            ? '讲稿在右侧，改完点开始生成'
+                            : `已写 ${deck.written} / ${message.pages.length} 页，没写的会是占位文本`}
+                      </span>
+                      <button
+                        type="button"
+                        className="deckgate__go"
+                        disabled={deck.locked}
+                        onClick={deck.onRender}
+                      >
+                        {deck.locked ? '已开始' : deck.generated ? '重新生成' : '开始生成'}
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
               {message.kind === 'job' && <JobCard job={message.job} />}

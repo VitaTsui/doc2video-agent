@@ -108,3 +108,22 @@ export const CaretIcon = ({ open, ...props }: Props & { open: boolean }) =>
 /** Points right when closed, down when open — the usual disclosure. */
 export const ChevronIcon = ({ open, ...props }: Props & { open: boolean }) =>
   svg(<path d={open ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'} />, props)
+
+/**
+ * Delete, as a bin rather than an ✕.
+ *
+ * The ✕ this replaces is the same glyph the panel uses to close itself, and a
+ * row that offers "close" where it means "delete for good" is a row that gets
+ * clicked by someone expecting the first one.
+ */
+export const TrashIcon = (props: Props) =>
+  svg(
+    <>
+      <path d="M4 7h16" />
+      <path d="M10 4h4" />
+      <path d="M6 7l1 12a1 1 0 001 1h8a1 1 0 001-1l1-12" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </>,
+    props,
+  )
