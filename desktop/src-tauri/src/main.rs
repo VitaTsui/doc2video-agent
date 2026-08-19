@@ -49,12 +49,13 @@ fn connection(state: State<'_, AppState>) -> Result<Connection, String> {
     })
 }
 
+/// Which provider entries hold a key. Never the keys themselves.
 #[tauri::command]
-fn configured_keys() -> Vec<String> {
-    secrets::configured()
+fn configured_keys(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    Ok(secrets::configured(&prefs::load(&app_data(&app)?)))
 }
 
-/// Store a key and restart the backend so it takes effect.
+/// Store one provider entry's key and restart the backend so it takes effect.
 #[tauri::command]
 fn save_key(
     app: tauri::AppHandle,
@@ -62,8 +63,13 @@ fn save_key(
     vendor: String,
     key: String,
 ) -> Result<Connection, String> {
-    if !secrets::VENDORS.contains(&vendor.as_str()) {
-        return Err(format!("未知的厂商：{vendor}"));
+    // `vendor` is now a provider id. Checked against the saved list rather
+    // than a compiled-in set: the list is the only thing that knows which
+    // entries exist, and writing a key for an id that does not is a key
+    // nothing will ever read.
+    let stored = prefs::load(&app_data(&app)?);
+    if !stored.providers.iter().any(|provider| provider.id == vendor) {
+        return Err(format!("没有这个提供方：{vendor}"));
     }
     secrets::store(&vendor, &key).map_err(|e| format!("无法写入钥匙串：{e}"))?;
     restart(&app, &state)
@@ -158,8 +164,9 @@ fn start_backend(app: &tauri::AppHandle) -> Result<Backend, String> {
     // Keys from the keychain, the model choice from disk — both only reach the
     // backend as environment variables at spawn, which is why changing either
     // means starting a new one.
-    let mut env = secrets::as_env();
-    env.extend(prefs::load(&dir).as_env());
+    let stored = prefs::load(&dir);
+    let mut env = secrets::as_env(&stored);
+    env.extend(stored.as_env());
 
     // The same hole, one layer down: the pipeline reaches Anthropic and OpenAI
     // through httpx, which honours these variables — and on a machine whose

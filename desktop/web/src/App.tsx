@@ -52,6 +52,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [groups, setGroups] = useState<ModelGroup[]>([])
   const [model, setModel] = useState('')
+  const [, setPrefs] = useState<api.ModelPrefs | null>(null)
 
   const abort = useRef<AbortController | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -69,49 +70,45 @@ export function App() {
     setMessages((prev) => prev.map((m) => (m.id === id ? ({ ...m, ...patch } as Message) : m)))
   }, [])
 
-  /** Everything the picker offers: no model, then each provider's entries. */
+  /**
+   * What the picker offers: the providers this person configured.
+   *
+   * It used to offer a compiled-in catalogue of model names, which meant the
+   * only reachable vendors were the ones a release had named. Now the list is
+   * theirs — the picker just shows it, grouped by whether it costs anything
+   * per run, because that is the distinction that decides which one you want
+   * for a given job.
+   */
   const loadModels = useCallback(async () => {
-    const [catalogue, prefs] = await Promise.all([api.catalogue(), api.modelPrefs()])
-    // Two groups, because that is the choice being made: a CLI already on this
-    // machine costs nothing per run, an API key does. Within a group the
-    // model's own name carries the vendor — "Claude Opus 5" says whose it is.
-    const pick = (needsKey: boolean) =>
-      catalogue.providers
-        .filter((provider) => provider.needs_key === needsKey)
-        .flatMap((provider) =>
-          (catalogue.models[provider.id] ?? [])
-            // A local CLI that is not installed is not a choice; offering it
-            // produces a model that fails at its first request.
-            .filter((entry) => entry.installed !== false)
-            .map((entry) => ({
-              value: `${provider.id}/${entry.id}`,
-              // The vendor is already in the model's name — "Claude Opus 5",
-              // "GPT-5", "Gemini 2.5 Pro" — and the group heading carries what
-              // actually differs. Prefixing the provider only truncates.
-              label: entry.label,
-            })),
-        )
+    const prefs = await api.modelPrefs()
+    setPrefs(prefs)
+
+    const of = (free: boolean) =>
+      prefs.providers
+        .filter((provider) => (provider.protocol === 'agent_cli') === free)
+        .map((provider) => ({
+          value: provider.id,
+          // Their own name for it. A gateway called "公司网关" is more use
+          // here than the protocol it happens to speak.
+          label: provider.model ? `${provider.name}｜${provider.model}` : provider.name,
+        }))
 
     setGroups([
       { label: '不用模型', models: [{ value: '', label: '讲稿我自己写' }] },
-      { label: '本机 CLI · 不要 Key', models: pick(false) },
-      { label: '需要 API Key', models: pick(true) },
+      { label: '本机 CLI · 不要 Key', models: of(true) },
+      { label: '需要 API Key', models: of(false) },
     ])
-    setModel(prefs.provider ? `${prefs.provider}/${prefs.model}` : '')
+    setModel(prefs.active)
   }, [])
 
   /** Switching model restarts the backend — its settings are frozen per process. */
   const switchModel = useCallback(
     async (value: string) => {
-      const [provider, model_id = ''] = value ? value.split('/') : ['']
       setModel(value)
       setBusy(true)
       try {
-        const next = await api.saveModelPrefs({
-          provider,
-          model: model_id,
-          base_url: '',
-        })
+        const current = await api.modelPrefs()
+        const next = await api.saveModelPrefs({ ...current, active: value })
         setConnection(next)
         const caps = await api.capabilities().catch(() => null)
         setHasModel(Boolean(caps?.llm.available))

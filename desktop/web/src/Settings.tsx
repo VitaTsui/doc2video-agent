@@ -16,16 +16,7 @@
 import { useEffect, useState } from 'react'
 
 import * as api from './api'
-import { ChevronIcon } from './Icon'
 import type { Connection } from './api'
-
-/** Which vendor key belongs to which provider in the catalogue. */
-const KEY_OF: Record<string, string> = {
-  anthropic: 'ANTHROPIC_API_KEY',
-  openai: 'OPENAI_API_KEY',
-  gemini: 'GEMINI_API_KEY',
-  compatible: 'D2V_COMPATIBLE_API_KEY',
-}
 
 type Tab = 'models' | 'general'
 
@@ -43,10 +34,12 @@ export function Settings({
 }) {
   const [tab, setTab] = useState<Tab>('models')
   const [configured, setConfigured] = useState<string[]>([])
+  const [prefs, setPrefs] = useState<api.ModelPrefs>({ providers: [], active: '' })
   const [catalogue, setCatalogue] = useState<Awaited<ReturnType<typeof api.catalogue>> | null>(null)
   const [caps, setCaps] = useState<Awaited<ReturnType<typeof api.capabilities>> | null>(null)
   const [update, setUpdate] = useState<api.UpdateInfo | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
+  const [adding, setAdding] = useState<api.Provider | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
   const [updating, setUpdating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,6 +47,7 @@ export function Settings({
   useEffect(() => {
     if (!open) return
     void api.configuredKeys().then(setConfigured)
+    void api.modelPrefs().then(setPrefs)
     void api.capabilities().then(setCaps).catch(() => setCaps(null))
     void api.catalogue().then(setCatalogue).catch(() => setCatalogue(null))
     void api.checkUpdate().then(setUpdate)
@@ -61,19 +55,17 @@ export function Settings({
 
   if (!open) return null
 
-  async function saveProvider(providerId: string, key: string, baseUrl: string) {
-    setSaving(providerId)
+  /** Write the list, and the key that belongs to one of its entries. */
+  async function commit(next: api.ModelPrefs, entry: api.Provider, key: string) {
+    setSaving(entry.id)
     setError(null)
     try {
-      const vendor = KEY_OF[providerId]
-      // An untouched key box means "leave it alone", not "clear it" — the
-      // placeholder says as much, and saving a blank would silently unconfigure
-      // a provider someone opened only to look at.
-      if (vendor && key.trim()) onReconnected(await api.saveKey(vendor, key.trim()))
-      if (baseUrl.trim()) {
-        const prefs = await api.modelPrefs()
-        onReconnected(await api.saveModelPrefs({ ...prefs, base_url: baseUrl.trim() }))
-      }
+      // The list first: `save_key` refuses an id the list does not contain,
+      // which is the check that stops a key being written for an entry that
+      // nothing will ever read.
+      onReconnected(await api.saveModelPrefs(next))
+      setPrefs(next)
+      if (key.trim()) onReconnected(await api.saveKey(entry.id, key.trim()))
       setConfigured(await api.configuredKeys())
       setCaps(await api.capabilities())
       setEditing(null)
@@ -84,7 +76,25 @@ export function Settings({
     }
   }
 
-  const providers = catalogue?.providers ?? []
+  async function remove(entry: api.Provider) {
+    const next = {
+      providers: prefs.providers.filter((provider) => provider.id !== entry.id),
+      // Removing what was answering leaves no model rather than silently
+      // promoting one nobody chose.
+      active: prefs.active === entry.id ? '' : prefs.active,
+    }
+    setError(null)
+    try {
+      onReconnected(await api.saveModelPrefs(next))
+      setPrefs(next)
+      setConfigured(await api.configuredKeys())
+      setCaps(await api.capabilities())
+    } catch (thrown) {
+      setError(api.describeError(thrown))
+    }
+  }
+
+
 
   return (
     <>
@@ -125,49 +135,117 @@ export function Settings({
             <>
               <h2 className="modal__title">模型</h2>
               <p className="muted">
-                填入提供方的 API Key 即可使用其模型。本机装了 Claude Code 或 Codex 的话，
-                不用 Key 也能直接把它们当模型用。
+                自己加一条就能用：选协议、填地址和 Key、写模型 id。
+                本机装了 Claude Code 或 Codex 的话，加一条「本机 CLI」，不需要 Key。
               </p>
 
               <ul className="providers">
-                {providers.map((provider) => {
-                  const vendor = KEY_OF[provider.id]
-                  const ready = provider.needs_key ? configured.includes(vendor) : true
+                {prefs.providers.map((entry) => {
+                  const local = entry.protocol === 'agent_cli'
+                  const ready = local || configured.includes(entry.id)
+                  const protocol = api.PROTOCOLS.find((p) => p.id === entry.protocol)
                   return (
-                    <li key={provider.id} className="provider">
+                    <li key={entry.id} className="provider">
                       <div className="provider__row">
                         <span>
-                          {provider.label}
+                          {entry.name || '未命名'}
                           {/* A dot, not a word: this is a list to scan, and the
-                              only question being asked of each row is whether
-                              it is usable. */}
+                              only question asked of each row is whether it is
+                              usable. */}
                           {ready && <span className="provider__dot" title="可用" />}
+                          <span className="muted" style={{ marginLeft: 8 }}>
+                            {protocol?.label ?? entry.protocol}
+                            {entry.model && ` · ${entry.model}`}
+                            {entry.id === prefs.active && ' · 使用中'}
+                          </span>
                         </span>
-                        <button
-                          type="button"
-                          className="modal__ghost"
-                          onClick={() => setEditing(editing === provider.id ? null : provider.id)}
-                        >
-                          {editing === provider.id ? '收起' : provider.needs_key ? '编辑' : '查看'}
-                        </button>
+                        <span style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          <button
+                            type="button"
+                            className="modal__ghost"
+                            onClick={() => setEditing(editing === entry.id ? null : entry.id)}
+                          >
+                            {editing === entry.id ? '收起' : '编辑'}
+                          </button>
+                          <button
+                            type="button"
+                            className="modal__ghost"
+                            onClick={() => void remove(entry)}
+                          >
+                            删除
+                          </button>
+                        </span>
                       </div>
 
-                      {editing === provider.id &&
-                        (provider.needs_key ? (
-                          <ProviderForm
-                            provider={provider}
-                            configured={configured.includes(vendor)}
-                            saving={saving === provider.id}
-                            onCancel={() => setEditing(null)}
-                            onSave={(key, baseUrl) => void saveProvider(provider.id, key, baseUrl)}
-                          />
-                        ) : (
-                          <Detected models={catalogue?.models[provider.id] ?? []} />
-                        ))}
+                      {editing === entry.id && (
+                        <ProviderForm
+                          entry={entry}
+                          configured={configured.includes(entry.id)}
+                          detected={catalogue?.models.agent_cli ?? []}
+                          saving={saving === entry.id}
+                          onCancel={() => setEditing(null)}
+                          onSave={(edited, key) =>
+                            void commit(
+                              {
+                                ...prefs,
+                                providers: prefs.providers.map((p) =>
+                                  p.id === entry.id ? edited : p,
+                                ),
+                              },
+                              edited,
+                              key,
+                            )
+                          }
+                        />
+                      )}
                     </li>
                   )
                 })}
               </ul>
+
+              {adding ? (
+                <ul className="providers">
+                  <li className="provider">
+                    <ProviderForm
+                      entry={adding}
+                      configured={false}
+                      detected={catalogue?.models.agent_cli ?? []}
+                      saving={saving === adding.id}
+                      onCancel={() => setAdding(null)}
+                      onSave={(edited, key) => {
+                        setAdding(null)
+                        void commit(
+                          {
+                            providers: [...prefs.providers, edited],
+                            // The first one configured becomes the one in use:
+                            // adding a model and then having to go and switch
+                            // to it is a step nobody wants.
+                            active: prefs.active || edited.id,
+                          },
+                          edited,
+                          key,
+                        )
+                      }}
+                    />
+                  </li>
+                </ul>
+              ) : (
+                <button
+                  type="button"
+                  className="provider__add"
+                  onClick={() =>
+                    setAdding({
+                      id: `p_${Date.now().toString(36)}`,
+                      name: '',
+                      protocol: 'compatible',
+                      base_url: '',
+                      model: '',
+                    })
+                  }
+                >
+                  ＋ 添加提供方
+                </button>
+              )}
             </>
           )}
 
@@ -238,84 +316,120 @@ export function Settings({
   )
 }
 
-/**
- * Which local CLIs this machine actually has.
- *
- * The list used to offer both regardless, so choosing one that was not
- * installed produced a model that failed at its first request and said
- * nothing useful about why. The backend checks the PATH; this shows what it
- * found, including the path itself — on a machine with two shells and two
- * installs, which one answered is the question.
- */
-function Detected({ models }: { models: api.ModelInfo[] }) {
-  return (
-    <div className="provider__form">
-      <div className="provider__name">本机检测</div>
-      {models.map((model) => (
-        <div key={model.id} className="provider__row" style={{ padding: '6px 0' }}>
-          <span>
-            {model.label}
-            {model.installed && <span className="provider__dot" title="已安装" />}
-          </span>
-          <span className="muted" style={{ overflowWrap: 'anywhere', textAlign: 'right' }}>
-            {model.note}
-          </span>
-        </div>
-      ))}
-      <p className="muted" style={{ marginBottom: 0 }}>
-        装好并登录之后重开设置即可刷新。用它们不消耗 API 额度，但每次调用有固定开销，
-        批量出片仍建议配 Key。
-      </p>
-    </div>
-  )
-}
-
 function ProviderForm({
-  provider,
+  entry,
   configured,
+  detected,
   saving,
   onCancel,
   onSave,
 }: {
-  provider: api.ProviderInfo
+  entry: api.Provider
   configured: boolean
+  /** Which local CLIs this machine has, for the agent_cli protocol. */
+  detected: api.ModelInfo[]
   saving: boolean
   onCancel: () => void
-  onSave: (key: string, baseUrl: string) => void
+  onSave: (edited: api.Provider, key: string) => void
 }) {
+  const [draft, setDraft] = useState<api.Provider>(entry)
   const [key, setKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
-  const [advanced, setAdvanced] = useState(provider.needs_base_url)
+  const local = draft.protocol === 'agent_cli'
+  const protocol = api.PROTOCOLS.find((p) => p.id === draft.protocol)
 
   return (
     <div className="provider__form">
-      <div className="provider__name">
-        {provider.label} <span className="muted">{provider.id}</span>
-      </div>
-
-      <label className="provider__label">API Key</label>
+      <label className="provider__label">名称</label>
       <input
-        type="password"
         className="provider__input"
-        value={key}
-        // Says what leaving it alone means. Keys are write-only — they go to
-        // the OS keychain and are never read back into the page.
-        placeholder={configured ? '已配置——输入新值可替换' : '粘贴 API Key'}
-        onChange={(event) => setKey(event.target.value)}
+        value={draft.name}
+        placeholder="随便叫什么，比如 DeepSeek、公司网关"
+        onChange={(event) => setDraft({ ...draft, name: event.target.value })}
       />
 
-      <button type="button" className="provider__more" onClick={() => setAdvanced((v) => !v)}>
-        <ChevronIcon open={advanced} size={15} />
-        自定义设置
-      </button>
-      {advanced && (
+      <label className="provider__label">协议</label>
+      {/* The one field that is a choice rather than a value: these are four
+          different SDKs with four different request formats, so the list is
+          what the code implements, not what exists in the world. */}
+      <select
+        className="provider__input"
+        value={draft.protocol}
+        onChange={(event) => setDraft({ ...draft, protocol: event.target.value })}
+      >
+        {api.PROTOCOLS.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      {protocol?.note && (
+        <p className="muted" style={{ marginTop: -4 }}>
+          {protocol.note}
+        </p>
+      )}
+
+      {local ? (
         <>
-          <label className="provider__label">Base URL</label>
+          <label className="provider__label">用哪个 CLI</label>
+          <select
+            className="provider__input"
+            value={draft.model}
+            onChange={(event) => setDraft({ ...draft, model: event.target.value })}
+          >
+            <option value="">选一个</option>
+            {detected.map((cli) => (
+              <option key={cli.id} value={cli.id} disabled={cli.installed === false}>
+                {cli.label}
+                {cli.installed === false ? '（未安装）' : ''}
+              </option>
+            ))}
+          </select>
+          <ul className="providers" style={{ marginTop: 0 }}>
+            {detected.map((cli) => (
+              <li key={cli.id} className="provider__detected">
+                <span>
+                  {cli.label}
+                  {cli.installed && <span className="provider__dot" title="已安装" />}
+                </span>
+                <span className="muted" style={{ overflowWrap: 'anywhere', textAlign: 'right' }}>
+                  {cli.note}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <>
+          <label className="provider__label">模型 id</label>
           <input
             className="provider__input"
-            value={baseUrl}
-            placeholder={provider.needs_base_url ? '必填，例如 https://api.example.com/v1' : '留空用默认'}
-            onChange={(event) => setBaseUrl(event.target.value)}
+            value={draft.model}
+            // Never validated: an id we have not heard of is far more likely
+            // to be new than wrong, and refusing it would make this app the
+            // reason someone cannot use a model released last week.
+            placeholder="原样传给提供方，例如 deepseek-chat、claude-opus-5"
+            onChange={(event) => setDraft({ ...draft, model: event.target.value })}
+          />
+
+          <label className="provider__label">
+            Base URL{draft.protocol === 'compatible' ? '' : '（留空用官方地址）'}
+          </label>
+          <input
+            className="provider__input"
+            value={draft.base_url}
+            placeholder="https://api.deepseek.com/v1"
+            onChange={(event) => setDraft({ ...draft, base_url: event.target.value })}
+          />
+
+          <label className="provider__label">API Key</label>
+          <input
+            type="password"
+            className="provider__input"
+            value={key}
+            // Says what leaving it alone means. Keys are write-only — they go
+            // to the OS keychain and are never read back into the page.
+            placeholder={configured ? '已配置——输入新值可替换' : '粘贴 API Key'}
+            onChange={(event) => setKey(event.target.value)}
           />
         </>
       )}
@@ -327,8 +441,8 @@ function ProviderForm({
         <button
           type="button"
           className="modal__primary"
-          disabled={saving}
-          onClick={() => onSave(key, baseUrl)}
+          disabled={saving || !draft.name.trim()}
+          onClick={() => onSave({ ...draft, name: draft.name.trim() }, key)}
         >
           {saving ? '保存中…' : '保存'}
         </button>

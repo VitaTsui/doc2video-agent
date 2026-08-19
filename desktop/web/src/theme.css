@@ -878,3 +878,34 @@ body {
 .turn__artifact:hover {
   border-color: var(--ink-soft);
 }
+
+.provider__add {
+  width: 100%;
+  margin-top: 10px;
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  border-radius: 12px;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.provider__add:hover {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+}
+
+.provider__detected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: none;
+  font-size: 13px;
+  padding: 2px 0;
+}
+
+.provider__form select.provider__input {
+  appearance: auto;
+}
