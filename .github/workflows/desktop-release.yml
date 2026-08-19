@@ -76,13 +76,37 @@ jobs:
           [ -n "$version" ] || version="${GITHUB_REF_NAME#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # 运行时：解释器 + 流水线 + ffmpeg + 语音 + 字体（+ Remotion）。
-      # 这一步产出的 tar.gz 和 sha256 就是应用首次启动时下载的东西。
-      - name: 构建运行时
+      # 运行时分两半：base（解释器 + 依赖 + node + 浏览器 + 语音 + 字体，
+      # 约 400MB，只有依赖变了才变）和 app（doc2video 本体 + Remotion 源码，
+      # 约 0.2MB，每次发版都变）。base 按内容摘要发在自己的 tag 上，摘要没变
+      # 就整段跳过——绝大多数发版因此只需要几十秒，用户也只下 0.2MB。
+      - name: base 摘要
+        id: base
         shell: bash
-        run: uv run python scripts/build_runtime.py --out dist/runtime --version "${{ steps.ver.outputs.version }}"
+        run: |
+          digest=$(uv run python scripts/build_runtime.py --print-base-version)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          asset="d2v-base-$digest-${{ matrix.target }}.tar.gz"
+          if gh release view "runtime-base-$digest" --json assets \
+               --jq '.assets[].name' 2>/dev/null | grep -qx "$asset"; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+            echo "base $digest 已发布过，跳过重建"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 构建 base
+        if: steps.base.outputs.have != 'true'
+        shell: bash
+        run: |
+          uv run python scripts/build_runtime.py --out dist/runtime \
+            --version "${{ steps.ver.outputs.version }}" --part base
+
+      # 发布之前跑，而不是之后：跑不起来的 base 不该发出去。
       - name: 运行时自检
+        if: steps.base.outputs.have != 'true' 
         shell: bash
         run: |
           # 必须能在不依赖仓库、不依赖构建机 Python 的情况下跑起来——这正是
@@ -96,6 +120,25 @@ jobs:
             (cd / && env -i "D2V_STORAGE_DIR=$work" \
               "$GITHUB_WORKSPACE/dist/runtime/python/bin/python3" -m doc2video.cli doctor)
           fi
+
+      - name: 发布 base
+        if: steps.base.outputs.have != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          tag="runtime-base-${{ steps.base.outputs.digest }}"
+          # 不是给人看的发布，只是一个按内容寻址的存放处。
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
+            --title "运行时 base $tag" --prerelease \
+            --notes "按依赖摘要寻址的运行时底座，供桌面版下载，不是给人用的发布。"
+          gh release upload "$tag" dist/d2v-base-*.tar.gz dist/d2v-base-*.sha256 --clobber
+
+      - name: 构建 app
+        shell: bash
+        run: |
+          uv run python scripts/build_runtime.py --out dist/runtime \
+            --version "${{ steps.ver.outputs.version }}" --part app
 
       # 签名是自更新的全部安全性所在：应用只认这一个公钥签出来的包，
       # 所以 GitHub Release 被替换了也装不进去。
@@ -112,7 +155,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          cp dist/*.tar.gz dist/*.sha256 out/ 2>/dev/null || true
+          # base 已经挂到它自己的 tag 上了，不进这次发布的产物。
+          cp dist/d2v-app-*.tar.gz dist/d2v-app-*.sha256 out/ 2>/dev/null || true
           # .app.tar.gz 和 .sig 是给自更新用的，dmg/msi/deb 是给人下载的。
           find desktop/src-tauri/target/release/bundle \
             -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \

@@ -71,12 +71,28 @@ GitHub Release 被换掉也装不进去。CI 用 `TAURI_SIGNING_PRIVATE_KEY` 签
 私钥丢了就再也签不出能被现有安装接受的包，只能改公钥重新发一版，
 已装的用户得手动重装。
 
+## 运行时分两半
+
+| | 大小 | 什么时候变 | 发在哪 |
+| --- | --- | --- | --- |
+| base | ~400MB / 两万多个文件 | 依赖、Node、Python、音色、字体变了才变 | `runtime-base-<摘要>` 这个 tag |
+| app | ~0.2MB / 一百多个文件 | 每次发版 | 该版本自己的 Release |
+
+**base 的版本号是算出来的，不是填的**：`scripts/build_runtime.py` 把声明的
+依赖、`renderer/pnpm-lock.yaml`、Node 和 Python 的版本、音色、字体地址一起
+做哈希。手工维护迟早漏一次，而漏的那次结果是「新的 app 装进了没有它新依赖
+的树里」——在第一次渲染时才炸，不是在安装时。壳里嵌的那份摘要
+（`base_version.txt`）和脚本算出来的必须一致，有测试盯着。
+
+CI 里 base 摘要没变就整段跳过：不装解释器、不解锁 lockfile、不下浏览器，
+一次普通发版几十秒完事，用户也只下 0.2MB。
+
+装的时候两半分开下载校验解压。base 是「解到旁边、最后整目录换过去」，
+所以中途死掉不影响已有的；app 是直接盖在活的树上——它只是那棵树里的
+一百多个文件，其余四百兆必须原地不动。
+
 ## 还没做
 
-- 壳更新之后运行时会整包重下：`runtime.json` 的版本是和壳版本对齐的，
-  而运行时里装着 doc2video 本体，每次发版都变。要省掉这四百兆，得把
-  重的部分（解释器、Node、Remotion、chrome-headless-shell、音色、字体）
-  和几百 KB 的本体分开发布。
 - Intel macOS 构建：`macos-13` 的 runner 排不到队。
 - 代码签名与公证：macOS 会弹 Gatekeeper，Windows 会被 SmartScreen 拦。
   卡在账号和钱上，不卡在代码上。

@@ -407,7 +407,10 @@ export interface RuntimeStatus {
   installed: string | null
   required: string
   target: string
+  /** How much *this* install downloads — 400MB for a base, ~2MB for an app. */
   approx_mb: number
+  /** Whether the heavy half has to come down as well. */
+  needs_base: boolean
 }
 
 /** Whether the part of the app that does the work is installed yet. */

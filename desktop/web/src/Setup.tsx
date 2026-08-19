@@ -69,20 +69,22 @@ export function Setup({
     <div className="shell">
       <div className="transcript">
         <div className="column" style={{ maxWidth: '34rem', paddingTop: 64 }}>
-          <h2 style={{ marginTop: 0 }}>先装一次运行环境</h2>
-          <p>
-            应用本体只有几兆，真正干活的东西还没下载：Python 运行时和整条流水线、
-            ffmpeg、中文语音模型、中文字体，一共约 {status.approx_mb}MB。
-          </p>
-          {/* This used to promise "装一次，之后升级只会重新下载几兆" — which the
-              code has never done. The runtime is keyed to the shell's exact
-              version, so every update sends the user back to this screen. Say
-              so until that is actually fixed; a wrong promise here is worse
-              than the download it was trying to excuse. */}
-          <p className="muted">
-            目前每次应用更新都要重下一次——运行时的版本号和应用绑在一起。
-            正在改成两者分开，改完之后这一步只有第一次需要。
-          </p>
+          <h2 style={{ marginTop: 0 }}>{status.needs_base ? '先装一次运行环境' : '更新运行环境'}</h2>
+          {/* Two different sentences because they are two different waits: the
+              first install is four hundred megabytes and twenty thousand
+              files, an ordinary update is a fifth of a megabyte. A screen that
+              said "约 400MB" for both taught people to expect the worse one. */}
+          {status.needs_base ? (
+            <p>
+              应用本体只有几兆，真正干活的东西还没下载：Python 运行时和整条流水线、
+              ffmpeg、中文语音模型、中文字体，一共约 {status.approx_mb}MB。
+              这一步只有第一次、以及依赖变化时才需要；平时的版本更新只下几百 KB。
+            </p>
+          ) : (
+            <p>
+              依赖没有变化，只需要更新流水线本身，约 {status.approx_mb}MB，几秒钟。
+            </p>
+          )}
           {status.installed && (
             <p className="muted">
               当前装的是 {status.installed}，这个版本需要 {status.required}。

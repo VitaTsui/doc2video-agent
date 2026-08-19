@@ -34,6 +34,25 @@ use sha2::{Digest, Sha256};
 
 const REPO: &str = "https://github.com/VitaTsui/doc2video-agent";
 
+/// Which heavy tree this build needs, as a digest of what decides its contents.
+///
+/// Written by `scripts/build_runtime.py --print-base-version` and checked
+/// against it by a test, because the two must never drift: a shell asking for
+/// a base that was never published cannot install at all, and one asking for
+/// an older base than its app needs fails later and less clearly.
+const BASE_VERSION: &str = include_str!("../base_version.txt");
+
+/// Where the heavy half lives. A release of its own, named by the digest, so
+/// two app releases that did not move a dependency share one 400MB file and
+/// the second costs nobody anything.
+fn base_url(base: &str) -> String {
+    format!("{REPO}/releases/download/runtime-base-{base}/d2v-base-{base}-{}", target())
+}
+
+fn app_url(version: &str) -> String {
+    format!("{REPO}/releases/download/v{version}/d2v-app-{version}-{}", target())
+}
+
 /// Which half of the install is running.
 ///
 /// They are reported apart because they feel nothing alike: the download is
@@ -56,8 +75,13 @@ pub struct Status {
     pub installed: Option<String>,
     pub required: String,
     pub target: String,
-    /// Roughly how much a first install downloads, for the screen that asks.
+    /// Roughly how much this particular install will download. The number the
+    /// screen shows has to be the real one: promising 400MB and taking two
+    /// seconds is merely odd, promising 2MB and taking an hour is a betrayal.
     pub approx_mb: u32,
+    /// Whether the heavy half has to come down too. False for the ordinary
+    /// case — a new release against a base that has not moved.
+    pub needs_base: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -65,6 +89,12 @@ struct Manifest {
     version: String,
     #[serde(default)]
     target: String,
+    /// Absent in runtimes installed before the split; such a tree cannot be
+    /// told apart from one built against a different base, so it is replaced.
+    #[serde(default)]
+    base: String,
+    #[serde(default)]
+    app: String,
 }
 
 /// The triple the build script publishes under. Kept in one place because a
@@ -86,13 +116,19 @@ pub fn target() -> String {
 }
 
 pub fn status(app_data: &Path, required: &str) -> Status {
-    let installed = read_manifest(&app_data.join("runtime")).map(|m| m.version);
+    let manifest = read_manifest(&app_data.join("runtime"));
+    let base = manifest.as_ref().map(|m| m.base.as_str()).unwrap_or("");
+    let app = manifest.as_ref().map(|m| m.app.as_str()).unwrap_or("");
+
+    let needs_base = base != BASE_VERSION.trim();
+    let ready = !needs_base && app == required;
     Status {
-        ready: installed.as_deref() == Some(required),
-        installed,
+        ready,
+        installed: manifest.as_ref().map(|m| m.version.clone()),
         required: required.to_string(),
         target: target(),
-        approx_mb: 400,
+        approx_mb: if needs_base { 400 } else { 2 },
+        needs_base,
     }
 }
 
@@ -114,28 +150,74 @@ fn read_manifest(runtime: &Path) -> Option<Manifest> {
     serde_json::from_str(&text).ok()
 }
 
-fn base_url(version: &str) -> String {
-    format!("{REPO}/releases/download/v{version}/d2v-runtime-{version}-{}", target())
-}
-
-/// Download, verify, unpack, swap. `on_progress` is called with (done, total)
-/// bytes; total is 0 while the server has not said how big it is.
+/// Bring the runtime up to what this build needs.
+///
+/// Two halves, fetched independently. The usual case after the first install
+/// is the app alone: two hundred kilobytes and a hundred and thirty files,
+/// against four hundred megabytes and twenty thousand. The heavy half is only
+/// touched when its digest changed, which happens when a dependency moved, not
+/// when a release happened.
 pub fn install(
     app_data: &Path,
     version: &str,
     mut on_progress: impl FnMut(Phase, u64, u64),
 ) -> Result<()> {
     let _ = LOG.set(app_data.join("runtime-install.log"));
-    let base = base_url(version);
-    let expected = fetch_checksum(&format!("{base}.sha256"))
-        .with_context(|| format!("取不到校验和，这个版本可能还没发布运行时（{version}）"))?;
+    let state = status(app_data, version);
 
     // Kept between attempts on purpose: this is where a half-finished download
     // waits to be resumed.
     let scratch = app_data.join("runtime.download");
     fs::create_dir_all(&scratch).context("无法创建下载目录")?;
 
-    let archive = scratch.join("runtime.tar.gz");
+    if state.needs_base {
+        let base = BASE_VERSION.trim();
+        fetch_part(
+            &base_url(base),
+            &scratch,
+            "base.tar.gz",
+            &format!("取不到 base 的校验和，这个平台的运行时可能还没发布（{}）", target()),
+            &mut on_progress,
+        )?;
+
+        let unpacked = scratch.join("runtime");
+        if !unpacked.join("python").exists() {
+            let _ = fs::remove_dir_all(&scratch);
+            bail!("base 包结构不对：缺少 python");
+        }
+        swap_in(app_data, &unpacked)?;
+    }
+
+    // The app half unpacks over the live tree rather than beside it. It cannot
+    // be swapped like the base: it is a handful of files inside a directory
+    // whose other four hundred megabytes must stay exactly where they are.
+    let live = app_data.join("runtime");
+    fetch_part(
+        &app_url(version),
+        app_data,
+        "app.tar.gz",
+        &format!("取不到 app 的校验和，这个版本可能还没发布（{version}）"),
+        &mut on_progress,
+    )?;
+    if !live.join("runtime.json").exists() {
+        bail!("运行时包结构不对：缺少 runtime.json");
+    }
+
+    let _ = fs::remove_dir_all(&scratch);
+    let _ = fs::remove_file(app_data.join("app.tar.gz"));
+    Ok(())
+}
+
+/// Download one half, check it, unpack it where told.
+fn fetch_part(
+    base: &str,
+    into: &Path,
+    name: &str,
+    missing: &str,
+    on_progress: &mut impl FnMut(Phase, u64, u64),
+) -> Result<()> {
+    let expected = fetch_checksum(&format!("{base}.sha256")).context(missing.to_string())?;
+    let archive = into.join(name);
     let digest = fetch_with_resume(&format!("{base}.tar.gz"), &archive, &mut |done, total| {
         on_progress(Phase::Download, done, total)
     })?;
@@ -145,26 +227,20 @@ pub fn install(
         let _ = fs::remove_file(&archive);
         bail!("下载的运行时校验失败，已清掉重来；再试一次通常就好了");
     }
+    unpack(&archive, into, |done, total| on_progress(Phase::Unpack, done, total))
+}
 
-    unpack(&archive, &scratch, |done, total| {
-        on_progress(Phase::Unpack, done, total)
-    })?;
-    let unpacked = scratch.join("runtime");
-    if !unpacked.join("runtime.json").exists() {
-        let _ = fs::remove_dir_all(&scratch);
-        bail!("运行时包结构不对：缺少 runtime.json");
-    }
-
-    // Swap last: until this line the previous runtime is still the live one.
+/// Put a freshly unpacked tree in place of the live one, last of all, so that
+/// until this moment the previous runtime is the one still working.
+fn swap_in(app_data: &Path, unpacked: &Path) -> Result<()> {
     let live = app_data.join("runtime");
     let retired = app_data.join("runtime.old");
     let _ = fs::remove_dir_all(&retired);
     if live.exists() {
         fs::rename(&live, &retired).context("无法移开旧的运行时")?;
     }
-    fs::rename(&unpacked, &live).context("无法启用新的运行时")?;
+    fs::rename(unpacked, &live).context("无法启用新的运行时")?;
     let _ = fs::remove_dir_all(&retired);
-    let _ = fs::remove_dir_all(&scratch);
     Ok(())
 }
 
@@ -348,10 +424,61 @@ mod tests {
     }
 
     #[test]
-    fn the_url_names_the_version_and_the_platform() {
-        let url = base_url("1.2.3");
+    fn the_app_url_names_the_release_and_the_platform() {
+        let url = app_url("1.2.3");
         assert!(url.contains("/v1.2.3/"), "{url}");
-        assert!(url.ends_with(&format!("d2v-runtime-1.2.3-{}", target())), "{url}");
+        assert!(url.ends_with(&format!("d2v-app-1.2.3-{}", target())), "{url}");
+    }
+
+    #[test]
+    fn the_base_url_names_the_digest_rather_than_a_release() {
+        // Deliberately not a version: two releases that did not move a
+        // dependency must resolve to the same file, so that the second one
+        // costs nobody a download.
+        let url = base_url("abc123");
+        assert!(url.contains("/runtime-base-abc123/"), "{url}");
+        assert!(url.ends_with(&format!("d2v-base-abc123-{}", target())), "{url}");
+    }
+
+    #[test]
+    fn a_runtime_from_before_the_split_is_replaced_rather_than_trusted() {
+        // Its manifest has no `base`, and nothing in it says which
+        // dependencies it holds. Reusing it would be a guess.
+        let dir = std::env::temp_dir().join("d2v-test-legacy");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("runtime")).unwrap();
+        fs::write(
+            dir.join("runtime").join("runtime.json"),
+            r#"{"version":"0.7.2","target":"x"}"#,
+        )
+        .unwrap();
+
+        let state = status(&dir, "0.7.2");
+        assert!(state.needs_base, "旧运行时没有 base，不能当成可用的");
+        assert!(!state.ready);
+        assert_eq!(state.approx_mb, 400);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_release_on_an_unchanged_base_only_needs_the_small_half() {
+        let dir = std::env::temp_dir().join("d2v-test-apponly");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("runtime")).unwrap();
+        fs::write(
+            dir.join("runtime").join("runtime.json"),
+            format!(
+                r#"{{"version":"0.7.2","base":"{}","app":"0.7.2"}}"#,
+                BASE_VERSION.trim()
+            ),
+        )
+        .unwrap();
+
+        let state = status(&dir, "0.7.3");
+        assert!(!state.needs_base, "依赖没动，不该再拉一遍 400MB");
+        assert!(!state.ready, "app 版本对不上，还是要装");
+        assert_eq!(state.approx_mb, 2);
+        let _ = fs::remove_dir_all(&dir);
     }
 }
 
