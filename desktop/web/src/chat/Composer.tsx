@@ -47,10 +47,15 @@ export function Composer({
   return (
     <div className="composer">
       <div className="column">
-        <div className="composer__row">
-          <ModelPicker prefs={prefs} disabled={disabled} onPick={onPick} />
-        </div>
+
+        {/* Inside the box, at its foot, where the library's own select sat.
+            It cannot be handed to `ChatInput` — there is no slot for a node,
+            only `modelConfig`, and that renders an antd Select which cannot
+            carry a second line. So it is positioned into the space the empty
+            toolbar leaves. */}
+        <ModelPicker prefs={prefs} disabled={disabled} onPick={onPick} />
         <ChatInput
+          wrapperClassName="composer__wrap"
           placeholder={hint}
           assistanting={disabled}
           fileList={files}

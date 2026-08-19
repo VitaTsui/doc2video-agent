@@ -232,3 +232,28 @@ def test_an_upload_may_carry_its_token_in_the_query(monkeypatch, tmp_path):
     finally:
         for cached in (config.get_settings, deps.get_agent, deps.get_jobs):
             cached.cache_clear()
+
+
+def test_a_percent_encoded_filename_is_shown_as_the_person_wrote_it():
+    """Some clients encode a non-ASCII name into the plain `filename` field.
+
+    Nothing downstream unpicks that, and a PDF's title falls back to its stem —
+    so the deck someone just dropped in came back named
+    `1786709904848_%E7%9F%B3%E5%8C%96AI…`, which is their own file made
+    unreadable by the transport that carried it.
+    """
+    from doc2video.api.routes.uploads import readable_name
+
+    encoded = "1786709904848_%E7%9F%B3%E5%8C%96AI%E5%95%86%E4%B8%9A.pdf"
+    assert readable_name(encoded) == "1786709904848_石化AI商业.pdf"
+
+    # A name that really contains a percent sign has to survive: decoding is
+    # only accepted when it round-trips.
+    assert readable_name("report 50%.pdf") == "report 50%.pdf"
+    assert readable_name("已经是中文.pptx") == "已经是中文.pptx"
+    # The directory part goes.
+    assert readable_name("../../etc/passwd") == "passwd"
+    # An encoded separator does not round-trip, so it is left encoded rather
+    # than decoded into one. The guarantee is "never a path", not "always
+    # decoded" — and this is the direction to fail in.
+    assert "/" not in readable_name("%2E%2E%2Fetc%2Fpasswd")

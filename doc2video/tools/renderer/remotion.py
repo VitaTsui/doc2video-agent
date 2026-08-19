@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ...core import programs
 from ...core.config import Settings, get_settings, which
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
@@ -57,7 +58,9 @@ class RemotionAdapter(RendererAdapter):
         )
 
         cmd = [
-            "npx",
+            # The resolved path: on Windows `npx` is `npx.cmd`, which
+            # `CreateProcess` will not run by its bare name. See core.programs.
+            programs.require("npx", "未安装 Node.js / npx"),
             "remotion",
             "render",
             "src/index.ts",

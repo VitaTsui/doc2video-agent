@@ -16,10 +16,11 @@ import { useState } from 'react'
 
 import * as api from './api'
 import { CloseIcon } from './Icon'
-import type { LedgerEntry, Quality, Scene } from './api'
+import type { GuideRow, LedgerEntry, PageView, Quality, Scene } from './api'
+import { DeckCard } from './chat/DeckCard'
 import { LedgerCard } from './chat/LedgerCard'
 
-type Tab = 'video' | 'pages' | 'ledger'
+type Tab = 'deck' | 'video' | 'pages' | 'ledger'
 
 export interface ArtifactSet {
   projectId: string
@@ -28,33 +29,44 @@ export interface ArtifactSet {
   ledger: LedgerEntry[]
   /** Whether a render has actually produced a file. */
   rendered: boolean
+  /** The parsed deck, when this project has just been read. */
+  deck?: { pages: PageView[]; guide: GuideRow[]; hasModel: boolean; locked: boolean }
 }
 
 export function Artifacts({
   set,
   open,
   onClose,
+  onRender,
 }: {
   set: ArtifactSet | null
   open: boolean
   onClose: () => void
+  onRender: (narrations: Record<string, string>) => void
 }) {
-  const [tab, setTab] = useState<Tab>('video')
+  const [tab, setTab] = useState<Tab>('deck')
   if (!open || !set) return null
 
   const total = set.scenes.reduce((sum, scene) => sum + scene.duration, 0)
+  const has: Record<Tab, boolean> = {
+    deck: Boolean(set.deck),
+    video: set.rendered,
+    pages: set.scenes.length > 0,
+    ledger: set.ledger.length > 0,
+  }
+  // Whichever of these the project actually has. A remembered tab belongs to
+  // the project it was chosen in: opening an older one from the sidebar left
+  // the panel showing an empty「文档」, because that deck belonged to a parse
+  // this project never had.
+  const shown: Tab = has[tab] ? tab : (['deck', 'video', 'pages', 'ledger'] as Tab[]).find((t) => has[t]) ?? tab
 
   return (
     <aside className="panel">
       <div className="panel__head">
         <div className="panel__tabs">
-          <Tabs
-            tab={tab}
-            setTab={setTab}
-            // Only offer what exists. A tab that opens on "还没有" is a tab
-            // that made someone click to find out there was nothing.
-            has={{ video: set.rendered, pages: set.scenes.length > 0, ledger: set.ledger.length > 0 }}
-          />
+          {/* Only offer what exists. A tab that opens on "还没有" is a tab
+              that made someone click to find out there was nothing. */}
+          <Tabs tab={shown} setTab={setTab} has={has} />
         </div>
         <button type="button" className="sidebar__icon" title="收起" onClick={onClose}>
           <CloseIcon size={18} />
@@ -62,7 +74,18 @@ export function Artifacts({
       </div>
 
       <div className="panel__body">
-        {tab === 'video' &&
+        {shown === 'deck' && set.deck && (
+          <DeckCard
+            pages={set.deck.pages}
+            guide={set.deck.guide}
+            hasModel={set.deck.hasModel}
+            locked={set.deck.locked}
+            projectId={set.projectId}
+            onRender={onRender}
+          />
+        )}
+
+        {shown === 'video' &&
           (set.rendered ? (
             <>
               <video src={api.videoUrl(set.projectId)} controls className="panel__video" />
@@ -84,7 +107,7 @@ export function Artifacts({
             <p className="muted">还没有成片。</p>
           ))}
 
-        {tab === 'pages' &&
+        {shown === 'pages' &&
           set.scenes.map((scene) => (
             <div key={scene.scene_id} className="panel__page">
               <div className="muted">
@@ -94,7 +117,7 @@ export function Artifacts({
             </div>
           ))}
 
-        {tab === 'ledger' && (
+        {shown === 'ledger' && (
           <LedgerCard projectId={set.projectId} entries={set.ledger} startOpen />
         )}
       </div>
@@ -112,6 +135,7 @@ function Tabs({
   has: Record<Tab, boolean>
 }) {
   const all: [Tab, string][] = [
+    ['deck', '文档'],
     ['video', '成片'],
     ['pages', '逐页'],
     ['ledger', '账本'],

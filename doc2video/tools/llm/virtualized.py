@@ -37,6 +37,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from ...core import programs
 from ...core.config import Settings
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
@@ -287,8 +288,14 @@ def _resolve_command(settings: Settings) -> list[str]:
         return [found]
 
     node_dir = settings.node_dir
-    if (node_dir / "node_modules" / PACKAGE).exists() and shutil.which("npx"):
-        return ["npx", "--no-install", PACKAGE]
+    # The resolved path, not the bare name. On Windows `npx` is `npx.cmd`, and
+    # `CreateProcess` will not run a shim by its bare name — it answers
+    # `[WinError 2] 系统找不到指定的文件`, for a command `shutil.which` had just
+    # found. Using the check's own answer is the whole fix, and this is the
+    # third place in this repo to have needed it.
+    npx = programs.find("npx")
+    if npx and (node_dir / "node_modules" / PACKAGE).exists():
+        return [npx, "--no-install", PACKAGE]
 
     raise RuntimeError(f"未安装 {PACKAGE}（在 Node 工作区 npm install，或设置 D2V_AGENT_CLI_PATH）")
 
