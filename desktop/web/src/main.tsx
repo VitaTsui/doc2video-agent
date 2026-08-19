@@ -23,6 +23,25 @@ if (import.meta.env.DEV) {
   installDevMock()
 }
 
+/**
+ * How much width this platform's scrollbar takes.
+ *
+ * The transcript scrolls and the composer does not, so without this they are
+ * centred inside boxes of different widths and the conversation sits slightly
+ * left of the input beneath it. Invisible on macOS, where scrollbars overlay;
+ * plain on Windows, where they do not.
+ */
+function measureGutter() {
+  const probe = document.createElement('div')
+  probe.style.cssText = 'position:absolute;visibility:hidden;overflow:scroll;width:100px;height:100px'
+  document.body.append(probe)
+  const gutter = probe.offsetWidth - probe.clientWidth
+  probe.remove()
+  document.documentElement.style.setProperty('--gutter', `${gutter}px`)
+}
+
+measureGutter()
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ConfigProvider

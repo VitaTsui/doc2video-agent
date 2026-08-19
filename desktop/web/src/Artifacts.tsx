@@ -169,7 +169,7 @@ function Tabs({
     ['deck', '文档'],
     ['video', '成片'],
     ['pages', '逐页'],
-    ['ledger', '账本'],
+    ['ledger', '过程'],
   ]
   return (
     <>

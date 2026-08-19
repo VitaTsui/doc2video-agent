@@ -11,6 +11,7 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
+from ...core import ledger
 from ...core.ids import element_id
 from ...core.logging import get_logger
 from ...schemas import BBox, DocumentModel, DocumentPage, ElementKind, SlideElement
@@ -22,6 +23,7 @@ MIN_ELEMENT_SIDE = 12.0
 
 
 def parse_pdf(path: Path, assets_dir: Path, *, target_width: int = 1920) -> DocumentModel:
+    ledger.used("parser:pymupdf")
     doc = fitz.open(path)
     pages: list[DocumentPage] = []
 

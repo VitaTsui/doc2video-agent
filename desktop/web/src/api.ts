@@ -82,6 +82,8 @@ export interface LedgerEntry {
   status: string
   duration_s: number
   artifacts: LedgerArtifact[]
+  /** Which tools did the work: the parser, the voice, the renderer, the model. */
+  tools: string[]
 }
 
 /** How this project got made, step by step, with what each step produced. */
@@ -104,6 +106,16 @@ export interface ProjectSummary {
 export async function projects() {
   const body = await request<{ items: ProjectSummary[] }>('/projects')
   return body.items
+}
+
+/**
+ * Remove a project and everything it produced.
+ *
+ * Not the uploaded file: that lives under `uploads/` and the project only ever
+ * held a copy, so deleting a video does not cost you the deck it came from.
+ */
+export async function deleteProject(projectId: string) {
+  return request<{ deleted: string }>(`/projects/${projectId}`, { method: 'DELETE' })
 }
 
 export interface Turn {

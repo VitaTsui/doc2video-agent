@@ -99,6 +99,14 @@ class ProjectStore:
         return items
 
     def delete(self, project_id: str) -> None:
+        """Remove everything this project produced — and nothing it was given.
+
+        The uploaded file is not in here. `import_source` copied it in, and the
+        original stays under `uploads/`, owned by nobody in particular and
+        outliving every project made from it. That is the point: deleting a
+        video someone is unhappy with must not delete the deck they would have
+        to go and find again.
+        """
         base = self.project_dir(project_id)
         if not base.exists():
             raise ProjectNotFound(f"工程不存在：{project_id}", detail={"project_id": project_id})

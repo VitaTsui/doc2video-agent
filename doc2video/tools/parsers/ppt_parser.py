@@ -16,7 +16,7 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Emu
 
-from ...core import programs
+from ...core import ledger, programs
 from ...core.config import Settings, which
 from ...core.errors import UnsupportedSource
 from ...core.ids import element_id
@@ -36,6 +36,7 @@ def parse_ppt(
     target_width: int = 1920,
     settings: Settings | None = None,
 ) -> DocumentModel:
+    ledger.used("parser:python-pptx")
     source = path
     if path.suffix.lower() == ".ppt":
         source = _convert_legacy_ppt(path, assets_dir)

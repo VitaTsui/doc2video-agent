@@ -50,6 +50,8 @@ export function App() {
   // The script being typed: written in the panel, committed from the
   // conversation, so neither of them can own it.
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [greeting, setGreeting] = useState('')
+  const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [hasModel, setHasModel] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -215,6 +217,39 @@ export function App() {
     return items
   }, [])
 
+  /**
+   * Delete a project and everything it produced.
+   *
+   * Confirmed first, and the sentence says what survives: the uploaded file
+   * stays where it was, so this costs the video and not the deck.
+   */
+  const removeProject = useCallback(
+    async (project: ProjectSummary) => {
+      const name = project.title || project.source || '这个工程'
+      if (!window.confirm(`删除《${name}》及其生成的全部内容？\n\n上传的原文件不会被删除。`)) {
+        return
+      }
+      try {
+        await api.deleteProject(project.project_id)
+      } catch (error) {
+        say({ role: 'assistant', kind: 'text', text: `没能删除：${api.describeError(error)}` })
+        return
+      }
+      const items = await loadProjects()
+      // Looking at the one that just went: back to the opening screen rather
+      // than at a transcript for something that no longer exists.
+      if (projectId === project.project_id) {
+        setProjectId(null)
+        setMessages([])
+        setArtifacts(null)
+        setPanelOpen(false)
+        setDrafts({})
+      }
+      return items
+    },
+    [loadProjects, projectId, say],
+  )
+
   /** Start over: no project, an empty transcript, back to the opening screen. */
   const startNew = useCallback(() => {
     setProjectId(null)
@@ -234,32 +269,27 @@ export function App() {
     void loadModels()
 
     // Silent: a check that pops a dialog before the user has done anything is
-    // an interruption, and installing costs a restart. Mentioned once, in the
-    // transcript, where it waits until they care.
+    // an interruption, and installing costs a restart. A line on the opening
+    // screen, where it waits until they care.
     void api.checkUpdate().then((update) => {
       if (update?.available) {
-        say({
-          role: 'assistant',
-          kind: 'text',
-          text: `有新版本 ${update.version}（当前 ${update.current}），在设置里可以更新。`,
-        })
+        setNotice(`有新版本 ${update.version}（当前 ${update.current}），在设置里可以更新。`)
       }
     })
 
-    // A returning user gets their conversation back instead of a greeting they
-    // have already read.
-    const items = await loadProjects()
-    if (items[0]) {
-      await openProject(items[0]).catch(() => undefined)
-      return
-    }
+    // The list, not one of its entries. Reopening the last project on launch
+    // made sense when the sidebar did not exist and there was no other way
+    // back to it; now it just means the app opens onto something you were
+    // finished with, and starting the next one takes a click to undo.
+    void loadProjects()
 
-    say({
-      role: 'assistant',
-      kind: 'text',
-      text: caps?.llm.available ? GREETING_WITH_MODEL(caps.llm.provider) : GREETING_WITHOUT_MODEL,
-    })
-  }, [loadModels, loadProjects, openProject, say])
+    // Shown on the opening screen rather than said as a turn: a greeting that
+    // is a message means the transcript is never empty, so the centred opening
+    // screen — the one 「新会话」 gives — could never appear on launch.
+    setGreeting(
+      caps?.llm.available ? GREETING_WITH_MODEL(caps.llm.provider) : GREETING_WITHOUT_MODEL,
+    )
+  }, [loadModels, loadProjects])
 
   useEffect(() => {
     if (greeted.current) return
@@ -337,7 +367,7 @@ export function App() {
     async (file: File, brief: string, uploaded?: string) => {
       setBusy(true)
       say({ role: 'user', kind: 'text', text: brief || '按默认来', file: file.name })
-      const thinking = say({ role: 'assistant', kind: 'text', text: '正在解析…' })
+      const thinking = say({ role: 'assistant', kind: 'text', text: '正在解析…', pending: true })
       try {
         // Already on the backend if the picker managed it; only a failed
         // upload has to be repeated here.
@@ -348,6 +378,7 @@ export function App() {
         void loadProjects()
         const seconds = Math.round(guide.reduce((sum, row) => sum + row.page_seconds, 0))
         amend(thinking, {
+          pending: false,
           kind: 'deck',
           text: `《${prepared.title}》共 ${prepared.pages.length} 页，按这个要求算下来大约 ${seconds} 秒。`,
           projectId: prepared.project_id,
@@ -367,7 +398,7 @@ export function App() {
         })
         setPanelOpen(true)
       } catch (error) {
-        amend(thinking, { kind: 'text', text: `解析失败：${api.describeError(error)}` })
+        amend(thinking, { pending: false, kind: 'text', text: `解析失败：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
@@ -525,6 +556,7 @@ export function App() {
           const summary = projects.find((p) => p.project_id === id)
           if (summary) void openProject(summary)
         }}
+        onDelete={(project) => void removeProject(project)}
         onNew={startNew}
         onSettings={() => setSettingsOpen(true)}
         onToggle={() => setCollapsed((v) => !v)}
@@ -550,7 +582,10 @@ export function App() {
         {messages.length === 0 && !projectId ? (
           <div className="empty">
             <h1 className="empty__title">把文档讲成视频</h1>
-            <p className="muted">拖一份 PPT 或 PDF 进来，再说一句你想要什么样的视频。</p>
+            <p className="muted empty__hint">
+              {greeting || '拖一份 PPT 或 PDF 进来，再说一句你想要什么样的视频。'}
+            </p>
+            {notice && <p className="muted empty__hint">{notice}</p>}
           </div>
         ) : (
           <MessageList

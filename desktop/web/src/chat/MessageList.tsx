@@ -30,7 +30,17 @@ export function MessageList({
             className={`turn turn--${message.role}`}
           >
             <div className="turn__body">
-              {message.text}
+              {/* A turn that is still being worked on says so with the same
+                  ring the progress card uses, so the wait never looks like a
+                  reply that simply stopped. */}
+              {message.pending ? (
+                <span className="thinking">
+                  <span className="spinner" />
+                  {message.text}
+                </span>
+              ) : (
+                message.text
+              )}
               {message.kind === 'text' && message.file && (
                 <div>
                   <span className="turn__file">{message.file}</span>

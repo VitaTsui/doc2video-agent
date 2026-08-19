@@ -296,3 +296,37 @@ def test_a_scene_carries_the_clip_it_was_rendered_into(client: TestClient, monke
     from doc2video.api.routes import projects
 
     assert "scene_clips" in inspect.getsource(projects.get_scenes)
+
+
+def test_deleting_a_project_leaves_the_uploaded_file_alone(tmp_path, monkeypatch):
+    """The video goes; the deck it was made from does not.
+
+    They live in different places for exactly this reason — the upload is
+    copied into the project — but nothing said so, and a delete that took the
+    source with it would mean going to find the file again to try a second
+    time.
+    """
+    import io
+
+    from doc2video.api.routes.uploads import store_upload
+    from doc2video.core import config
+    from doc2video.storage import ProjectStore
+
+    monkeypatch.setenv("D2V_STORAGE_DIR", str(tmp_path / "storage"))
+    config.get_settings.cache_clear()
+    try:
+        settings = config.get_settings()
+        settings.ensure_dirs()
+        stored = store_upload("deck.pdf", io.BytesIO(b"%PDF-1.4 x"))
+        uploaded = settings.uploads_dir / stored["upload_id"] / "deck.pdf"
+        assert uploaded.exists()
+
+        store = ProjectStore(settings)
+        store.ensure_layout("proj_x")
+        store.import_source("proj_x", uploaded)
+        store.delete("proj_x")
+
+        assert not (settings.storage_dir / "projects" / "proj_x").exists()
+        assert uploaded.exists(), "删掉工程不该动上传的原件"
+    finally:
+        config.get_settings.cache_clear()

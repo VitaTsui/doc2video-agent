@@ -11,7 +11,7 @@
  */
 
 import type { ProjectSummary } from './api'
-import { GearIcon, PanelIcon, PlusIcon } from './Icon'
+import { CloseIcon, GearIcon, PanelIcon, PlusIcon } from './Icon'
 
 function when(iso: string | null): string {
   if (!iso) return ''
@@ -29,6 +29,7 @@ export function Sidebar({
   current,
   collapsed,
   onOpen,
+  onDelete,
   onNew,
   onSettings,
   onToggle,
@@ -37,6 +38,7 @@ export function Sidebar({
   current: string | null
   collapsed: boolean
   onOpen: (projectId: string) => void
+  onDelete: (project: ProjectSummary) => void
   onNew: () => void
   onSettings: () => void
   onToggle: () => void
@@ -84,24 +86,38 @@ export function Sidebar({
           </p>
         ) : (
           projects.map((project) => (
-            <button
+            <div
               key={project.project_id}
-              type="button"
               className={
-                project.project_id === current ? 'sidebar__item sidebar__item--on' : 'sidebar__item'
+                project.project_id === current ? 'sidebar__row sidebar__row--on' : 'sidebar__row'
               }
-              onClick={() => onOpen(project.project_id)}
-              title={project.title || project.source}
             >
-              <span className="sidebar__title">{project.title || project.source || '未命名'}</span>
-              <span className="sidebar__meta">
-                {when(project.updated_at)}
-                {project.duration > 0 && ` · ${Math.round(project.duration)}s`}
-                {/* Whether there is something to watch is the one fact worth
-                    carrying in a list this narrow. */}
-                {!project.output && ' · 未出片'}
-              </span>
-            </button>
+              <button
+                type="button"
+                className="sidebar__item"
+                onClick={() => onOpen(project.project_id)}
+                title={project.title || project.source}
+              >
+                <span className="sidebar__title">{project.title || project.source || '未命名'}</span>
+                <span className="sidebar__meta">
+                  {when(project.updated_at)}
+                  {project.duration > 0 && ` · ${Math.round(project.duration)}s`}
+                  {/* Whether there is something to watch is the one fact worth
+                      carrying in a list this narrow. */}
+                  {!project.output && ' · 未出片'}
+                </span>
+              </button>
+              {/* Appears on hover: a delete that is always visible in a list
+                  is a delete that eventually gets hit by accident. */}
+              <button
+                type="button"
+                className="sidebar__delete"
+                title="删除这个工程"
+                onClick={() => onDelete(project)}
+              >
+                <CloseIcon size={15} />
+              </button>
+            </div>
           ))
         )}
       </div>

@@ -90,6 +90,9 @@ body {
   /* Room at the top: the first turn butted against the window edge, which
      read as content scrolled off rather than as the start of a conversation. */
   padding: 28px 20px 24px;
+  /* Always reserve the track, so the measure does not jump when a short
+     conversation grows long enough to scroll. */
+  scrollbar-gutter: stable;
 }
 
 .column {
@@ -149,9 +152,13 @@ body {
 
 /* -- composer ----------------------------------------------------------- */
 
+/* The same width lost on the same side as the transcript's scrollbar, or the
+   two centred columns sit a few pixels apart — visible on Windows, where the
+   scrollbar takes real width, and invisible on macOS, where it overlays.
+   `--gutter` is measured at runtime because only the platform knows it. */
 .composer {
   flex-shrink: 0;
-  padding: 0 20px 20px;
+  padding: 0 calc(20px + var(--gutter, 0px)) 20px 20px;
 }
 
 .composer__box {
@@ -1260,4 +1267,77 @@ body {
 
 .main {
   position: relative;
+}
+
+/* The greeting is prose, not a label: it needs a measure. */
+.empty__hint {
+  max-width: 34rem;
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+}
+
+/* Turning while something is running. Drawn rather than imported: it is one
+   ring, and a spinner that has to be fetched is a spinner that is missing at
+   exactly the moment it is needed. */
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Held between the send and the first progress event, when the transcript
+   would otherwise show nothing at all. */
+.thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+}
+
+/* A row is the entry plus the control that removes it. */
+.sidebar__row {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.sidebar__row:hover,
+.sidebar__row--on {
+  background: var(--user-bg);
+}
+
+.sidebar__row .sidebar__item:hover {
+  background: transparent;
+}
+
+/* Hidden until the row is under the pointer: a delete that is always on
+   screen in a list is one that is eventually hit by accident. */
+.sidebar__delete {
+  display: none;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  padding: 4px 8px 4px 4px;
+  border-radius: 7px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar__row:hover .sidebar__delete {
+  display: inline-flex;
+}
+
+.sidebar__delete:hover {
+  color: #b0562f;
 }

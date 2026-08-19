@@ -1,4 +1,8 @@
-"""Recording the chain as it happens.
+"""Recording the chain as it happens — what ran, with what, and what came out.
+
+Not a ledger in the accounting sense, whatever the filename says: it is the
+record of one execution, ordered, with each step's outputs and the tools it
+reached for.
 
 Shaped after ``core/telemetry``: a recorder in a ContextVar, so a step deep in
 the pipeline can name what it produced without every function between here and
@@ -32,6 +36,12 @@ LEDGER_FILE = "ledger.jsonl"
 MAX_ENTRIES = 2000
 
 _current: ContextVar[Recorder | None] = ContextVar("doc2video_ledger", default=None)
+
+# What the step running right now has reached for. A ContextVar for the same
+# reason the recorder is one: the tool that knows its own name is several
+# frames below the step that will report it, and threading an argument through
+# every one of them to carry a label is not worth it.
+_tools: ContextVar[list[str] | None] = ContextVar("doc2video_ledger_tools", default=None)
 
 
 class Recorder:
@@ -71,6 +81,7 @@ class Recorder:
         status: str = "ok",
         duration_s: float = 0.0,
         artifacts: list[Artifact] | None = None,
+        tools: list[str] | None = None,
     ) -> LedgerEntry:
         with self._lock:
             self._seq += 1
@@ -82,6 +93,7 @@ class Recorder:
                 status=status,
                 duration_s=duration_s,
                 artifacts=artifacts or [],
+                tools=tools or [],
                 run_id=self._run_id,
             )
             self._append(entry)
@@ -98,6 +110,7 @@ class Recorder:
         artifacts: list[Artifact] = []
         started = time.monotonic()
         status = "ok"
+        token = _tools.set([])
         try:
             yield artifacts
         except Exception as exc:
@@ -105,6 +118,8 @@ class Recorder:
             detail = detail or str(exc)[:200]
             raise
         finally:
+            used = _tools.get() or []
+            _tools.reset(token)
             self.record(
                 EntryKind.STAGE,
                 name,
@@ -112,6 +127,7 @@ class Recorder:
                 status=status,
                 duration_s=time.monotonic() - started,
                 artifacts=artifacts,
+                tools=used,
             )
 
     def _append(self, entry: LedgerEntry) -> None:
@@ -122,7 +138,7 @@ class Recorder:
         except OSError as exc:
             # An unwritable ledger must never take down the render it is
             # describing; losing the account is bad, losing the video is worse.
-            log.debug("无法写入账本：%s", exc)
+            log.debug("无法写入执行记录：%s", exc)
 
 
 def _last_seq(path: Path) -> int:
@@ -171,6 +187,17 @@ def decision(name: str, detail: str, artifacts: list[Artifact] | None = None) ->
     recorder = _current.get()
     if recorder is not None:
         recorder.record(EntryKind.DECISION, name, detail=detail, artifacts=artifacts)
+
+
+def used(tool: str) -> None:
+    """Name a tool the current step reached for. Deduplicated, order kept.
+
+    Safe to call from anywhere, including outside a run: a tool should not have
+    to know whether anyone is watching.
+    """
+    tools = _tools.get()
+    if tools is not None and tool and tool not in tools:
+        tools.append(tool)
 
 
 def degradation(name: str, detail: str) -> None:

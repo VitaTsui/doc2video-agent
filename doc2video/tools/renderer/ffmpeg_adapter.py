@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...core import ledger
 from ...core.config import Settings
 from ...core.logging import get_logger
 from ...schemas import ActionType
@@ -41,6 +42,7 @@ class FFmpegAdapter(RendererAdapter):
         return "未安装 ffmpeg"
 
     def render_scene(self, plan: ScenePlan, out_path: Path) -> Path:
+        ledger.used(f"renderer:{self.name}")
         if not plan.image:
             raise ValueError(f"场景 {plan.scene_id} 缺少可渲染的画面资源")
         out_path.parent.mkdir(parents=True, exist_ok=True)

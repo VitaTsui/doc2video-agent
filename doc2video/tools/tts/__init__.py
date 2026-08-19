@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...core import ledger
 from ...core.config import Settings, get_settings
 from ...core.logging import get_logger
 from .base import Segment, TTSProvider, TTSResult, allocate_segments, estimate_duration
@@ -30,6 +31,7 @@ class TTSTool:
         self, text: str, out_path: Path, *, sentences: list[str] | None = None
     ) -> TTSResult:
         """Synthesize ``text`` and time-align its sentences within the clip."""
+        ledger.used(f"tts:{self._provider.name}")
         duration = self._provider.synthesize(
             text,
             out_path,

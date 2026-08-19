@@ -1,5 +1,5 @@
 /**
- * The account of how the video got made, openable step by step.
+ * How the video got made, step by step, each one openable.
  *
  * A progress bar says how far along something is; it never says what was
  * produced. This does: every step lists what it made, and each of those opens —
@@ -89,6 +89,10 @@ function Step({ projectId, entry }: { projectId: string; entry: LedgerEntry }) {
           {entry.name}
         </span>
         <span className="muted" style={{ marginLeft: 'auto' }}>
+          {/* What actually did the work. 「配音」 says what was attempted;
+              `tts:piper` says what it came out of, and two runs that differ
+              there sound different. */}
+          {entry.tools.length > 0 && `${entry.tools.join('、')} · `}
           {entry.artifacts.length > 0 && `${entry.artifacts.length} 项 · `}
           {entry.duration_s >= 0.05 ? `${entry.duration_s.toFixed(1)}s` : ''}
         </span>
