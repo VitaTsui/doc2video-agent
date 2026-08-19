@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from ..core import ledger, telemetry
 from ..schemas import DocumentPage, ElementKind, PageType, Section
 from ..tools.llm import model_schema
 from .base import Skill, load_prompt
@@ -127,16 +128,30 @@ class DocumentSkill(Skill):
         pages = document.pages
         by_index = {p.index: p for p in pages}
 
+        failures = 0
         for start in range(0, len(pages), BATCH_SIZE):
             batch = pages[start : start + BATCH_SIZE]
-            result = DeckUnderstanding.model_validate(
-                self.llm.complete_json(
-                    self._prompt(batch),
-                    schema=model_schema(DeckUnderstanding),
-                    system=load_prompt("document_understanding"),
-                    images=self._images_for(batch),
+            # One batch failing must not cost the others. It used to: the
+            # exception left the loop, and a single page whose title contained
+            # a quotation mark took the remaining batches with it — those
+            # pages fell back to heuristics for no reason of their own.
+            try:
+                result = DeckUnderstanding.model_validate(
+                    self.llm.complete_json(
+                        self._prompt(batch),
+                        schema=model_schema(DeckUnderstanding),
+                        system=load_prompt("document_understanding"),
+                        images=self._images_for(batch),
+                    )
                 )
-            )
+            except Exception as exc:  # noqa: BLE001 - one batch, not the deck
+                failures += 1
+                where = f"第 {batch[0].index}-{batch[-1].index} 页"
+                detail = f"{exc}"
+                self.log.warning("%s的理解失败，这几页改用启发式规则：%s", where, detail)
+                telemetry.record_degradation("文档理解", f"{where}：{detail}"[:300])
+                ledger.degradation("文档理解降级", f"{where} 改用启发式规则：{detail}"[:300])
+                continue
             for read in result.pages:
                 page = by_index.get(read.index)
                 if page is not None:
@@ -168,6 +183,11 @@ class DocumentSkill(Skill):
                         and page.index not in seen
                         and page.page_type is not PageType.CONTACT
                     ]
+
+        if failures and failures * BATCH_SIZE >= len(pages):
+            # Nothing came back at all — say so as one degradation about the
+            # stage rather than as a list of per-batch ones nobody reads.
+            raise RuntimeError(f"{failures} 批全部失败，文档理解没有任何模型结果")
 
     @staticmethod
     def _apply_understanding(page: DocumentPage, read: PageUnderstanding) -> None:
