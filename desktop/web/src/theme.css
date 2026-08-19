@@ -870,17 +870,17 @@ body {
   background: #000;
 }
 
+/* Name, bar, note — one column each, so the bars start on the same line and
+   can be compared by eye. Laid out as flex the name sized itself per row and
+   every bar began somewhere different, which is the one thing a row of bars
+   is for. */
 .panel__dim {
-  display: flex;
+  display: grid;
+  grid-template-columns: 3.5em 80px 1fr;
   gap: 8px;
   align-items: center;
   margin-top: 6px;
   font-size: 13px;
-}
-
-.panel__dim .bar {
-  width: 80px;
-  flex-shrink: 0;
 }
 
 .panel__page {

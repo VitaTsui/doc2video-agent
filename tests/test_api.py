@@ -270,6 +270,49 @@ def test_a_project_can_be_reopened_with_its_pages(client: TestClient):
     assert client.get("/projects/proj_nope/pages").status_code == 404
 
 
+def test_a_deck_is_parsed_first_and_written_second(client: TestClient, demo_pptx: Path):
+    """Two steps, and the pages carry the words after the second one.
+
+    The parse returns a deck with empty pages — fast, and something to look at
+    while the script is written. Drafting is its own job against that deck, and
+    what it writes comes back on the same page list, so the editor opens on the
+    words instead of beside them.
+    """
+    with demo_pptx.open("rb") as handle:
+        upload = client.post("/uploads", files={"file": ("demo.pptx", handle)}).json()
+
+    parsed = client.post(
+        "/agent/prepare", json={"upload_id": upload["upload_id"], "brief": "讲两分钟"}
+    ).json()
+    assert parsed["pages"]
+    assert not any(page["narration"] for page in parsed["pages"])
+
+    project_id = parsed["project_id"]
+    job = client.post(f"/projects/{project_id}/draft").json()
+    assert job["job_id"]
+    _finish(client, job["job_id"])
+
+    pages = client.get(f"/projects/{project_id}/pages").json()["items"]
+    assert all(page["narration"] for page in pages)
+
+    # And it stopped at the script: nothing was voiced or rendered.
+    project = client.get(f"/projects/{project_id}").json()
+    assert project["render"]["output_path"] is None
+
+
+def _finish(client: TestClient, job_id: str) -> dict:
+    """Wait for a job, without pinning the test to how long one takes."""
+    import time
+
+    for _ in range(600):
+        state = client.get(f"/jobs/{job_id}").json()
+        if state["status"] in {"succeeded", "failed"}:
+            assert state["status"] == "succeeded", state
+            return state
+        time.sleep(0.05)
+    raise AssertionError("任务没有在预期时间内结束")
+
+
 def test_the_two_page_lists_are_one_list():
     """`prepare` and `/pages` must not drift.
 

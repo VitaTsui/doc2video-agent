@@ -104,3 +104,29 @@ def test_an_empty_script_still_asks_for_a_render(settings, store):
         "第 7 页太长了", project, narrations=None, scene_narrations=None, editing=True
     )
     assert absent.scene_ids == ["scene_07"]
+
+
+def test_reading_the_deck_and_writing_it_are_two_steps(settings, store):
+    """The parse must not wait behind the words.
+
+    Parsing takes seconds and writing takes as long as the model takes. Folded
+    into one step the deck appears only once the whole script is written, and
+    the wait is spent looking at nothing; split, the pages are on screen first
+    and fill in as they are written.
+    """
+    from doc2video.agent import Doc2VideoAgent
+
+    agent = Doc2VideoAgent(settings, store)
+
+    reading = agent.planner.prepare_plan("讲三分钟", _project())
+    assert reading.stages == [Stage.PARSE, Stage.UNDERSTAND]
+
+    writing = agent.planner.draft_plan()
+    assert writing.stages == [Stage.NARRATE]
+    # And it stops at the script: nothing is voiced or rendered from a draft
+    # nobody has looked at yet.
+    assert Stage.VOICE not in writing.stages
+    assert Stage.RENDER not in writing.stages
+
+    # The deck is not re-read to write against it — it was read in step one.
+    assert Stage.PARSE not in writing.stages

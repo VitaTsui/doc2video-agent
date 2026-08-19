@@ -64,15 +64,16 @@ export function MessageList({
                     {' 页'}
                   </button>
                   <span className="muted">
-                    {/* Once a script exists the counts stop being the point:
-                        saying "你写了 30 页" of pages the model wrote is worse
-                        than saying nothing. */}
+                    {/* Who wrote which page is not tracked, and now that the
+                        model drafts them all up front, guessing gets it wrong:
+                        「你写了 9 页」 of nine pages nobody touched is worse
+                        than saying nothing about authorship at all. */}
                     {deck.generated
                       ? '讲稿在右侧，改完再点一次就重做'
                       : message.hasModel
-                        ? deck.written
-                          ? `你写了 ${deck.written} 页，其余由模型补`
-                          : '全部由模型来写'
+                        ? deck.written >= message.pages.length
+                          ? '讲稿在右侧，改完点开始生成'
+                          : `还有 ${message.pages.length - deck.written} 页空着，开始时由模型补`
                         : `已写 ${deck.written} / ${message.pages.length} 页，没写的会是占位文本`}
                   </span>
                   <button

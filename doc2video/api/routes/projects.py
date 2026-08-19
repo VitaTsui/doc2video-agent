@@ -71,6 +71,22 @@ def get_scenes(project_id: str) -> dict:
     }
 
 
+@router.post("/{project_id}/draft")
+def draft_script(project_id: str) -> dict:
+    """Write a first script for this deck, page by page.
+
+    A job rather than a request that waits: writing a long deck takes several
+    model calls, and each finished batch is saved, so the pages can be read as
+    they fill instead of appearing all at once at the end. Stops at the script
+    — nothing is voiced or rendered until someone has seen it.
+    """
+    _load(project_id)  # 404 before a job is queued for a project that is not there
+    job = get_jobs().submit(
+        JobRequest(message="逐页起草讲稿", project_id=project_id, draft=True)
+    )
+    return {"job_id": job.id, "status": job.status}
+
+
 @router.post("/{project_id}/narrations")
 def submit_narrations(project_id: str, body: NarrationsIn) -> dict:
     """Voice, direct, render and check the project using this script.

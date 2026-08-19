@@ -89,7 +89,8 @@ class Doc2VideoAgent:
         The first half of a run: everything that can be decided without knowing
         what the video will *say*. It returns the document model so the caller
         can read the deck and write the script — which is the step this service
-        deliberately does not perform.
+        deliberately does not perform. A caller with a model of its own asks
+        for that separately, with `draft`.
         """
         project = self.create_project(source_file)
         plan = self.planner.prepare_plan(brief, project)
@@ -115,6 +116,7 @@ class Doc2VideoAgent:
         progress: ProgressFn | None = None,
         narrations: dict[int, str] | None = None,
         scene_narrations: dict[str, str] | None = None,
+        draft: bool = False,
     ) -> AgentRunResult:
         if project_id:
             project = self.store.load(project_id)
@@ -139,6 +141,7 @@ class Doc2VideoAgent:
                         narrations=narrations,
                         scene_narrations=scene_narrations,
                         editing=bool(project_id),
+                        draft=draft,
                     )
                 ctx = SkillContext.build(
                     project, store=self.store, settings=self.settings
@@ -161,6 +164,7 @@ class Doc2VideoAgent:
         narrations: dict[int, str] | None,
         scene_narrations: dict[str, str] | None,
         editing: bool,
+        draft: bool = False,
     ) -> ExecutionPlan:
         """Which plan this call is asking for.
 
@@ -173,7 +177,9 @@ class Doc2VideoAgent:
         app's 开始生成 was pressed with nothing typed, a case its own copy
         promises will fall back to placeholder text.
         """
-        if narrations is not None:
+        if draft:
+            plan = self.planner.draft_plan()
+        elif narrations is not None:
             plan = self.planner.render_plan(narrations)
         elif editing:
             plan = self.planner.edit_plan(message, project)

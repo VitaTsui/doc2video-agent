@@ -122,6 +122,18 @@ class Planner:
             intent=intent,
         )
 
+    def draft_plan(self) -> ExecutionPlan:
+        """Write a first script for a deck that has already been read.
+
+        Its own step, after the parse rather than inside it, for two reasons.
+        The parse takes seconds and writing takes as long as the model takes,
+        so folding them together would hold the deck back behind the words —
+        and the deck is what makes the wait for the words legible. And it stops
+        at the script: nothing is voiced or rendered from a draft nobody has
+        looked at yet.
+        """
+        return ExecutionPlan(summary="逐页起草讲稿", stages=[Stage.NARRATE])
+
     def render_plan(self, narrations: dict[int, str]) -> ExecutionPlan:
         """Everything downstream of a script: adopt it, then voice and render.
 

@@ -98,7 +98,7 @@ export function App() {
           role: 'assistant',
           kind: 'text',
           text: caps?.llm.available
-            ? `换成 ${caps.llm.model} 了，之后留空的页我来写。`
+            ? `换成 ${caps.llm.model} 了。下次投文档时我顺手把讲稿写好，你在上面改。`
             : '好，讲稿由你来写。留空的页会是占位文本。',
         })
       } catch (error) {
@@ -117,23 +117,6 @@ export function App() {
       api.quality(projectId).catch(() => null),
       api.ledger(projectId).catch(() => []),
     ])
-    // What the model wrote goes into the boxes it wrote it for.
-    //
-    // Otherwise the script exists in two places that cannot see each other:
-    // read-only under 逐页, and an empty editor still saying 「留空则由模型
-    // 来写」 — so changing one page meant retyping it. Seeded here because
-    // this runs at the two moments the stored script is the truth: a turn
-    // just finished, or a project was just opened.
-    if (scenes.length > 0) {
-      setDrafts(
-        Object.fromEntries(
-          scenes
-            .filter((scene) => scene.source_page && scene.narration)
-            .map((scene) => [String(scene.source_page), scene.narration]),
-        ),
-      )
-    }
-
     // The deck is not re-fetched here; it belongs to the parse that produced
     // it, and dropping it would empty the tab someone is looking at.
     let carried: ArtifactSet['deck']
@@ -189,6 +172,16 @@ export function App() {
           current?.projectId === summary.project_id
             ? { ...current, deck: { pages: deckPages, guide, hasModel, locked: false } }
             : current,
+        )
+        // The script it already has, back in the boxes it belongs to. It was
+        // drafted when this deck was parsed; coming back to a project should
+        // not mean coming back to blank pages.
+        setDrafts(
+          Object.fromEntries(
+            deckPages
+              .filter((page) => page.narration)
+              .map((page) => [String(page.index), page.narration]),
+          ),
         )
         // Open on anything worth seeing, not only on a finished video: a
         // project that was parsed and never rendered is exactly the one whose
@@ -340,17 +333,6 @@ export function App() {
                 }
               : current,
           )
-          // The script as it is written, page by page. Safe to overwrite
-          // what is in the boxes: they are locked while a run is going.
-          if (scenes?.length) {
-            setDrafts(
-              Object.fromEntries(
-                scenes
-                  .filter((scene) => scene.source_page && scene.narration)
-                  .map((scene) => [String(scene.source_page), scene.narration]),
-              ),
-            )
-          }
         })
       }, 1500)
 
@@ -414,6 +396,43 @@ export function App() {
     [amend, projectId, say],
   )
 
+  /**
+   * Step two: write the script for a deck that has just been parsed.
+   *
+   * Separate from the parse because the two take very different amounts of
+   * time. The deck is on screen in seconds; the words take as long as the
+   * model takes, and they land page by page — every batch the model finishes
+   * is saved, and this reads them back into the boxes as they appear, so the
+   * wait is spent watching the script get written rather than watching a
+   * spinner.
+   */
+  const draftScript = useCallback(
+    async (project: string) => {
+      const fill = (written: api.PageView[]) => {
+        const filled = written.filter((page) => page.narration)
+        if (filled.length === 0) return 0
+        setDrafts(Object.fromEntries(filled.map((p) => [String(p.index), p.narration])))
+        return filled.length
+      }
+
+      const jobId = await api.draftScript(project)
+      const poll = window.setInterval(() => {
+        void api
+          .pages(project)
+          .then(fill)
+          .catch(() => 0)
+      }, 1500)
+      try {
+        await api.watchJob(jobId, () => {})
+      } finally {
+        window.clearInterval(poll)
+      }
+      // The last batch may have landed between polls.
+      return fill(await api.pages(project).catch(() => []))
+    },
+    [],
+  )
+
   /** A deck arrives: parse it, then report what is in it and what it will cost. */
   const acceptDeck = useCallback(
     async (file: File, brief: string, uploaded?: string) => {
@@ -449,13 +468,34 @@ export function App() {
           deck: { pages: prepared.pages, guide, hasModel, locked: false },
         })
         setPanelOpen(true)
+
+        // Now the words, against the deck that is already on screen.
+        if (hasModel) {
+          const writing = say({
+            role: 'assistant',
+            kind: 'text',
+            text: '正在逐页写讲稿，写好一页就填进去，你可以直接在上面改。',
+            pending: true,
+          })
+          try {
+            const written = await draftScript(prepared.project_id)
+            amend(writing, {
+              pending: false,
+              text: written
+                ? `讲稿写好了，${written} 页。改完按「开始生成」。`
+                : '讲稿没写出来，可以自己写，或者留空让占位文本顶上。',
+            })
+          } catch (error) {
+            amend(writing, { pending: false, text: `写讲稿失败：${api.describeError(error)}` })
+          }
+        }
       } catch (error) {
         amend(thinking, { pending: false, kind: 'text', text: `解析失败：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
     },
-    [amend, hasModel, loadProjects, say],
+    [amend, draftScript, hasModel, loadProjects, say],
   )
 
   /**
@@ -689,7 +729,7 @@ export function App() {
             role: 'assistant',
             kind: 'text',
             text: caps?.llm.available
-              ? `模型已就绪：${caps.llm.provider}｜${caps.llm.model}。之后留空的页我来写。`
+              ? `模型已就绪：${caps.llm.provider}｜${caps.llm.model}。投文档时我就把讲稿写好，你在上面改。`
               : '设置已保存，后端已重启。',
           })
         }}

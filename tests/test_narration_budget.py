@@ -59,3 +59,54 @@ def test_a_short_target_still_leaves_something_to_say(settings: Settings, store:
 
     assert all(row["target_chars"] > 0 for row in guide)
     assert all(row["target_seconds"] > 0 for row in guide)
+
+
+def test_each_batch_is_saved_as_it_is_written(settings: Settings, store: ProjectStore):
+    """A long deck fills in as it is written, not all at once at the end.
+
+    The script takes one model call per batch and each call is a wait. Holding
+    every page back until the last one returns means a window that shows
+    nothing for minutes and then everything — and there is no reason for it,
+    since a finished batch is finished.
+    """
+    skill = _skill(settings, store, pages=9, duration=120.0)
+    store.save(skill.project)
+
+    seen: list[int] = []
+
+    class _Batched:
+        """Answers one batch at a time, and reports what was on disk before it."""
+
+        available = True
+        model = "fake"
+        source = "fake"
+
+        def __init__(self):
+            self.calls = 0
+
+        def complete_json(self, prompt: str, **kwargs):  # noqa: ARG002
+            # What the previous batches left behind, read the way a client
+            # polling the API would read it.
+            seen.append(len(store.load(skill.project.project_id).scenes))
+            first = self.calls * 4 + 1
+            self.calls += 1
+            return {
+                "pages": [
+                    {"text": "", "index": i, "narration": f"第 {i} 页的讲稿。", "segments": []}
+                    for i in range(first, min(first + 4, 10))
+                ]
+            }
+
+        def complete_text(self, prompt: str, **kwargs):  # noqa: ARG002
+            return ""
+
+        def supports_images(self) -> bool:
+            return False
+
+    skill.ctx.llm = _Batched()
+    skill.run()
+
+    # Three batches over nine pages, and each one started with the pages the
+    # ones before it had already written.
+    assert seen == [0, 4, 8]
+    assert len(store.load(skill.project.project_id).scenes) == 9

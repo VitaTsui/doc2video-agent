@@ -44,6 +44,8 @@ export interface PageView {
   summary: string
   /** Project-relative path to this page's render, e.g. "assets/page_001.png". */
   image: string | null
+  /** The script this page already has — empty until something writes one. */
+  narration: string
   elements: { id: string; kind: string; text: string }[]
 }
 
@@ -251,6 +253,13 @@ export async function prepare(uploadId: string, brief: string) {
     method: 'POST',
     body: JSON.stringify({ upload_id: uploadId, brief }),
   })
+}
+
+/** Write a first script for a parsed deck. Returns a job: it takes a while,
+ *  and each page is saved as it is written, so `pages` fills in as it goes. */
+export async function draftScript(projectId: string) {
+  const body = await request<{ job_id: string }>(`/projects/${projectId}/draft`, { method: 'POST' })
+  return body.job_id
 }
 
 export async function narrationGuide(projectId: string) {
