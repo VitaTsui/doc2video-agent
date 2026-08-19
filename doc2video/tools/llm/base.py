@@ -134,7 +134,7 @@ _FENCE_RE = re.compile(r"\A```[a-zA-Z]*\s*|\s*```\Z")
 def parse_json_reply(text: str, *, source: str = "模型") -> dict[str, Any]:
     """Recover a JSON object from a reply that has no format guarantee."""
     candidate = _FENCE_RE.sub("", text.strip())
-    for attempt in (candidate, _outermost_object(candidate)):
+    for attempt in (candidate, _outermost_object(candidate), _escape_stray_quotes(candidate)):
         if attempt is None:
             continue
         try:
@@ -152,6 +152,58 @@ def _outermost_object(text: str) -> str | None:
     """The ``{...}`` span, for replies that wrap the object in prose."""
     start, end = text.find("{"), text.rfind("}")
     return text[start : end + 1] if start != -1 and end > start else None
+
+
+def _escape_stray_quotes(text: str) -> str | None:
+    """Escape ``"`` that a model left unescaped inside a string.
+
+    A last resort, reached only after the strict parses have failed, so it can
+    never touch a reply that was already valid.
+
+    The case it exists for is ordinary and recurring: a slide titled
+    《（五）三类"战略决策"场景总览》 comes back as
+    ``"title":"（五）三类"战略决策"场景总览"`` — the model copied the page's own
+    quotation marks straight through. One such page discarded an entire
+    six-page batch of understanding, silently.
+
+    A quote inside a string is only a terminator if what follows it is
+    structure: a comma, a colon, a closing bracket, or the end. Anything else
+    means the model meant a quotation mark, so it gets escaped.
+    """
+    span = _outermost_object(text)
+    if span is None:
+        return None
+
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    for index, char in enumerate(span):
+        if escaped:
+            out.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            out.append(char)
+            escaped = in_string
+            continue
+        if char == '"':
+            if not in_string:
+                in_string = True
+            else:
+                following = _next_structural(span, index + 1)
+                if following in ",:}]" or following == "":
+                    in_string = False
+                else:
+                    out.append("\\")  # a quotation mark, not a terminator
+        out.append(char)
+    return "".join(out)
+
+
+def _next_structural(text: str, start: int) -> str:
+    for char in text[start:]:
+        if not char.isspace():
+            return char
+    return ""
 
 
 # --------------------------------------------------------------------------

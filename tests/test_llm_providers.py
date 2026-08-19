@@ -259,3 +259,36 @@ def test_the_bridges_own_words_survive_the_exception(tmp_path):
         process.kill()
 
     assert "ENOENT: /nowhere/x.json" in str(caught.value)
+
+
+def test_a_quotation_mark_a_model_forgot_to_escape_does_not_lose_the_reply():
+    """The failure this repairs is ordinary, not exotic.
+
+    A slide titled 《（五）三类"战略决策"场景总览》 comes back with the page's own
+    quotation marks copied straight into a JSON string. One such page threw
+    away a whole six-page batch of understanding on every run of a real deck,
+    and the only trace was a degradation reading "不是合法 JSON 对象".
+    """
+    from doc2video.tools.llm.base import parse_json_reply
+
+    reply = '{"title":"（五）三类"战略决策"场景总览","index":23}'
+    assert parse_json_reply(reply) == {"title": '（五）三类"战略决策"场景总览', "index": 23}
+
+
+def test_the_repair_never_runs_on_a_reply_that_already_parses():
+    """It is the last rung, so it cannot rewrite something already correct."""
+    from doc2video.tools.llm.base import parse_json_reply
+
+    proper = '{"a": "he said \\"hi\\"", "b": [1, 2], "c": {"d": null}}'
+    assert parse_json_reply(proper) == {"a": 'he said "hi"', "b": [1, 2], "c": {"d": None}}
+
+
+def test_a_reply_that_is_simply_not_json_still_fails():
+    """Repairing must not turn "the model refused" into a silent empty answer."""
+    import pytest as _pytest
+
+    from doc2video.core.errors import ToolFailed
+    from doc2video.tools.llm.base import parse_json_reply
+
+    with _pytest.raises(ToolFailed):
+        parse_json_reply("我不能回答这个问题。")

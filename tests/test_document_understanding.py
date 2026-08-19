@@ -58,7 +58,7 @@ class _PerBatchModel(MockLLM):
                 {
                     "index": i,
                     "page_type": "content",
-                    "title": f"第 {i} 页",
+                    "title": f"模型读过的第 {i} 页",
                     "summary": "",
                     "key_points": [],
                     "elements": [],
@@ -132,3 +132,33 @@ def test_a_batch_may_still_drop_a_page_it_did_read():
     order = project.document.presentation_order
     assert 3 not in order
     assert len(order) == PAGES - 1
+
+
+def test_one_unreadable_batch_costs_only_its_own_pages():
+    """It used to cost every batch after it as well.
+
+    The exception left the loop, so a single page whose title carried a
+    quotation mark sent the remaining batches to the heuristics too — pages
+    that had nothing wrong with them, for a reason none of them caused.
+    """
+
+    class _OneBadBatch(_PerBatchModel):
+        def complete_json(self, prompt: str, **kwargs):
+            answer = super().complete_json(prompt, **kwargs)
+            if answer["presentation_order"][0] == 19:
+                raise ValueError("返回的结构化结果不是合法 JSON 对象")
+            return answer
+
+    project = _project()
+    model = _OneBadBatch()
+    _understand(project, model)
+
+    assert model.calls == 5, "坏掉的那一批之后，剩下的批次还要接着读"
+    titles = {p.index: p.title for p in project.document.pages}
+    # The batch that failed keeps whatever the heuristics gave it...
+    assert titles[20] == "第 20 页"
+    # ...and every other page still has the model's answer, including the
+    # batches that came after the failure.
+    assert titles[3] == "模型读过的第 3 页"
+    assert titles[26] == "模型读过的第 26 页"
+    assert len(project.document.presentation_order) == PAGES
