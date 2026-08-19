@@ -34,6 +34,19 @@ use sha2::{Digest, Sha256};
 
 const REPO: &str = "https://github.com/VitaTsui/doc2video-agent";
 
+/// Which half of the install is running.
+///
+/// They are reported apart because they feel nothing alike: the download is
+/// bytes over a network and has a real total, the unpack is twenty thousand
+/// files against a disk and an antivirus. Folding them into one bar means the
+/// bar stops for minutes and the person watching concludes it crashed.
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum Phase {
+    Download,
+    Unpack,
+}
+
 /// What the app knows about its runtime.
 #[derive(Serialize, Clone)]
 pub struct Status {
@@ -110,7 +123,7 @@ fn base_url(version: &str) -> String {
 pub fn install(
     app_data: &Path,
     version: &str,
-    mut on_progress: impl FnMut(u64, u64),
+    mut on_progress: impl FnMut(Phase, u64, u64),
 ) -> Result<()> {
     let _ = LOG.set(app_data.join("runtime-install.log"));
     let base = base_url(version);
@@ -123,7 +136,9 @@ pub fn install(
     fs::create_dir_all(&scratch).context("无法创建下载目录")?;
 
     let archive = scratch.join("runtime.tar.gz");
-    let digest = fetch_with_resume(&format!("{base}.tar.gz"), &archive, &mut on_progress)?;
+    let digest = fetch_with_resume(&format!("{base}.tar.gz"), &archive, &mut |done, total| {
+        on_progress(Phase::Download, done, total)
+    })?;
     if digest != expected {
         // Only now is the partial file worthless: keeping a file whose bytes we
         // know are wrong would make every future attempt resume from garbage.
@@ -131,7 +146,9 @@ pub fn install(
         bail!("下载的运行时校验失败，已清掉重来；再试一次通常就好了");
     }
 
-    unpack(&archive, &scratch)?;
+    unpack(&archive, &scratch, |done, total| {
+        on_progress(Phase::Unpack, done, total)
+    })?;
     let unpacked = scratch.join("runtime");
     if !unpacked.join("runtime.json").exists() {
         let _ = fs::remove_dir_all(&scratch);
@@ -270,14 +287,41 @@ fn hash_file(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn unpack(archive: &Path, into: &Path) -> Result<()> {
+/// How many files the runtime holds, near enough to draw a bar with.
+///
+/// The exact count is only knowable by reading the archive twice, and the
+/// second read costs as much as the unpack. An estimate that is wrong by a few
+/// percent still tells someone the thing is moving, which is the entire point.
+const APPROX_ENTRIES: u64 = 21_000;
+
+fn unpack(archive: &Path, into: &Path, mut on_progress: impl FnMut(u64, u64)) -> Result<()> {
     let file = fs::File::open(archive)?;
-    let decoder = flate2::read::GzDecoder::new(file);
+    // Buffered on purpose. The decoder otherwise reads the file in small
+    // chunks, one syscall each, and on Windows syscalls are expensive enough
+    // that this alone dominated the unpack of a 21,000-file tree.
+    let buffered = std::io::BufReader::with_capacity(1 << 20, file);
+    let decoder = flate2::read::GzDecoder::new(buffered);
     let mut tar = tar::Archive::new(decoder);
     // Preserve the executable bits: without them the interpreter unpacks as a
     // file the system will not run.
     tar.set_preserve_permissions(true);
-    tar.unpack(into).context("解压失败")?;
+
+    // Entry by entry rather than `unpack()`, only so there is something to
+    // report. Unpacking is minutes of work on a machine whose antivirus
+    // inspects every one of those files, and it used to happen behind a
+    // progress bar frozen at 100% — indistinguishable from a hang, and the
+    // reason "安装要一两个小时" was as much about silence as about time.
+    let mut done = 0u64;
+    for entry in tar.entries().context("解压失败")? {
+        let mut entry = entry.context("解压失败")?;
+        entry.unpack_in(into).context("解压失败")?;
+        done += 1;
+        // Reporting each file would be twenty thousand IPC messages.
+        if done % 200 == 0 {
+            on_progress(done, APPROX_ENTRIES);
+        }
+    }
+    on_progress(APPROX_ENTRIES, APPROX_ENTRIES);
     Ok(())
 }
 

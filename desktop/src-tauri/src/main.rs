@@ -95,8 +95,8 @@ async fn install_runtime(
     let emitter = app.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        runtime::install(&dir, &version, |done, total| {
-            let _ = emitter.emit("runtime://progress", (done, total));
+        runtime::install(&dir, &version, |phase, done, total| {
+            let _ = emitter.emit("runtime://progress", (phase, done, total));
         })
     })
     .await
