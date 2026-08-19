@@ -205,6 +205,19 @@ async function asError(response: Response): Promise<ApiError> {
 
 // -- the flow --------------------------------------------------------------
 
+/**
+ * Where the file picker posts to.
+ *
+ * The component we use takes a URL and nothing else — no headers, no request
+ * hook — so the token rides in the query, which the backend accepts for this
+ * one route and for media. Without it the picker had no address at all and
+ * said so, in the middle of the composer.
+ */
+export function uploadUrl(): string {
+  const { base_url, token } = required()
+  return `${base_url}/uploads?token=${encodeURIComponent(token)}`
+}
+
 export async function uploadSource(file: File): Promise<string> {
   const form = new FormData()
   form.append('file', file)

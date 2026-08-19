@@ -204,3 +204,31 @@ def test_a_preflight_is_not_rejected_for_having_no_token(monkeypatch):
     assert preflight.headers["access-control-allow-origin"] == "tauri://localhost"
     # The real request still needs the token.
     assert guarded.post("/uploads").status_code == 401
+
+
+def test_an_upload_may_carry_its_token_in_the_query(monkeypatch, tmp_path):
+    """The file picker cannot set a header.
+
+    It is a component we configure with a URL and nothing else, so the token
+    has to travel in the URL — the same accommodation `<video src>` already
+    needed. Everything else still must use the header.
+    """
+    from doc2video.api import deps
+    from doc2video.core import config
+
+    monkeypatch.setenv("D2V_API_TOKEN", "s3cret")
+    monkeypatch.setenv("D2V_STORAGE_DIR", str(tmp_path / "storage"))
+    for cached in (config.get_settings, deps.get_agent, deps.get_jobs):
+        cached.cache_clear()
+    try:
+        client = TestClient(create_app())
+        files = {"file": ("deck.pdf", b"%PDF-1.4 x", "application/pdf")}
+
+        assert client.post("/uploads", files=files).status_code == 401
+        assert client.post("/uploads?token=wrong", files=files).status_code == 401
+        assert client.post("/uploads?token=s3cret", files=files).status_code == 200
+        # The concession is for uploads alone; nothing else gains it.
+        assert client.get("/projects?token=s3cret").status_code == 401
+    finally:
+        for cached in (config.get_settings, deps.get_agent, deps.get_jobs):
+            cached.cache_clear()

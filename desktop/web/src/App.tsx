@@ -47,6 +47,7 @@ export function App() {
   const [model, setModel] = useState('')
 
   const abort = useRef<AbortController | null>(null)
+  const [dragging, setDragging] = useState(false)
   // StrictMode runs effects twice in development; without this the opening
   // message is said twice, which is also what a retry would look like.
   const greeted = useRef(false)
@@ -268,12 +269,14 @@ export function App() {
 
   /** A deck arrives: parse it, then report what is in it and what it will cost. */
   const acceptDeck = useCallback(
-    async (file: File, brief: string) => {
+    async (file: File, brief: string, uploaded?: string) => {
       setBusy(true)
       say({ role: 'user', kind: 'text', text: brief || '按默认来', file: file.name })
       const thinking = say({ role: 'assistant', kind: 'text', text: '正在解析…' })
       try {
-        const uploadId = await api.uploadSource(file)
+        // Already on the backend if the picker managed it; only a failed
+        // upload has to be repeated here.
+        const uploadId = uploaded ?? (await api.uploadSource(file))
         const prepared = await api.prepare(uploadId, brief)
         const guide = await api.narrationGuide(prepared.project_id)
         setProjectId(prepared.project_id)
@@ -293,6 +296,33 @@ export function App() {
       }
     },
     [amend, hasModel, say],
+  )
+
+  /**
+   * A deck dropped onto the window.
+   *
+   * Tauri intercepts file drops by default and hands the app its own event
+   * instead, which means the HTML `drop` never fires and dragging a PPT in
+   * does nothing at all — which is what it did. `dragDropEnabled: false` gives
+   * the drop back to the page, and this is what catches it.
+   */
+  const acceptDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault()
+      setDragging(false)
+      const file = event.dataTransfer.files[0]
+      if (!file) return
+      if (!/\.(pdf|pptx?)$/i.test(file.name)) {
+        say({
+          role: 'assistant',
+          kind: 'text',
+          text: `${file.name} 不是我能读的格式，需要 PDF、PPT 或 PPTX。`,
+        })
+        return
+      }
+      void acceptDeck(file, '')
+    },
+    [acceptDeck, say],
   )
 
   /** A plain message: either a follow-up edit, or a nudge to drop a deck. */
@@ -373,7 +403,37 @@ export function App() {
   }
 
   return (
-    <div className="shell">
+    <div
+      className="shell"
+      onDragOver={(event) => {
+        event.preventDefault()
+        setDragging(true)
+      }}
+      onDragLeave={(event) => {
+        // Only when the pointer leaves the window itself; moving between
+        // children fires this constantly and the overlay would flicker.
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+        setDragging(false)
+      }}
+      onDrop={acceptDrop}
+    >
+      {dragging && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 20,
+            display: 'grid',
+            placeItems: 'center',
+            background: 'rgb(0 0 0 / 25%)',
+            pointerEvents: 'none',
+            fontSize: 18,
+            color: '#fff',
+          }}
+        >
+          松手就开始解析
+        </div>
+      )}
       <header className="topbar">
         <span className="topbar__name">Doc2Video</span>
         <button type="button" className="topbar__button" onClick={() => setSettingsOpen(true)}>
@@ -385,6 +445,7 @@ export function App() {
 
       <Composer
         disabled={!connection || busy}
+        uploadAction={connection ? api.uploadUrl() : ''}
         onSend={acceptMessage}
         onDeck={acceptDeck}
         hint={projectId ? '想改哪里就直接说' : '说说你想要什么样的视频，并附上文档'}

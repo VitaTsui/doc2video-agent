@@ -61,7 +61,16 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
 
         header = request.headers.get("authorization", "")
         scheme, _, presented = header.partition(" ")
-        if not presented and request.method == "GET" and MEDIA_PATH.match(request.url.path):
+        # `<video src>` cannot send a header, and neither can a file input
+        # posting through a component that only lets us configure a URL. Both
+        # are same-origin calls from our own window to a loopback port, and
+        # both would otherwise need the token woven through a library we do not
+        # control. The query token is the same secret, in the only place these
+        # two can carry it.
+        if not presented and (
+            (request.method == "GET" and MEDIA_PATH.match(request.url.path))
+            or (request.method == "POST" and request.url.path == "/uploads")
+        ):
             scheme, presented = "bearer", request.query_params.get("token", "")
         # compare_digest keeps a wrong token from being narrowed down by timing.
         if scheme.lower() != "bearer" or not hmac.compare_digest(presented, self._token):

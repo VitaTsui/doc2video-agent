@@ -40,6 +40,7 @@ export function Composer({
   onModel,
   onSend,
   onDeck,
+  uploadAction,
 }: {
   disabled: boolean
   hint: string
@@ -47,7 +48,9 @@ export function Composer({
   model: string
   onModel: (value: string) => void
   onSend: (text: string) => void | Promise<void>
-  onDeck: (file: File, brief: string) => void | Promise<void>
+  onDeck: (file: File, brief: string, uploadId?: string) => void | Promise<void>
+  /** Where the picker posts. Carries the token, which it cannot send as a header. */
+  uploadAction: string
 }) {
   const [files, setFiles] = useState<UploadFile[]>([])
 
@@ -70,16 +73,26 @@ export function Composer({
           assistanting={disabled}
           fileList={files}
           onFileListChange={setFiles}
-          uploadConfig={{ accept: '.pdf,.ppt,.pptx' }}
+          // A real address, not just an accept filter: without one the picker
+          // has nowhere to post and says so, in the middle of the composer.
+          // The upload then happens while the brief is still being typed,
+          // which is the better order anyway — a 6MB deck is already on the
+          // backend by the time the sentence is finished.
+          uploadConfig={{ accept: '.pdf,.ppt,.pptx', action: uploadAction }}
           modelConfig={{ modelList, modelType: model, setModelType: onModel }}
           onSend={(text) => {
             // A deck and the sentence describing what to do with it arrive in
             // the same turn: the file is held here until send, not uploaded on
             // pick, so the brief can still be typed after choosing it.
             // One deck per turn; a second attachment would have nowhere to go.
-            const picked = files[0]?.originFileObj as File | undefined
+            const attached = files[0]
+            const picked = attached?.originFileObj as File | undefined
             if (picked) {
-              void onDeck(picked, text.trim())
+              // The component already uploaded it; its answer carries the id.
+              // Falling back to the File covers an upload that failed, so a
+              // deck is never lost to a transient error.
+              const uploaded = (attached?.response as { upload_id?: string } | undefined)?.upload_id
+              void onDeck(picked, text.trim(), uploaded)
               setFiles([])
               return
             }
