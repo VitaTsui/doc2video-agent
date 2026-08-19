@@ -173,3 +173,45 @@ def test_dimensions_carry_their_own_evidence(score):
     }
     assert all(d.detail for d in report.dimensions)
     assert abs(sum(d.weight for d in report.dimensions) - 1.0) < 1e-9
+
+
+def test_pages_that_never_made_it_into_the_video_are_an_error(score):
+    """Scoring only the scenes that exist vouches for whatever was dropped.
+
+    A 30-page deck came out as a 6-page video and scored 100: every scene it
+    had was fine, and nothing asked about the twenty-four it didn't. The person
+    watching cannot tell — there is no gap to see, the video simply ends.
+    """
+    scenes = [_scene(i) for i in range(1, 7)]
+    project = _project(scenes)
+    project.document.pages = [_page(i) for i in range(1, 31)]
+
+    report = score(project)
+
+    missing = [f for f in project.review if f.kind == "uncovered_page"]
+    assert missing, "24 页没进片，质检一句话都没说"
+    assert "24 页" in missing[0].message
+    assert report.errors >= 1
+
+    # Completeness is what this breaks, and it breaks all the way. The total
+    # falls to 72 rather than to nothing because the other four dimensions
+    # measure the six scenes that do exist, and those are fine — the number
+    # alone is not the whole verdict, which is why the finding exists too.
+    completeness = next(d for d in report.dimensions if d.name == "completeness")
+    assert completeness.score < 25, completeness  # 24/30 页缺失
+    assert report.score < 80, report.score
+
+
+def test_a_page_the_deck_ends_with_may_be_left_out_without_penalty(score):
+    """Contact pages are dropped on purpose — the same rule the ordering uses."""
+    from doc2video.schemas import PageType
+
+    scenes = [_scene(i) for i in range(1, 4)]
+    project = _project(scenes)
+    project.document.pages = [_page(i) for i in range(1, 5)]
+    project.document.pages[-1].page_type = PageType.CONTACT
+
+    report = score(project)
+
+    assert not [f for f in project.review if f.kind == "uncovered_page"]
+    assert report.score > 90

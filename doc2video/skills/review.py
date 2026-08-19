@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from ..schemas import ReviewFinding
+from ..schemas import PageType, ReviewFinding
 from ..schemas.telemetry import QualityDimension, QualityReport
 from .base import Skill
 
@@ -65,14 +65,25 @@ class ReviewSkill(Skill):
         for finding in findings:
             by_kind[finding.kind] = by_kind.get(finding.kind, 0) + 1
 
-        broken = by_kind.get("missing_visual", 0) + by_kind.get("missing_audio", 0)
+        # A page with no scene is as incomplete as a scene with no audio, and
+        # more damaging: nobody watching can tell that something was left out.
+        # Counted from the deck rather than from the findings — those collapse
+        # into one readable line, and one line must not read as one page.
+        uncovered = len(self._uncovered_pages())
+        broken = by_kind.get("missing_visual", 0) + by_kind.get("missing_audio", 0) + uncovered
+        # Against what the video should have had, not what it has — otherwise
+        # dropping most of the deck improves the denominator.
+        expected = len(scenes) + uncovered
         dangling = by_kind.get("dangling_action", 0) + by_kind.get("action_overflow", 0)
         dimensions = [
             QualityDimension(
                 name="completeness",
-                score=_ratio_score(broken, len(scenes)),
+                score=_ratio_score(broken, expected),
                 weight=0.35,
-                detail=f"{broken} 个场景缺画面或缺配音",
+                detail=(
+                    f"{broken} 处不完整"
+                    + (f"，其中 {uncovered} 页没有进片" if uncovered else "")
+                ),
             ),
             QualityDimension(
                 name="pacing",
@@ -128,6 +139,22 @@ class ReviewSkill(Skill):
         return sum(1 for scene in self.project.scenes if scene.actions)
 
     # -- deterministic ---------------------------------------------------
+    def _uncovered_pages(self) -> list[int]:
+        """Pages the deck has and the video does not.
+
+        Checked against the document rather than against ``presentation_order``,
+        because the order is itself something the pipeline computes — asking a
+        truncated ordering whether anything is missing gets it to vouch for the
+        truncation it caused.
+        """
+        project = self.project
+        covered = {scene.source_page for scene in project.scenes if scene.source_page}
+        return [
+            page.index
+            for page in project.document.pages
+            if page.index not in covered and page.page_type is not PageType.CONTACT
+        ]
+
     def _structural_checks(self) -> list[ReviewFinding]:
         findings: list[ReviewFinding] = []
         project = self.project
@@ -143,6 +170,20 @@ class ReviewSkill(Skill):
                     message=(
                         f"实际时长 {total:.0f} 秒与目标 {target} 秒偏差超过 "
                         f"{DURATION_TOLERANCE:.0%}，可要求压缩或展开讲稿"
+                    ),
+                )
+            )
+
+        missing = self._uncovered_pages()
+        if missing:
+            shown = "、".join(str(i) for i in missing[:8])
+            findings.append(
+                ReviewFinding(
+                    severity="error",
+                    kind="uncovered_page",
+                    message=(
+                        f"{len(missing)} 页没有出现在成片里（第 {shown} "
+                        f"{'…' if len(missing) > 8 else ''}页）"
                     ),
                 )
             )
