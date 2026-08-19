@@ -160,6 +160,24 @@ fn start_backend(app: &tauri::AppHandle) -> Result<Backend, String> {
     // means starting a new one.
     let mut env = secrets::as_env();
     env.extend(prefs::load(&dir).as_env());
+
+    // The same hole, one layer down: the pipeline reaches Anthropic and OpenAI
+    // through httpx, which honours these variables — and on a machine whose
+    // proxy lives only in the Windows registry, they are not set. The model
+    // call would then go out direct on the route that made a 419MB download
+    // take an hour.
+    if let Some(proxy) = runtime::system_proxy() {
+        for name in ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"] {
+            if std::env::var(name).is_err() {
+                env.push((name.to_string(), proxy.clone()));
+            }
+        }
+        // Never proxy the loopback: the window talks to the backend on
+        // 127.0.0.1, and a proxy in between is at best a detour.
+        if std::env::var("NO_PROXY").is_err() {
+            env.push(("NO_PROXY".to_string(), "127.0.0.1,localhost".to_string()));
+        }
+    }
     Backend::start(&paths, env).map_err(|e| format!("{e:#}"))
 }
 

@@ -24,7 +24,7 @@ anyhow = "1"
 # Windows Credential Manager, Linux Secret Service.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 rand = "0.8"
-ureq = "2"
+ureq = { version = "2", features = ["socks-proxy"] }
 # The runtime arrives as a tar.gz with a checksum beside it: unpack it here
 # rather than shelling out to tar, which Windows does not have.
 flate2 = "1"
@@ -37,6 +37,9 @@ tauri-plugin-process = "2"
 # The window's own close path runs Drop; a signal does not, and a backend left
 # behind by `kill` keeps a port and, mid-render, a core.
 signal-hook = "0.3"
+
+[target."cfg(windows)".dependencies]
+winreg = "0.52"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
