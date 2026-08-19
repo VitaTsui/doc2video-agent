@@ -94,8 +94,12 @@ export function Setup({
           {error && (
             <div className="card" style={{ color: '#b0562f' }}>
               {error}
+              {/* The guess this used to make ("可能还没发布") read as a
+                  diagnosis and was usually wrong — the message above now
+                  carries the actual cause. What belongs here is where to look
+                  when it still is not enough. */}
               <div className="muted" style={{ marginTop: 6 }}>
-                网络不通、或者这个版本还没发布对应平台（{status.target}）的运行时，都会是这个结果。
+                每次尝试的断点和错误都记在应用数据目录的 runtime-install.log 里。
               </div>
             </div>
           )}
