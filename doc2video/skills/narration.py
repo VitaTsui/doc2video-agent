@@ -27,7 +27,7 @@ from ..core.ids import scene_id
 from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisual, VisualType
 from ..tools.llm import model_schema
 from ..tools.tts import estimate_duration
-from .base import Skill, load_prompt
+from .base import ProgressFn, Skill, load_prompt
 
 # Pages per model call. Small enough that a long deck cannot overrun the
 # output budget, large enough that each page can see its neighbours.
@@ -98,7 +98,9 @@ class NarrationSkill(Skill):
     name = "presentation-narration"
     description = "生成适合目标受众和时长的讲稿"
 
-    def run(self, written: dict[int, str] | None = None) -> None:
+    def run(
+        self, written: dict[int, str] | None = None, *, progress: ProgressFn | None = None
+    ) -> None:
         """Write the script ourselves — the path taken when nobody supplied one.
 
         With a model configured this is a real script. Without one it is
@@ -124,7 +126,7 @@ class NarrationSkill(Skill):
             drafts = {index: _as_draft(index, text) for index, text in kept.items()}
         else:
             drafts = self.try_llm(
-                lambda: self._write_with_model(pages, budgets, kept),
+                lambda: self._write_with_model(pages, budgets, kept, progress=progress),
                 lambda: self._placeholder(pages, budgets, kept),
                 what="讲稿",
             )
@@ -432,6 +434,8 @@ class NarrationSkill(Skill):
         pages: list[DocumentPage],
         budgets: dict[int, float],
         kept: dict[int, str] | None = None,
+        *,
+        progress: ProgressFn | None = None,
     ) -> dict[int, PageNarration]:
         """Write the whole deck in batches.
 
@@ -457,6 +461,18 @@ class NarrationSkill(Skill):
             batch = pages[start : start + BATCH_SIZE]
             if all(page.index in kept for page in batch):
                 continue
+            # Said before the call, not after. A batch is one model call and
+            # takes a minute or more; a count that only moves when a call
+            # returns sits still for that whole minute, and the window has no
+            # way to say which pages are being written *now* — which is the
+            # one thing the person waiting wants to know.
+            if progress is not None:
+                progress(
+                    "narrate",
+                    f"第 {batch[0].index}-{batch[-1].index} 页",
+                    len(drafts),
+                    len(pages),
+                )
             with ledger.call(
                 self.llm.source,
                 f"第 {batch[0].index}-{batch[-1].index} 页",

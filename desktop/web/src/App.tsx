@@ -51,7 +51,12 @@ export function App() {
   // conversation, so neither of them can own it.
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   /** The model writing the script, and how far it has got. Null when it isn't. */
-  const [drafting, setDrafting] = useState<{ done: number; total: number } | null>(null)
+  const [drafting, setDrafting] = useState<{
+    done: number
+    total: number
+    /** The pages the model is on right now, e.g. 「第 5-8 页」. */
+    writing: string
+  } | null>(null)
   const [running, setRunning] = useState(false)
   const [greeting, setGreeting] = useState('')
   const [notice, setNotice] = useState('')
@@ -430,13 +435,18 @@ export function App() {
         // Never below what the user typed: their pages are written, whether or
         // not the backend has saved them yet, and a count that drops to zero
         // the moment they press the button reads as "mine were thrown away".
-        setDrafting({ done: Math.max(filled.length, already.length), total })
+        setDrafting((current) => ({
+          ...current,
+          done: Math.max(filled.length, already.length),
+          total,
+          writing: current?.writing ?? '',
+        }))
         if (filled.length === 0) return 0
         setDrafts(Object.fromEntries(filled.map((p) => [String(p.index), p.narration])))
         return filled.length
       }
 
-      setDrafting({ done: already.length, total })
+      setDrafting({ done: already.length, total, writing: '' })
       const jobId = await api.draftScript(project, Object.fromEntries(already))
       const poll = window.setInterval(() => {
         void api
@@ -449,7 +459,17 @@ export function App() {
       }, 1500)
       let done = 0
       try {
-        await api.watchJob(jobId, () => {})
+        // The deck is written a few pages per model call, and a call takes a
+        // minute or more. Counting finished pages alone, the number sits still
+        // for that whole minute and the bar looks broken. The job says which
+        // pages it is on before it starts them, so the wait has something true
+        // in it: 「正在写第 5-8 页」.
+        await api.watchJob(jobId, (state) => {
+          if (state.stage !== 'narrate') return
+          setDrafting((current) =>
+            current ? { ...current, writing: state.detail } : current,
+          )
+        })
         // The last batch may have landed between polls — and so may the step
         // that closes the record, which is the one naming what was written.
         done = fill(await api.pages(project).catch(() => []))

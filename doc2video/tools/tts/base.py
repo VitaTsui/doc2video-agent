@@ -67,6 +67,11 @@ class TTSProvider:
     # of that rather than instead of it.
     natural_rate = 1.0
 
+    # The voice this engine uses when nobody names one. Declared rather than
+    # left implicit so the window can answer 「现在用的是哪个声音」 without
+    # synthesising something to find out.
+    default_voice = ""
+
     def available(self) -> bool:
         return False
 

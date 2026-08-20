@@ -23,7 +23,7 @@ export function MessageList({
     written: number
     locked: boolean
     generated: boolean
-    drafting: { done: number; total: number } | null
+    drafting: { done: number; total: number; writing: string } | null
     onRender: () => void
     /** Write the pages nobody has written, keeping the ones they have. */
     onDraft: () => void
@@ -83,15 +83,27 @@ export function MessageList({
                     <span className="deckgate__writing">
                       <span className="spinner" />
                       <span className="muted">
-                        {`正在写讲稿 ${deck.drafting.done} / ${deck.drafting.total} 页`}
+                        {/* Two numbers, because they answer different
+                            questions: how far it has got, and whether it is
+                            doing anything right now. A deck is written a few
+                            pages per model call and a call takes a minute or
+                            more, so the finished count alone sits still long
+                            enough to look stuck. */}
+                        {`已写 ${deck.drafting.done} / ${deck.drafting.total} 页`}
+                        {deck.drafting.writing && `，正在写${deck.drafting.writing}`}
                       </span>
                       <span className="bar">
-                        <span
+                        <div
                           className="bar__fill"
                           style={{
                             width: `${Math.round((deck.drafting.done / Math.max(deck.drafting.total, 1)) * 100)}%`,
                           }}
                         />
+                        {/* The batch in flight, sweeping past the finished
+                            part: the pages it covers are not written yet, so
+                            they are not counted — but the work is real and the
+                            bar should not be still while it happens. */}
+                        <div className="bar__fill bar__fill--pulse" />
                       </span>
                     </span>
                   ) : (

@@ -57,6 +57,7 @@ class KokoroProvider(TTSProvider):
     # wants a technical deck read to them. 0.85 puts it near 288, in the band
     # a listener follows.
     natural_rate = 0.85
+    default_voice = DEFAULT_VOICE
 
     def available(self) -> bool:
         return self._import_error() is None

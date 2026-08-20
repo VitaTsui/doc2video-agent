@@ -198,7 +198,30 @@ class Executor:
                 for scene in project.scenes
             ]
         if stage is Stage.VOICE:
-            return [
+            spoken = next((s for s in project.scenes if s.audio.path), None)
+            said = (
+                [
+                    ledger.text_artifact(
+                        "用的声音",
+                        f"{spoken.audio.provider}｜{spoken.audio.voice or '引擎默认音色'}"
+                        # Only when it was asked for. A default of 1.00× would
+                        # be a lie: every engine declares its own comfortable
+                        # pace and speaks at that unless told otherwise.
+                        + (
+                            f"｜语速 {project.intent.speech_rate:.2f}×"
+                            if project.intent.speech_rate
+                            else "｜引擎自己的语速"
+                        ),
+                    )
+                ]
+                if spoken
+                else []
+            )
+            # First, and belonging to the step rather than to any one page:
+            # it is the one fact about this stage that explains how the whole
+            # video sounds, and it was previously only inferable from the tool
+            # name on the step's own row.
+            return said + [
                 ledger.file_artifact(
                     f"第 {scene.source_page} 页配音（{scene.duration:.1f}s）",
                     scene.audio.path,
@@ -324,7 +347,7 @@ class Executor:
         else:
             # Drafting. Whatever came with the plan is what the user already
             # typed — kept as written, and used as context for the rest.
-            skill.run(plan.narrations)
+            skill.run(plan.narrations, progress=self._progress)
 
     def _stage_voice(self, plan: ExecutionPlan) -> None:
         VoiceSkill(self.ctx).run(force=plan.force_voice, progress=self._progress)

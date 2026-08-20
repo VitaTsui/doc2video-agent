@@ -104,11 +104,57 @@ def catalogue(settings: Settings | None = None) -> list[VoicePack]:
     return [pack for pack in packs if pack.installed or pack.packages]
 
 
+def in_use(settings: Settings | None = None) -> tuple[str, str]:
+    """The engine and voice a video would be made with right now.
+
+    Not the same as the configured value: `tts_voice` is empty by default and
+    means "whatever this machine settles on", which is a real answer but not
+    one anybody can read. So it is resolved the way a render resolves it — the
+    engine that would run, and the voice it would use if nobody named one.
+
+    A project can still say otherwise (「用播音腔讲」 sets its own), and that
+    belongs to the video rather than to the machine. This is the default it
+    starts from.
+    """
+    from ...core import prefs
+    from . import TTSTool
+
+    settings = settings or get_settings()
+    chosen = prefs.load(settings).voice
+    tool = TTSTool(settings)
+    if chosen:
+        return tool._engine_for(chosen).name, chosen  # noqa: SLF001
+    engine = tool._engine_for(tool.voice)  # noqa: SLF001 - the same resolution a render does
+
+    # Empty when the engine has no default of its own: `say` with no `-v`
+    # speaks in whatever voice macOS is set to, and naming the first of its
+    # list here would be inventing an answer.
+    return engine.name, tool.voice or engine.default_voice
+
+
+# The engine each pack is, by the name the engine calls itself. Two names for
+# one thing because one is a product and the other is a module: 「系统自带」 is
+# what a person picks, `macos_say` is what runs.
+PACK_OF_ENGINE = {"edge": "edge", "kokoro": "kokoro", "macos_say": "system", "piper": "piper"}
+
+
 def payload(settings: Settings | None = None) -> dict:
+    from ...core import prefs
+
     settings = settings or get_settings()
     packs = catalogue(settings)
+    provider, voice = in_use(settings)
     return {
-        "current": settings.tts_voice,
+        # What was chosen in the window, or configured on the machine — often
+        # neither…
+        "current": prefs.load(settings).voice or settings.tts_voice,
+        # …and what that actually comes out as, which is what someone asking
+        # 「现在用的是哪个声音」 wants to know.
+        "provider": provider,
+        # Which pack that engine is, so the window can name it the way it
+        # names it everywhere else rather than printing the module name.
+        "pack": PACK_OF_ENGINE.get(provider, ""),
+        "voice": voice,
         "packs": [
             {
                 "id": pack.id,

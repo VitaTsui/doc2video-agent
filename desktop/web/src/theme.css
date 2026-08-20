@@ -343,6 +343,7 @@ body {
 }
 
 .bar {
+  position: relative;
   height: 4px;
   background: var(--user-bg);
   border-radius: 99px;
@@ -356,8 +357,15 @@ body {
   transition: width 0.3s ease;
 }
 
+/* Laid over the finished part rather than beside it: the work in flight is
+   not progress yet — the pages it covers are not written — but the bar should
+   not be still while it happens. */
 .bar__fill--pulse {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 40%;
+  opacity: 0.5;
   animation: sweep 1.4s ease-in-out infinite;
 }
 
@@ -1219,12 +1227,67 @@ body {
   margin-top: 8px;
 }
 
+/* The one that would speak if a video were made right now. Marked rather
+   than listed apart: it is one of the same list, and moving it would make the
+   list stop being a list of what this machine has. */
+.pack__voice--on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pack__voice:disabled {
+  cursor: default;
+}
+
+.pack__voice:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+/* One tool under a step. The dot carries the only thing that varies by
+   machine — whether it is usable — so it is the first thing on the row and
+   the only coloured thing on it. */
+.part {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12.5px;
+}
+
+.part__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 1px;
+  border-radius: 99px;
+  background: var(--line-strong, var(--line));
+}
+
+.part__dot--on {
+  background: var(--accent);
+}
+
+.part__name {
+  flex: none;
+  min-width: 96px;
+}
+
+.part__what {
+  flex: 1;
+}
+
+/* A chip that is also a button: pressing one makes it the default. It stays
+   looking like a list of what this machine has, because that is what it is —
+   a row of obvious buttons would read as a toolbar. */
 .pack__voice {
+  font: inherit;
   font-size: 12px;
   color: var(--ink-soft);
   background: var(--user-bg);
+  border: 1px solid transparent;
   border-radius: 6px;
   padding: 2px 8px;
+  cursor: pointer;
 }
 
 /* One step of the account. Two lines by design: what it is, then what it

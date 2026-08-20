@@ -54,13 +54,18 @@ class Decision(BaseModel):
     looks capricious and one whose reasoning can be argued with.
     """
 
-    action: Literal["write_script", "revise", "ask", "finish"]
+    action: Literal["write_script", "revise", "retune", "ask", "finish"]
     reason: str
-    # write_script: page index (as a string) -> that page's narration.
+    # write_script: page index (as a string) -> that page's narration. Scene
+    # ids are accepted too, because that is what the prompt shows and a model
+    # that reads its input will use them.
     narrations: dict[str, str] = Field(default_factory=dict)
     # revise: which scene, and what it should say instead.
     scene_id: str = ""
     narration: str = ""
+    # retune: how it is spoken. Words untouched.
+    voice: str = ""
+    speech_rate: float = 0.0
     # ask / finish: what to say to the person.
     message: str = ""
 
@@ -90,6 +95,7 @@ class AgentLoop:
         *,
         render_all,
         render_scene,
+        revoice,
         reload,
     ) -> None:
         self.project = project
@@ -97,6 +103,7 @@ class AgentLoop:
         self.store = store
         self._render_all = render_all
         self._render_scene = render_scene
+        self._revoice = revoice
         self._reload = reload
 
     def run(self, message: str) -> Outcome:
@@ -183,7 +190,7 @@ class AgentLoop:
 
     def _execute(self, decision: Decision, session: Session) -> None:
         if decision.action == "write_script":
-            pages = {int(k): v for k, v in decision.narrations.items() if v.strip()}
+            pages = self._pages_of(decision.narrations)
             self._render_all(pages)
             self._say(
                 session,
@@ -199,6 +206,39 @@ class AgentLoop:
                 f"重做了 {decision.scene_id}",
                 action="revise",
             )
+        elif decision.action == "retune":
+            self._revoice(decision.voice, decision.speech_rate)
+            self._say(
+                session,
+                Speaker.TOOL,
+                f"换成 {decision.voice or '默认音色'} 重新配音",
+                action="retune",
+            )
+
+    def _pages_of(self, narrations: dict[str, str]) -> dict[int, str]:
+        """Read the keys as pages, whatever the model keyed them by.
+
+        The prompt lists the video as `scn_04（第 4 页…）` and the review names
+        its findings by scene, so a model that reads its input keys by scene —
+        and this used to end the turn with `invalid literal for int(): 'scn_04'`
+        rather than doing what was asked. A key nobody can place is dropped and
+        said out loud; it is one page, not the run.
+        """
+        by_scene = {scene.scene_id: scene.source_page for scene in self.project.scenes}
+        pages: dict[int, str] = {}
+        for key, text in narrations.items():
+            if not text.strip():
+                continue
+            page = by_scene.get(key)
+            if page is None:
+                try:
+                    page = int(str(key).strip())
+                except (TypeError, ValueError):
+                    log.warning("讲稿的键既不是页码也不是场景号，跳过：%r", key)
+                    ledger.note("讲稿有一页对不上", detail=f"键 {key!r} 既不是页码也不是场景号")
+                    continue
+            pages[page] = text
+        return pages
 
     # -- what the model sees -------------------------------------------
     def _prompt(self, session: Session) -> str:
@@ -254,14 +294,19 @@ class AgentLoop:
 _ACTION_LABEL = {
     "write_script": "决定写讲稿",
     "revise": "决定重做某一页",
+    "retune": "决定换个声音重配",
     "ask": "决定先问清楚",
     "finish": "决定收工",
 }
 
-_SYSTEM = """你在把一份演示文档做成讲解视频。你能做的只有四件事：
+_SYSTEM = """你在把一份演示文档做成讲解视频。你能做的只有五件事：
 
 - write_script：为所有页写讲稿，然后配音、设计镜头、渲染、质检。第一次必须走这一步。
+  narrations 用页码做键（"4"），也可以用场景号（"scn_04"）。
 - revise：只重做一页。改动只影响这一页，其余片段直接复用。
+- retune：只换声音或语速，一个字都不改。用户说「换成某某音色」「语速慢点」时用它，
+  不要用 write_script——那会把他认可的讲稿重写一遍。voice 填音色名，speech_rate 填
+  倍率（0 表示不改）。
 - ask：需要用户说明才能继续时，问一句。
 - finish：告诉用户结果，结束这一轮。
 

@@ -8,9 +8,9 @@ re-rendered the same words while reporting "修改 1 个场景".
 
 from __future__ import annotations
 
-from doc2video.agent.planner import Planner
+from doc2video.agent.planner import Planner, Stage
 from doc2video.core.config import Settings
-from doc2video.schemas import Scene, Source, SourceType, VideoProject
+from doc2video.schemas import DocumentPage, Scene, Source, SourceType, VideoProject
 from doc2video.skills import NarrationSkill
 from doc2video.skills.base import SkillContext
 from doc2video.storage import ProjectStore
@@ -83,3 +83,41 @@ def test_without_a_model_the_scene_is_left_alone_and_it_is_recorded(
 
     assert scene.narration == "原来的讲稿。"
     assert [d.what for d in recorder.record.degradations] == ["修改第 3 页"]
+
+
+def test_changing_the_voice_does_not_rewrite_the_script(settings, store):
+    """「换个声音」 asks to change the voice, not the video.
+
+    Any intent change used to mean a full revision, so asking for a different
+    voice rewrote the script and redirected the camera too — throwing away the
+    two things the person was keeping.
+    """
+    project = VideoProject(
+        project_id="proj_revoice",
+        source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
+    )
+    project.document.pages = [DocumentPage(index=1, title="一", width=1920, height=1080)]
+    project.scenes = [
+        Scene(scene_id="scn_01", source_page=1, narration="原来的讲稿。", duration=10.0)
+    ]
+
+    plan = Planner().edit_plan("换个播音腔的声音", project)
+
+    assert Stage.NARRATE not in plan.stages
+    assert Stage.DIRECT not in plan.stages
+    assert plan.stages == [Stage.VOICE, Stage.MOTION, Stage.RENDER, Stage.REVIEW]
+    assert plan.force_voice is True
+
+
+def test_changing_the_length_still_rewrites(settings, store):
+    """The guard is narrow on purpose: length is a property of the words."""
+    project = VideoProject(
+        project_id="proj_shorter",
+        source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
+    )
+    project.document.pages = [DocumentPage(index=1, title="一", width=1920, height=1080)]
+    project.scenes = [Scene(scene_id="scn_01", source_page=1, narration="原稿。", duration=10.0)]
+
+    plan = Planner().edit_plan("整体压到 3 分钟", project)
+
+    assert Stage.NARRATE in plan.stages

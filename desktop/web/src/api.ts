@@ -112,7 +112,66 @@ export interface VoicePack {
 
 /** Every voice this machine can speak with, and what the rest would cost. */
 export async function voicePacks() {
-  return request<{ current: string; packs: VoicePack[] }>('/health/voices')
+  return request<{
+    /** What is configured, which is usually nothing. */
+    current: string
+    /** What that actually resolves to — the engine that would speak, and the
+     *  voice it would use. Empty voice means the engine's own default. */
+    provider: string
+    /** Which pack that engine is, so it can be named the way it is named
+     *  everywhere else rather than by its module name. */
+    pack: string
+    voice: string
+    packs: VoicePack[]
+  }>('/health/voices')
+}
+
+export interface PipelineStep {
+  id: string
+  name: string
+  /** The skill that runs it, by the name it has in the code. Empty when the
+   *  step is plain machinery rather than a skill. */
+  skill: string
+  what: string
+  parts: {
+    id: string
+    name: string
+    what: string
+    available: boolean
+    /** Why not, when it is not. */
+    reason: string
+  }[]
+}
+
+/** What this build does, step by step, and what works on this machine. */
+export async function plugins() {
+  const body = await request<{ steps: PipelineStep[] }>('/health/plugins')
+  return body.steps
+}
+
+/** Choose the voice new videos start with. Empty hands it back to the machine. */
+export async function chooseVoice(voice: string) {
+  return request<Awaited<ReturnType<typeof voicePacks>>>('/health/voices/current', {
+    method: 'PUT',
+    body: JSON.stringify({ voice }),
+  })
+}
+
+/**
+ * One sentence in this voice, as playable audio.
+ *
+ * Fetched rather than pointed at with a URL: it is a POST, and the answer is
+ * bytes rather than JSON. The caller owns the object URL and should revoke it.
+ */
+export async function previewVoice(voice: string): Promise<string> {
+  const { base_url, token } = required()
+  const response = await fetch(`${base_url}/health/voices/preview`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ voice }),
+  })
+  if (!response.ok) throw await asError(response)
+  return URL.createObjectURL(await response.blob())
 }
 
 /** Put a pack into the runtime. Slow for the big one; it says its size first. */

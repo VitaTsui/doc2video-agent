@@ -51,6 +51,7 @@ def _loop(tmp_path: Path, llm, renders: list) -> AgentLoop:
         SessionStore(tmp_path / SESSION_FILE),
         render_all=lambda n: renders.append(("all", n)),
         render_scene=lambda s, n: renders.append(("scene", s, n)),
+        revoice=lambda voice, rate: renders.append(("voice", voice, rate)),
         reload=lambda: project,
     )
 
@@ -181,6 +182,7 @@ def test_decisions_land_in_the_ledger_alongside_the_renders(tmp_path: Path) -> N
         # Each render opens a recorder of its own, exactly as the service does.
         render_all=lambda pages: _record_a_render(book),  # noqa: ARG005
         render_scene=lambda scene_id, narration: None,  # noqa: ARG005
+        revoice=lambda voice, rate: None,  # noqa: ARG005
         reload=_project,
     )
 
@@ -216,6 +218,7 @@ def test_a_finished_turn_can_be_read_back_from_disk(tmp_path: Path) -> None:
         store,
         render_all=lambda pages: None,  # noqa: ARG005
         render_scene=lambda scene_id, narration: None,  # noqa: ARG005
+        revoice=lambda voice, rate: None,  # noqa: ARG005
         reload=_project,
     )
     loop.run("帮我做个视频")
@@ -227,3 +230,79 @@ def test_a_finished_turn_can_be_read_back_from_disk(tmp_path: Path) -> None:
         ("agent", False),  # the reply, which belongs on screen
     ]
     assert reloaded.turns[-1].text == "这是给客户还是内部？"
+
+
+def test_a_script_keyed_by_scene_still_lands_on_the_right_page(tmp_path: Path):
+    """The prompt shows the video as `scn_04（第 4 页…）`, so models key by scene.
+
+    Read as page numbers, that ended the turn with
+    `invalid literal for int(): 'scn_04'` — the whole request lost to the shape
+    of a dictionary key.
+    """
+    from doc2video.schemas import Scene
+
+    renders: list = []
+    loop = _loop(
+        tmp_path,
+        _Scripted(
+            Decision(
+                action="write_script",
+                reason="按质检改两页",
+                narrations={"scn_02": "第二页新讲稿。", "3": "第三页新讲稿。"},
+            ),
+            Decision(action="finish", reason="改完了", message="好了"),
+        ),
+        renders,
+    )
+    loop.project.scenes = [
+        Scene(scene_id="scn_02", source_page=2, narration="旧的", duration=5.0),
+    ]
+
+    loop.run("按质检改一下")
+
+    assert renders == [("all", {2: "第二页新讲稿。", 3: "第三页新讲稿。"})]
+
+
+def test_a_key_that_names_nothing_is_dropped_rather_than_ending_the_turn(tmp_path: Path):
+    renders: list = []
+    loop = _loop(
+        tmp_path,
+        _Scripted(
+            Decision(
+                action="write_script",
+                reason="写讲稿",
+                narrations={"封面": "开场白。", "1": "第一页。"},
+            ),
+            Decision(action="finish", reason="写完了", message="好了"),
+        ),
+        renders,
+    )
+
+    loop.run("写一版")
+
+    assert renders == [("all", {1: "第一页。"})]
+
+
+def test_changing_the_voice_does_not_go_near_the_script(tmp_path: Path):
+    """「把语音换成 Yunyang」 is not a request to rewrite anything.
+
+    With no action for it, the model reached for the only one that touched
+    audio — `write_script` — which rewrites the words somebody approved.
+    """
+    renders: list = []
+    loop = _loop(
+        tmp_path,
+        _Scripted(
+            Decision(
+                action="retune",
+                reason="用户只要换音色，讲稿不动",
+                voice="zh-CN-YunyangNeural",
+            ),
+            Decision(action="finish", reason="换好了", message="换成播音腔了"),
+        ),
+        renders,
+    )
+
+    loop.run("把语音换成zh-CN-YunyangNeural")
+
+    assert renders == [("voice", "zh-CN-YunyangNeural", 0.0)]
