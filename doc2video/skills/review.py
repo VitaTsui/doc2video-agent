@@ -96,6 +96,10 @@ class ReviewSkill(Skill):
                 SUBTITLE_BOTTOM_MARGIN,
             )
         )
+        # And whether anything was actually drawn. Only once there are clips to
+        # look at: before a render there is no picture to have an opinion about.
+        if self.project.render.scene_clips:
+            findings.extend(render_review.check_frames(self.project, self.ctx.asset_path))
         self.project.review = findings
         self.project.quality = self._score(findings)
 
@@ -135,9 +139,18 @@ class ReviewSkill(Skill):
         dangling = by_kind.get("dangling_action", 0) + by_kind.get("action_overflow", 0)
         dimensions = [
             QualityDimension(
+                name="render",
+                # A scene that came out empty is not a lesser video, it is a
+                # missing one — and unlike everything else here, nothing in the
+                # project can tell you it happened.
+                score=_ratio_score(by_kind.get("blank_frame", 0), max(len(scenes), 1)),
+                weight=0.20,  # with completeness, half the score is "is there a video"
+                detail=f"{by_kind.get('blank_frame', 0)} 个场景画面是空的",
+            ),
+            QualityDimension(
                 name="completeness",
                 score=_ratio_score(broken, expected),
-                weight=0.35,
+                weight=0.30,
                 detail=(
                     f"{broken} 处不完整"
                     + (f"，其中 {uncovered} 页没有进片" if uncovered else "")
@@ -146,7 +159,7 @@ class ReviewSkill(Skill):
             QualityDimension(
                 name="pacing",
                 score=self._pacing_score(by_kind),
-                weight=0.20,
+                weight=0.15,
                 detail=f"时长偏差与节奏问题 {by_kind.get('pacing', 0)} 条",
             ),
             QualityDimension(
@@ -157,7 +170,7 @@ class ReviewSkill(Skill):
                 score=_ratio_score(
                     by_kind.get("read_aloud", 0) + by_kind.get("ai_tic", 0), len(scenes)
                 ),
-                weight=0.20,
+                weight=0.15,
                 detail=(
                     f"{by_kind.get('read_aloud', 0)} 个场景接近照读，"
                     f"{by_kind.get('ai_tic', 0)} 个场景有 AI 腔句式"
@@ -166,7 +179,7 @@ class ReviewSkill(Skill):
             QualityDimension(
                 name="direction",
                 score=self._direction_score(dangling),
-                weight=0.15,
+                weight=0.10,
                 detail=f"{self._scenes_with_actions()}/{len(scenes)} 个场景有镜头动作",
             ),
             QualityDimension(

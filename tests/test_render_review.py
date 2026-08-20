@@ -129,3 +129,49 @@ def test_the_box_stays_inside_the_frame_for_ordinary_cues(text: str):
     box = render_review.subtitle_box(cue, WIDTH, HEIGHT, MARGIN)
     assert box.x >= 0 and box.y > 0
     assert box.x + box.w <= WIDTH and box.y + box.h <= HEIGHT
+
+
+def _make_clip(path, *, blank: bool) -> None:
+    """A short clip with nothing on it, or with something."""
+    import subprocess
+
+    from doc2video.tools.media_binaries import ffmpeg
+
+    source = "color=c=white:s=320x180:d=4:r=10" if blank else "testsrc=s=320x180:d=4:r=10"
+    subprocess.run(
+        [ffmpeg().path, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+         "-i", source, "-pix_fmt", "yuv420p", str(path)],
+        check=True,
+    )
+
+
+def test_a_scene_that_rendered_empty_is_caught(tmp_path):
+    """The one question the project cannot answer about itself.
+
+    Every other check reasons about what should be on screen. This asks whether
+    anything is — a page that failed to stage, an asset that did not copy, a
+    renderer that wrote white all leave a project that reviews perfectly.
+    """
+    blank, busy = tmp_path / "blank.mp4", tmp_path / "busy.mp4"
+    _make_clip(blank, blank=True)
+    _make_clip(busy, blank=False)
+
+    project = _project(_element(y=200))
+    project.scenes = [
+        Scene(scene_id="scene_01", source_page=1, narration="一", duration=4),
+        Scene(scene_id="scene_02", source_page=1, narration="二", duration=4),
+    ]
+    project.render.scene_clips = {"scene_01": "busy.mp4", "scene_02": "blank.mp4"}
+
+    findings = render_review.check_frames(project, lambda rel: tmp_path / rel)
+
+    assert [f.scene_id for f in findings] == ["scene_02"]
+    assert findings[0].kind == "blank_frame"
+    assert findings[0].severity == "error"
+
+
+def test_a_missing_clip_is_not_reported_as_blank(tmp_path):
+    """No clip is a different failure, and the model review already names it."""
+    project = _project(_element(y=200))
+    project.render.scene_clips = {"scene_01": "gone.mp4"}
+    assert render_review.check_frames(project, lambda rel: tmp_path / rel) == []

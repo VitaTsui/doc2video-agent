@@ -19,8 +19,15 @@ actually get drawn.
 from __future__ import annotations
 
 import math
+import re
+import subprocess
+from pathlib import Path
 
+from ..core.logging import get_logger
 from ..schemas import ActionType, BBox, DocumentPage, ReviewFinding, SubtitleCue, VideoProject
+from ..tools import ffmpeg
+
+log = get_logger(__name__)
 
 # The caption's own box, as `renderer/src/components/Subtitles.tsx` draws it.
 # Duplicated here rather than imported because one is TypeScript and the other
@@ -34,6 +41,14 @@ SUBTITLE_PADDING_Y = 14
 # A caption covering more than this of an element is covering it. Below it the
 # overlap is a corner clipping a margin, which nobody notices.
 COVER_RATIO = 0.25
+# How often to look at the picture inside one scene. Every two seconds is a
+# handful of samples for a typical scene — enough that a transition at each end
+# cannot make the whole scene look empty, cheap enough to stay one pass per
+# clip.
+FRAME_SAMPLE_SECONDS = 2.0
+# A frame whose brightest and darkest pixels are this close has nothing on it.
+# Real slides land two hundred apart even when they are white with pale text.
+BLANK_RANGE = 24.0
 # How much of the frame a caption may take. Leaving the frame entirely is the
 # obvious failure and almost never happens; the one that does is a caption that
 # grew to five or six lines and became a wall of text across the lower half.
@@ -204,3 +219,88 @@ def _cover_ratio(box: BBox, target: BBox) -> float:
     overlap_w = max(0.0, min(box.x + box.w, target.x + target.w) - max(box.x, target.x))
     overlap_h = max(0.0, min(box.y + box.h, target.y + target.h) - max(box.y, target.y))
     return overlap_w * overlap_h / (target.w * target.h)
+
+
+def check_frames(project: VideoProject, clip_path) -> list[ReviewFinding]:
+    """Scenes that came out blank, found by looking at the picture.
+
+    The one question geometry cannot answer. Every check above reasons about
+    what the project says should be on screen; this one asks whether anything
+    is. A page that failed to stage, an asset that did not copy, a renderer
+    that wrote white — all of them leave a project that reviews perfectly and
+    a video with nothing in it.
+
+    Asked of each scene's own clip rather than of the finished film. Sampling
+    the concatenation means deciding which scene a timestamp belongs to, and
+    getting that wrong reports the wrong page — the first version did exactly
+    that, naming the scene before the one whose frame it had measured. A clip
+    knows which scene it is, and its middle is nowhere near a transition, so
+    both questions disappear.
+    """
+    findings: list[ReviewFinding] = []
+    for scene in project.scenes:
+        clip = project.render.scene_clips.get(scene.scene_id)
+        if not clip:
+            continue
+        path = clip_path(clip)
+        if path is None or not Path(path).exists():
+            continue
+        spread = _brightest_moment(Path(path))
+        if spread is None or spread > BLANK_RANGE:
+            continue
+        findings.append(
+            ReviewFinding(
+                severity="error",
+                kind="blank_frame",
+                scene_id=scene.scene_id,
+                message=f"这一段画面是空的（明暗差 {spread:.0f}），没有画出东西",
+            )
+        )
+    return findings
+
+
+def _brightest_moment(clip: Path) -> float | None:
+    """The most contrast this clip ever shows, or None if it cannot be read.
+
+    The whole measurement: a frame with something on it spans two hundred
+    levels even when the slide is white with pale text; a frame with nothing
+    on it spans none. Taken as the maximum over several samples because a
+    transition passes through blank on the way in and out — a scene is empty
+    only if it is empty all the way through.
+
+    Read in one linear pass per clip rather than by seeking. Seeking to a
+    timestamp and asking for a single frame's statistics reports zero for
+    frames that plainly have content — measured against the exported images,
+    every scene of a working video came back "blank". The stats are sound; the
+    seek is what is not.
+    """
+    cmd = [
+        ffmpeg.binary_path(),
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-i",
+        str(clip),
+        "-vf",
+        f"fps=1/{FRAME_SAMPLE_SECONDS},signalstats,metadata=print:file=-",
+        "-an",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=False)
+    except (subprocess.SubprocessError, OSError) as exc:
+        log.debug("读取画面统计失败：%s", exc)
+        return None
+
+    best: float | None = None
+    low: float | None = None
+    for line in result.stdout.splitlines():
+        if (value := re.search(r"\.YMIN=([0-9.]+)", line)) is not None:
+            low = float(value.group(1))
+        elif (value := re.search(r"\.YMAX=([0-9.]+)", line)) is not None and low is not None:
+            spread = float(value.group(1)) - low
+            best = spread if best is None else max(best, spread)
+            low = None
+    return best

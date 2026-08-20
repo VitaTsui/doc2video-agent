@@ -170,6 +170,9 @@ def test_dimensions_carry_their_own_evidence(score):
         "originality",
         "direction",
         "subtitles",
+        # What the viewer sees, which none of the others can reach: a scene
+        # whose frames came out empty is a perfect project and a missing video.
+        "render",
     }
     assert all(d.detail for d in report.dimensions)
     assert abs(sum(d.weight for d in report.dimensions) - 1.0) < 1e-9
