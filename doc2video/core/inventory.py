@@ -38,6 +38,20 @@ class Part:
 
 
 @dataclass
+class Rule:
+    """One number that decides what comes out, and what it decides.
+
+    Read from the constant itself rather than written down again here: a
+    number copied into a description is a number that will be wrong later,
+    and the whole point of showing these is that they are the real ones.
+    """
+
+    name: str
+    value: str
+    what: str
+
+
+@dataclass
 class Step:
     """One step of the pipeline: the skill that runs it, and what it can use."""
 
@@ -46,6 +60,10 @@ class Step:
     skill: str
     what: str
     parts: list[Part] = field(default_factory=list)
+    # The instructions this step gives the model, verbatim. Empty for the
+    # steps that ask no model anything.
+    prompt: str = ""
+    rules: list[Rule] = field(default_factory=list)
 
 
 def report(settings: Settings | None = None) -> dict:
@@ -59,6 +77,11 @@ def _as_dict(step: Step) -> dict:
         "name": step.name,
         "skill": step.skill,
         "what": step.what,
+        "prompt": step.prompt,
+        "rules": [
+            {"name": rule.name, "value": rule.value, "what": rule.what}
+            for rule in step.rules
+        ],
         "parts": [
             {
                 "id": part.id,
@@ -72,7 +95,16 @@ def _as_dict(step: Step) -> dict:
     }
 
 
+def _prompt(load, name: str) -> str:
+    """A prompt, or nothing. An unreadable file is not worth failing over."""
+    try:
+        return load(name)
+    except OSError:
+        return ""
+
+
 def steps(settings: Settings | None = None) -> list[Step]:
+    from ..agent import loop as agent_loop
     from ..skills import (
         DirectorSkill,
         DocumentSkill,
@@ -80,10 +112,15 @@ def steps(settings: Settings | None = None) -> list[Step]:
         NarrationSkill,
         ReviewSkill,
         VoiceSkill,
+        director,
+        render_review,
+        speech_review,
     )
+    from ..skills.base import load_prompt
     from ..tools.llm import llm_status
     from ..tools.renderer import renderer_status
     from ..tools.tts import packs as voice_packs
+    from ..tools.tts import units
 
     settings = settings or get_settings()
     binaries = dependency_report()
@@ -123,6 +160,7 @@ def steps(settings: Settings | None = None) -> list[Step]:
             name="理解结构",
             skill=DocumentSkill.name,
             what=DocumentSkill.description + "：认页面类型、挑重点、排叙事顺序。",
+            prompt=_prompt(load_prompt, "document_understanding"),
             parts=[model],
         ),
         Step(
@@ -130,6 +168,7 @@ def steps(settings: Settings | None = None) -> list[Step]:
             name="生成讲稿",
             skill=NarrationSkill.name,
             what=NarrationSkill.description + "：按目标时长分配每页字数，写完再压回时长。",
+            prompt=_prompt(load_prompt, "narration"),
             parts=[model],
         ),
         Step(
@@ -137,6 +176,16 @@ def steps(settings: Settings | None = None) -> list[Step]:
             name="配音",
             skill=VoiceSkill.name,
             what=VoiceSkill.description + "：分句合成，给出句级时间戳，字幕跟着它走。",
+            rules=[
+                Rule(
+                    "一段话最长",
+                    f"{units.TARGET_UNIT_SECONDS:.0f} 秒",
+                    "超过就断开，另起一段合成",
+                ),
+                Rule("句号后停", f"{units.PAUSE_SENTENCE:.2f} 秒", "引擎自己的停顿之外再加的"),
+                Rule("重点句前停", f"{units.PAUSE_EMPHASIS:.2f} 秒", "写稿时标了重点的那一句"),
+                Rule("转折前停", f"{units.PAUSE_TURN:.2f} 秒", "「不过」「但是」这类词之前"),
+            ],
             parts=[
                 Part(
                     pack.id,
@@ -153,6 +202,20 @@ def steps(settings: Settings | None = None) -> list[Step]:
             name="镜头",
             skill=DirectorSkill.name,
             what=DirectorSkill.description + "：讲到哪就框到哪、推到哪，讲不清的地方不动。",
+            rules=[
+                Rule(
+                    "值得推近的字数",
+                    f"≤ {director.MAX_ZOOM_CHARS} 字",
+                    "整段正文推近没有意义",
+                ),
+                Rule("最大放大倍数", f"{director.RENDER_MAX_SCALE:.0f}×", "再大就糊了"),
+                Rule(
+                    "推近的最小收益",
+                    f"{director.MIN_ZOOM_RESULT:.0%}",
+                    "放大不到这个幅度就不推",
+                ),
+                Rule("不框的页", "封面 / 目录 / 章节页", "这几种页面上没有要指的东西"),
+            ],
             parts=[],
         ),
         Step(
@@ -201,10 +264,42 @@ def steps(settings: Settings | None = None) -> list[Step]:
             ],
         ),
         Step(
+            id="agent",
+            name="对话决策",
+            skill="",
+            what="出片之后你说一句「第 3 页太长了」，是它决定接下来做什么：重写哪几页、"
+            "换个声音、还是先问你一句。它只能用上面这些步骤，没有别的权限。",
+            prompt=agent_loop._SYSTEM,  # noqa: SLF001 - the text is the point
+            parts=[model],
+        ),
+        Step(
             id="review",
             name="质检",
             skill=ReviewSkill.name,
             what=ReviewSkill.description + "：全是量出来的，不请模型给自己打分。",
+            rules=[
+                Rule(
+                    "语速上限", f"{speech_review.TOO_FAST:.0f} 字/分", "再快听的人跟不上"
+                ),
+                Rule(
+                    "语速下限", f"{speech_review.TOO_SLOW:.0f} 字/分", "再慢画面在等旁白"
+                ),
+                Rule(
+                    "多久要有个停顿",
+                    f"{speech_review.MONOTONE_SECONDS:.0f} 秒",
+                    "一直不停，念出来就是平的",
+                ),
+                Rule(
+                    "画面算「没动」",
+                    f"变化 < {render_review.STILL_ENOUGH:.0f}",
+                    "抽帧比出来的差值",
+                ),
+                Rule(
+                    "动作要看得见",
+                    f"变化 ≥ {render_review.ACTION_MIN_CHANGE:.0f}",
+                    "低于这个就是没画出来",
+                ),
+            ],
             parts=[],
         ),
     ]

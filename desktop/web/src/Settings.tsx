@@ -578,6 +578,7 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
  */
 function Plugins() {
   const [steps, setSteps] = useState<api.PipelineStep[] | null>(null)
+  const [open, setOpen] = useState('')
   const [failure, setFailure] = useState('')
 
   useEffect(() => {
@@ -591,7 +592,8 @@ function Plugins() {
     <>
       <h2 className="modal__title">插件</h2>
       <p className="muted">
-        一条流水线，从左到右跑完就是一支视频。每一步用什么、这台机器上能不能用，都在下面。
+        一条流水线，从上到下跑完就是一支视频。每一步用什么、这台机器上能不能用，都在下面；
+        写着「看提示词」的，点开就是原文——不是转述，转述这件事没法拿来对照结果。
       </p>
 
       {failure && <p className="modal__error">{failure}</p>}
@@ -604,8 +606,32 @@ function Plugins() {
             {/* The name in the window next to the name in the code: 「配音」 is
                 what it is called here, `presentation-voice` is what runs. */}
             {step.skill && <span className="step__skill muted">{step.skill}</span>}
+            {(step.prompt || step.rules.length > 0) && (
+              <button
+                type="button"
+                className="pack__open"
+                onClick={() => setOpen(open === step.id ? '' : step.id)}
+              >
+                {open === step.id ? '收起' : step.prompt ? '看提示词' : '看规则'}
+              </button>
+            )}
           </div>
           <div className="muted pack__note">{step.what}</div>
+
+          {open === step.id && step.rules.length > 0 && (
+            <div className="rules">
+              {step.rules.map((rule) => (
+                <div key={rule.name} className="rule">
+                  <span className="rule__name">{rule.name}</span>
+                  <span className="rule__value">{rule.value}</span>
+                  <span className="muted rule__what">{rule.what}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* The instructions as they are sent, not a summary of them: a
+              paraphrase is the thing you cannot check the output against. */}
+          {open === step.id && step.prompt && <pre className="prompt">{step.prompt}</pre>}
           {step.parts.map((part) => (
             <div key={part.id} className="part">
               <span className={part.available ? 'part__dot part__dot--on' : 'part__dot'} />

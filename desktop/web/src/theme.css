@@ -1243,6 +1243,65 @@ body {
   border-color: var(--accent);
 }
 
+/* 「看提示词」 sits at the end of the step's own line, quiet: it is worth
+   opening once and not worth pressing every time. */
+.pack__open {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pack__open:hover {
+  color: var(--accent);
+}
+
+/* The prompt as it is sent. Monospace and scrollable, because it is a
+   document rather than a caption — and it must not stretch the panel. */
+.prompt {
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--user-bg);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rules {
+  margin: 8px 0 4px;
+}
+
+.rule {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12.5px;
+}
+
+.rule__name {
+  flex: none;
+  min-width: 108px;
+}
+
+.rule__value {
+  flex: none;
+  min-width: 86px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rule__what {
+  flex: 1;
+}
+
 /* One tool under a step. The dot carries the only thing that varies by
    machine — whether it is usable — so it is the first thing on the row and
    the only coloured thing on it. */

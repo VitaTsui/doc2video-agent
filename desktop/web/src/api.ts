@@ -133,6 +133,10 @@ export interface PipelineStep {
    *  step is plain machinery rather than a skill. */
   skill: string
   what: string
+  /** What this step tells the model, verbatim. Empty when it asks none. */
+  prompt: string
+  /** The numbers that decide what comes out, read from the constants. */
+  rules: { name: string; value: string; what: string }[]
   parts: {
     id: string
     name: string
