@@ -18,6 +18,7 @@ from .base import (
     join_units,
     weight_of,
 )
+from .pronounce import for_speech
 from .providers import resolve_provider
 from .units import plan_units
 
@@ -81,6 +82,7 @@ class TTSTool:
         emphasis: list[bool] | None = None,
         voice: str = "",
         rate: float = 0.0,
+        pronunciation: dict[str, str] | None = None,
     ) -> TTSResult:
         """Speak ``text``, and say when each of its sentences happens.
 
@@ -94,6 +96,7 @@ class TTSTool:
             lines,
             out_path,
             emphasis=emphasis,
+            pronunciation=pronunciation,
             voice=voice or self._settings.tts_voice,
             rate=rate or self._settings.tts_speech_rate,
         )
@@ -112,6 +115,7 @@ class TTSTool:
         out_path: Path,
         *,
         emphasis: list[bool] | None,
+        pronunciation: dict[str, str] | None,
         voice: str,
         rate: float,
     ) -> tuple[list[Segment], float, str]:
@@ -126,11 +130,19 @@ class TTSTool:
         every unit boundary is exact; only the sentences *inside* a unit still
         need the ladder.
         """
+        # What is spoken, which is not always what is written: a caption reads
+        # 「RAG 模块」 and a narrator says "R-A-G 模块". The segments keep the
+        # written form, so the subtitles are untouched.
+        def spoken(text: str) -> str:
+            return for_speech(text, pronunciation)
+
         units = plan_units(sentences, emphasis=emphasis)
         if len(units) <= 1:
             text = "".join(sentences)
             with ledger.call(f"tts:{self._provider.name}", f"{len(text)} 字"):
-                duration = self._provider.synthesize(text, out_path, voice=voice, rate=rate)
+                duration = self._provider.synthesize(
+                    spoken(text), out_path, voice=voice, rate=rate
+                )
             segments, source = self._time(text, out_path, sentences, duration)
             return segments, duration, source
 
@@ -141,7 +153,7 @@ class TTSTool:
             for index, unit in enumerate(units):
                 clip = work / f"{index:02d}.wav"
                 with ledger.call(f"tts:{self._provider.name}", f"{len(unit.text)} 字"):
-                    self._provider.synthesize(unit.text, clip, voice=voice, rate=rate)
+                    self._provider.synthesize(spoken(unit.text), clip, voice=voice, rate=rate)
                 clips.append(clip)
 
             windows = join_units(clips, [unit.pause_before for unit in units], out_path)

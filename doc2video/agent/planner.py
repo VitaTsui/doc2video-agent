@@ -224,6 +224,15 @@ _SECONDS = re.compile(r"(\d+(?:\.\d+)?)\s*秒")
 _PAGE = re.compile(r"第\s*(\d+)\s*[页頁]")
 _PAGE_RANGE = re.compile(r"第?\s*(\d+)\s*[~-—到至]\s*(\d+)\s*[页頁]")
 
+# 「X 念 Y」/「X 读作 Y」: the one phrasing people reach for when a term is
+# being said wrong. Deliberately narrow — a loose pattern here would rewrite
+# words the narrator should have kept.
+# The spoken form is letters and spaces — 「R A G」 is the whole point, so a
+# pattern that stops at the first space captures 「R」 and nothing else.
+_READ_AS = re.compile(
+    r"([A-Za-z][A-Za-z0-9+]{1,15})\s*(?:念|读作|读成)\s*([A-Za-z0-9][A-Za-z0-9 ]{0,23})"
+)
+
 _STYLE_HINTS = {
     "专业": "professional",
     "科技": "tech",
@@ -318,6 +327,10 @@ def parse_intent_rules(message: str, current: VideoIntent) -> VideoIntent:
 
     if voice := _voice_from(message):
         intent.voice = voice
+
+    # 「RAG 念 R A G」 — a deck's own vocabulary, said the way this deck says it.
+    for term, spoken in _READ_AS.findall(message):
+        intent.pronunciation[term.strip()] = spoken.strip()
 
     intent.instructions = message.strip()[:500]
     return intent

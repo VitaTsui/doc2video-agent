@@ -54,6 +54,7 @@ class VoiceSkill(Skill):
                 # The writer's own mark on the sentence that matters: it is
                 # what decides where the beats go.
                 emphasis=[s.emphasis for s in scene.segments],
+                pronunciation=self.project.intent.pronunciation,
                 voice=self.project.intent.voice,
                 rate=self.project.intent.speech_rate,
             )
