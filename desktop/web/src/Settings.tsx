@@ -578,6 +578,7 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
  */
 function Plugins() {
   const [steps, setSteps] = useState<api.PipelineStep[] | null>(null)
+  const [open, setOpen] = useState('')
   const [failure, setFailure] = useState('')
 
   useEffect(() => {
@@ -591,7 +592,8 @@ function Plugins() {
     <>
       <h2 className="modal__title">插件</h2>
       <p className="muted">
-        一条流水线，从左到右跑完就是一支视频。每一步用什么、这台机器上能不能用，都在下面。
+        一条流水线，从上到下跑完就是一支视频。每一步用什么、这台机器上能不能用，都在下面；
+        写着「看提示词」的，点开就是原文——不是转述，转述这件事没法拿来对照结果。
       </p>
 
       {failure && <p className="modal__error">{failure}</p>}
@@ -604,8 +606,32 @@ function Plugins() {
             {/* The name in the window next to the name in the code: 「配音」 is
                 what it is called here, `presentation-voice` is what runs. */}
             {step.skill && <span className="step__skill muted">{step.skill}</span>}
+            {(step.prompt || step.rules.length > 0) && (
+              <button
+                type="button"
+                className="pack__open"
+                onClick={() => setOpen(open === step.id ? '' : step.id)}
+              >
+                {open === step.id ? '收起' : step.prompt ? '看提示词' : '看规则'}
+              </button>
+            )}
           </div>
           <div className="muted pack__note">{step.what}</div>
+
+          {open === step.id && step.rules.length > 0 && (
+            <div className="rules">
+              {step.rules.map((rule) => (
+                <div key={rule.name} className="rule">
+                  <span className="rule__name">{rule.name}</span>
+                  <span className="rule__value">{rule.value}</span>
+                  <span className="muted rule__what">{rule.what}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* The instructions as they are sent, not a summary of them: a
+              paraphrase is the thing you cannot check the output against. */}
+          {open === step.id && step.prompt && <pre className="prompt">{step.prompt}</pre>}
           {step.parts.map((part) => (
             <div key={part.id} className="part">
               <span className={part.available ? 'part__dot part__dot--on' : 'part__dot'} />
@@ -619,6 +645,91 @@ function Plugins() {
         </div>
       ))}
     </>
+  )
+}
+
+/**
+ * The published Piper voices: search, and install the one you want.
+ *
+ * Piper is the one pack that is a file format, and its voices live in a
+ * HuggingFace repository — 174 of them, indexed with a size and an MD5 each.
+ * Finding one used to mean knowing that and reading a 240KB JSON by hand.
+ *
+ * The index is cached by the backend after the first look, so typing here is
+ * a local search rather than a request per keystroke.
+ */
+function PiperBrowser({ onInstalled }: { onInstalled: () => void }) {
+  const [query, setQuery] = useState('')
+  const [found, setFound] = useState<{ matched: number; voices: api.PiperVoice[] } | null>(null)
+  const [getting, setGetting] = useState('')
+  const [failure, setFailure] = useState('')
+
+  useEffect(() => {
+    let live = true
+    // A short wait rather than a request per keystroke: the index is on the
+    // backend's disk, but the round trip is still a round trip.
+    const timer = window.setTimeout(() => {
+      void api
+        .piperVoices(query)
+        .then((result) => live && setFound(result))
+        .catch((error: Error) => live && setFailure(api.describeError(error)))
+    }, 250)
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+    }
+  }, [query])
+
+  const install = async (voice: api.PiperVoice) => {
+    setFailure('')
+    setGetting(voice.key)
+    try {
+      await api.installPiperVoice(voice.key)
+      setFound(await api.piperVoices(query))
+      onInstalled()
+    } catch (error) {
+      setFailure(api.describeError(error))
+    } finally {
+      setGetting('')
+    }
+  }
+
+  return (
+    <div className="browse">
+      <input
+        className="browse__search"
+        value={query}
+        placeholder="搜音色：中文、zh、Chinese、huayan…"
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      {failure && <p className="modal__error">{failure}</p>}
+      {found && (
+        <>
+          <div className="muted browse__count">{`${found.matched} 个音色`}</div>
+          {found.voices.map((voice) => (
+            <div key={voice.key} className="browse__row">
+              <span className="browse__name">{voice.key}</span>
+              <span className="muted browse__lang">
+                {voice.language_name || voice.language_english}
+                {voice.country && ` · ${voice.country}`}
+              </span>
+              {voice.installed ? (
+                <span className="pack__tag pack__tag--on">已装</span>
+              ) : (
+                <Button
+                  size="small"
+                  loading={getting === voice.key}
+                  disabled={Boolean(getting)}
+                  onClick={() => void install(voice)}
+                >
+                  {`下载 ${Math.max(1, Math.round(voice.size / 1024 / 1024))}MB`}
+                </Button>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+    </div>
   )
 }
 
@@ -754,6 +865,14 @@ function VoiceSettings({ busy }: { busy: boolean }) {
             )}
           </div>
           <div className="muted pack__note">{pack.note}</div>
+          {/* Where more voices come from, which is a different answer for each
+              of these: one is a service, one brings its own eight, one is the
+              operating system's, and one is a file you drop in a folder. */}
+          {pack.how && <div className="muted pack__note">{pack.how}</div>}
+          {pack.folder && <div className="pack__folder">{pack.folder}</div>}
+          {/* 174 published voices is a thing you look through rather than a
+              list you read, so it is searchable and it downloads in place. */}
+          {pack.id === 'piper' && <PiperBrowser onInstalled={load} />}
           {pack.voices.length > 0 && (
             <div className="pack__voices">
               {pack.voices.map((voice) => (

@@ -51,6 +51,7 @@ export function App() {
   // conversation, so neither of them can own it.
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   /** The model writing the script, and how far it has got. Null when it isn't. */
+  const [redoing, setRedoing] = useState<number | null>(null)
   const [drafting, setDrafting] = useState<{
     done: number
     total: number
@@ -537,6 +538,35 @@ export function App() {
   )
 
   /**
+   * 「重新生成这一页」: redo one page, keeping the rest of the film.
+   *
+   * The alternative is 开始生成, which costs minutes: on a 30-page deck the
+   * first render took 263 seconds and redoing one page took 18, because every
+   * scene whose plan still hashes the same keeps the clip it already has. That
+   * saving existed in the pipeline and had no way to be asked for from here —
+   * editing a box after a render left nothing to press but 重新生成 (the whole
+   * film).
+   */
+  const redoPage = useCallback(
+    async (page: number) => {
+      const project = projectId
+      const scene = artifacts?.scenes.find((one) => one.source_page === page)
+      const text = (drafts[page] ?? '').trim()
+      if (!project || !scene || !text) return
+      setRedoing(page)
+      try {
+        const { job_id } = await api.reviseScene(project, scene.scene_id, text)
+        await follow(job_id, `重做第 ${page} 页，其余片段不动。`)
+      } catch (error) {
+        say({ role: 'assistant', kind: 'text', text: `没能重做：${api.describeError(error)}` })
+      } finally {
+        setRedoing(null)
+      }
+    },
+    [artifacts, drafts, follow, projectId, say],
+  )
+
+  /**
    * 「生成讲稿」: fill in the pages nobody has written.
    *
    * What is in the boxes goes with it and comes back untouched. The model
@@ -786,6 +816,8 @@ export function App() {
         onClose={() => setPanelOpen(false)}
         drafts={drafts}
         onDrafts={setDrafts}
+        onRedo={(page) => void redoPage(page)}
+        redoing={redoing}
       />
 
       <Settings

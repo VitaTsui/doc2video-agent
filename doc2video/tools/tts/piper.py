@@ -36,6 +36,16 @@ log = get_logger(__name__)
 DEFAULT_VOICE = "zh_CN-huayan-medium"
 
 
+def engine_present() -> bool:
+    """Whether this machine has the engine, voice file or not.
+
+    Different from `available()`, which also wants a voice — and the state
+    between the two is the interesting one: engine here, nothing to speak
+    with yet, which is exactly when someone wants the list of voices.
+    """
+    return PiperProvider._import_error() is None  # noqa: SLF001 - same module
+
+
 class PiperProvider(TTSProvider):
     name = "piper"
     default_voice = DEFAULT_VOICE

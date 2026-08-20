@@ -92,14 +92,22 @@ class VoiceSkill(Skill):
 
     def _fingerprint(self, scene: Scene) -> str:
         intent = self.project.intent
+        chosen = intent.voice or self.tts.voice
         payload = "|".join(
             [
                 scene.narration,
-                self.tts.provider_name,
+                # The engine that *would* speak this voice, not the one loaded
+                # at this instant. `provider_name` changes as soon as anything
+                # is synthesised — a fresh tool says `macos_say`, the same tool
+                # one clip later says `edge` — so a fingerprint taken from it
+                # disagreed with itself between runs. The visible cost was one
+                # page re-voiced and re-rendered on every unrelated edit: redo
+                # page 5 and page 2 came back too, for nothing.
+                self.tts.engine_name(chosen),
                 # The project's choice, not the machine's — otherwise asking
                 # for a different voice leaves the fingerprint unchanged, the
                 # existing clip is reused, and the change does nothing at all.
-                intent.voice or self.tts.voice,
+                chosen,
                 f"{intent.speech_rate or self.ctx.settings.tts_speech_rate:.2f}",
                 # Part of the clip, so changing either has to re-synthesise.
                 f"{self.ctx.settings.scene_lead_seconds:.2f}",

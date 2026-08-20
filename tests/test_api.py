@@ -378,3 +378,26 @@ def test_deleting_a_project_leaves_the_uploaded_file_alone(tmp_path, monkeypatch
         assert uploaded.exists(), "删掉工程不该动上传的原件"
     finally:
         config.get_settings.cache_clear()
+
+
+def test_the_plugins_page_carries_the_prompts_themselves(client):
+    """A paraphrase is the thing you cannot check the output against.
+
+    The steps that ask a model something say exactly what they ask, and the
+    steps that ask nothing publish the numbers that decide their output —
+    read from the constants, so the page cannot drift away from the code.
+    """
+    from doc2video.skills.base import load_prompt
+    from doc2video.skills.speech_review import TOO_FAST
+
+    steps = {step["id"]: step for step in client.get("/health/plugins").json()["steps"]}
+
+    assert steps["narrate"]["prompt"] == load_prompt("narration")
+    assert steps["understand"]["prompt"] == load_prompt("document_understanding")
+    # The agent's own instructions are a prompt too, and the most consequential.
+    assert "write_script" in steps["agent"]["prompt"]
+
+    # A deterministic step has no prompt and says so by having none.
+    assert steps["review"]["prompt"] == ""
+    rates = [r["value"] for r in steps["review"]["rules"] if r["name"] == "语速上限"]
+    assert rates == [f"{TOO_FAST:.0f} 字/分"]

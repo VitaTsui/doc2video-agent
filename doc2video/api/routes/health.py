@@ -18,7 +18,7 @@ from ...core.errors import Doc2VideoError
 from ...tools.llm import llm_status
 from ...tools.llm.models import catalogue_payload
 from ...tools.renderer import renderer_status
-from ...tools.tts import TTSTool
+from ...tools.tts import TTSTool, piper_catalogue
 from ...tools.tts import packs as voice_packs
 from ...tools.tts.install import install_into_runtime
 
@@ -27,6 +27,12 @@ class VoiceChoiceIn(BaseModel):
     """The voice to use from now on. Empty hands the choice back to the machine."""
 
     voice: str = ""
+
+
+class PiperVoiceIn(BaseModel):
+    """Which published voice to download, by its key (`zh_CN-huayan-medium`)."""
+
+    key: str
 
 
 class VoicePackIn(BaseModel):
@@ -125,6 +131,35 @@ def preview_voice(voice: str = "") -> Response:
                 detail={"code": "preview_failed", "message": f"{engine.name} 试听失败：{exc}"},
             ) from exc
     return Response(target.read_bytes(), media_type="audio/wav")
+
+
+@router.get("/health/voices/piper")
+def piper_voices(q: str = "", limit: int = 40) -> dict:
+    """The published Piper voices, searchable.
+
+    Its own route rather than part of the pack list: 174 voices is a thing you
+    look through, and the pack list is a thing you read. The index is cached on
+    disk after the first look, so this answers offline and instantly.
+    """
+    return piper_catalogue.search(q, limit=limit, settings=get_settings())
+
+
+@router.post("/health/voices/piper/install")
+def install_piper_voice(body: PiperVoiceIn) -> dict:
+    """Download one voice into the voices directory.
+
+    Synchronous, like the pack install next to it, and for the same reason: a
+    request that returns before the file is there leaves the window saying
+    「已装」 about something that is not. The size is on the button first.
+    """
+    settings = get_settings()
+    try:
+        piper_catalogue.install(body.key, settings)
+    except Doc2VideoError as exc:
+        raise HTTPException(
+            status_code=502, detail={"code": "download_failed", "message": str(exc)}
+        ) from exc
+    return piper_catalogue.search(body.key, limit=1, settings=settings)
 
 
 @router.post("/health/voices/install")

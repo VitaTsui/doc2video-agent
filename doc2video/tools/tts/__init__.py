@@ -157,6 +157,17 @@ class TTSTool:
     def voice(self) -> str:
         return self._settings.tts_voice
 
+    def engine_name(self, voice: str = "") -> str:
+        """Which engine would speak this voice — asked without speaking.
+
+        `provider_name` is whatever is loaded right now, and that changes the
+        moment something is synthesised: a tool that has not spoken yet says
+        `macos_say` and the same tool one clip later says `edge`. Anything that
+        remembers the answer has to ask this instead, or it remembers two
+        different answers for one unchanged project.
+        """
+        return self._engine_for(voice).name
+
     def synthesize(
         self,
         text: str,

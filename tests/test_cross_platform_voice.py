@@ -265,3 +265,95 @@ def test_the_upgrade_is_a_command_and_not_something_a_render_does():
     # have drifted, and the second one would have had its own bugs.
     installer = inspect.getsource(install_into_runtime)
     assert "uv" in installer and "ensurepip" in installer
+
+
+def test_the_same_project_fingerprints_the_same_before_and_after_speaking(settings, store):
+    """A clip is reused when its fingerprint matches. It has to be one value.
+
+    `provider_name` is whichever engine is loaded at this instant, and that
+    changes the moment something is synthesised — a fresh tool reports
+    `macos_say` and the same tool one clip later reports `edge`. Taken from
+    it, a project's fingerprints disagreed with themselves between runs: one
+    page was re-voiced and re-rendered on every unrelated edit. Measured on a
+    real project — redoing page 5 brought page 2 back with it, 12.6 seconds of
+    encoding for a page nobody had touched.
+    """
+    from doc2video.schemas import Scene, Source, SourceType, VideoProject
+    from doc2video.skills.base import SkillContext
+    from doc2video.skills.voice import VoiceSkill
+
+    project = VideoProject(
+        project_id="proj_fp",
+        source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
+    )
+    project.intent.voice = "zh-CN-YunyangNeural"  # Edge's, whatever is loaded
+    project.scenes = [Scene(scene_id="scn_01", source_page=1, narration="一句话。")]
+
+    skill = VoiceSkill(SkillContext.build(project, store=store, settings=settings))
+    before = skill._fingerprint(project.scenes[0])
+
+    # What speaking does to the tool: the engine that owns the voice is loaded.
+    skill.tts._provider = skill.tts._engine_for(project.intent.voice)
+    assert skill._fingerprint(project.scenes[0]) == before
+
+
+def test_the_published_voices_can_be_searched_by_what_a_person_would_type(tmp_path, settings):
+    """174 voices is a list you search, not one you read.
+
+    Matched against everything someone might reach for: 「中文」, `zh`,
+    `Chinese` and the speaker's own name all have to find the same voices.
+    """
+    import json
+
+    from doc2video.tools.tts import piper_catalogue
+
+    settings = settings.model_copy(update={"storage_dir": tmp_path})
+    (tmp_path / "voices").mkdir(parents=True)
+    (tmp_path / "voices" / piper_catalogue.INDEX_FILE).write_text(
+        json.dumps(
+            {
+                "zh_CN-huayan-medium": {
+                    "key": "zh_CN-huayan-medium",
+                    "name": "huayan",
+                    "quality": "medium",
+                    "language": {
+                        "code": "zh_CN",
+                        "name_native": "简体中文",
+                        "name_english": "Chinese",
+                        "country_english": "China",
+                    },
+                    "files": {"zh/zh_CN-huayan-medium.onnx": {"size_bytes": 63201294}},
+                },
+                "en_US-amy-low": {
+                    "key": "en_US-amy-low",
+                    "name": "amy",
+                    "quality": "low",
+                    "language": {
+                        "code": "en_US",
+                        "name_native": "English",
+                        "name_english": "English",
+                        "country_english": "United States",
+                    },
+                    "files": {"en/en_US-amy-low.onnx": {"size_bytes": 60000000}},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    for query in ("中文", "zh", "Chinese", "huayan"):
+        found = piper_catalogue.search(query, settings=settings)
+        assert [v["key"] for v in found["voices"]] == ["zh_CN-huayan-medium"], query
+
+    everything = piper_catalogue.search("", settings=settings)
+    assert everything["total"] == 2
+    # The size is the model's, so the button can say what the download costs.
+    sizes = {v["key"]: v["size"] for v in everything["voices"]}
+    assert sizes["zh_CN-huayan-medium"] == 63201294
+    assert all(not v["installed"] for v in everything["voices"])
+
+    # A model file in the folder is what "installed" means — the provider
+    # speaks with whatever is there, so this is the same question it asks.
+    (tmp_path / "voices" / "en_US-amy-low.onnx").write_bytes(b"")
+    assert piper_catalogue.search("amy", settings=settings)["voices"][0]["installed"]
