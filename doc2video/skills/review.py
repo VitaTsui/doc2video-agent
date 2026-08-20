@@ -14,6 +14,8 @@ from pydantic import BaseModel
 
 from ..schemas import PageType, ReviewFinding
 from ..schemas.telemetry import QualityDimension, QualityReport
+from ..tools.renderer.base import SUBTITLE_BOTTOM_MARGIN
+from . import render_review
 from .base import Skill
 
 DURATION_TOLERANCE = 0.25
@@ -82,6 +84,18 @@ class ReviewSkill(Skill):
 
     def run(self) -> None:
         findings = self._structural_checks()
+        # What the viewer sees, which the checks above cannot reach: a caption
+        # can be perfectly timed, correctly split and sitting on top of the
+        # number it is describing. Geometry, not pixels — the renderer's layout
+        # is ours, so the answer is arithmetic.
+        findings.extend(
+            render_review.check_subtitles(
+                self.project,
+                self.ctx.settings.video_width,
+                self.ctx.settings.video_height,
+                SUBTITLE_BOTTOM_MARGIN,
+            )
+        )
         self.project.review = findings
         self.project.quality = self._score(findings)
 
@@ -103,7 +117,8 @@ class ReviewSkill(Skill):
         ratio of what went wrong to what could have, so the score does not drift
         with deck length.
         """
-        scenes = self.project.scenes
+        project = self.project
+        scenes = project.scenes
         by_kind: dict[str, int] = {}
         for finding in findings:
             by_kind[finding.kind] = by_kind.get(finding.kind, 0) + 1
@@ -156,9 +171,21 @@ class ReviewSkill(Skill):
             ),
             QualityDimension(
                 name="subtitles",
-                score=100.0 if not by_kind.get("subtitle") else 60.0,
+                # Three ways a caption goes wrong and only one of them is about
+                # the text: too long to read, off the frame, or on top of the
+                # thing being talked about.
+                score=_ratio_score(
+                    by_kind.get("subtitle", 0)
+                    + by_kind.get("subtitle_overflow", 0)
+                    + by_kind.get("subtitle_cover", 0),
+                    max(len(project.timeline.subtitles), 1),
+                ),
                 weight=0.10,
-                detail=f"字幕问题 {by_kind.get('subtitle', 0)} 条",
+                detail=(
+                    f"字幕问题 {by_kind.get('subtitle', 0)} 条，"
+                    f"出界 {by_kind.get('subtitle_overflow', 0)} 条，"
+                    f"遮挡 {by_kind.get('subtitle_cover', 0)} 条"
+                ),
             ),
         ]
         total_weight = sum(d.weight for d in dimensions)
