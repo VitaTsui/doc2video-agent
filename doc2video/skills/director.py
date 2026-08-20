@@ -40,6 +40,22 @@ POINTER_DURATION = 1.4
 AUDIO_LEAD = 0.3
 ZOOM_KINDS = {ElementKind.NUMBER, ElementKind.CHART, ElementKind.TABLE, ElementKind.IMAGE}
 
+# Pages that are signposts rather than content: a cover, the table of contents,
+# a section divider. Every one of them says the same thing — "here is where we
+# are" — and there is nothing on them to point at. Boxing something anyway is
+# how a deck ended up with a highlight around the word 「CONTENTS」 and around
+# the numeral 「1」 on a divider. The page change is the whole gesture.
+SIGNPOST_PAGES = {PageType.COVER, PageType.AGENDA, PageType.SECTION}
+
+# Text with nothing in it worth looking at. A target has to carry information:
+# a lone digit is the section's number, 「CONTENTS」 is the word above the list,
+# and a box around either points the viewer at furniture.
+DECORATIVE_TEXT = {
+    "contents", "content", "agenda", "outline", "index", "目录", "大纲", "议程",
+    "thank you", "thanks", "谢谢", "感谢", "汇报人", "报告人", "logo",
+}
+MIN_TARGET_CHARS = 2
+
 
 class ActionChoice(BaseModel):
     segment_id: str
@@ -73,15 +89,24 @@ class DirectorSkill(Skill):
     # -- choosing what to look at ---------------------------------------
     def _choose_heuristically(self, scene: Scene, page: DocumentPage) -> list[ActionChoice]:
         """Rank segments by how much they deserve a camera move, then take the top few."""
+        # A signpost page gets its transition and nothing else.
+        if page.page_type in SIGNPOST_PAGES:
+            return []
+
         scored: list[tuple[float, ActionChoice]] = []
         for segment in scene.segments:
             target_id = self._resolve_target(segment, page)
             if target_id is None:
                 continue
             element = page.element(target_id)
-            if element is None:
+            if element is None or not _worth_pointing_at(element):
                 continue
             score = element.importance + (0.5 if segment.emphasis else 0.0)
+            # A node in a declared flow is worth more than a box that happens
+            # to be on the page: the arrows say this one is part of the thing
+            # being explained.
+            if page.diagram is not None and target_id in page.diagram.nodes:
+                score += 0.3
             action_type = self._pick_action(segment, element, page)
             choice = ActionChoice(segment_id=segment.id, type=action_type, target=target_id)
             scored.append((score, choice))
@@ -126,13 +151,14 @@ class DirectorSkill(Skill):
 
     def _resolve_target(self, segment: NarrationSegment, page: DocumentPage) -> str | None:
         for ref in segment.element_refs:
-            if page.element(ref) is not None:
+            element = page.element(ref)
+            if element is not None and _worth_pointing_at(element):
                 return ref
         # Nothing bound: fall back to the most distinctive element whose text the
         # sentence actually mentions, so we never point at an unrelated box.
         best: tuple[float, str] | None = None
         for element in page.elements:
-            if element.kind is ElementKind.TITLE or not element.text:
+            if element.kind is ElementKind.TITLE or not _worth_pointing_at(element):
                 continue
             key = element.text.strip()[:6]
             if len(key) >= 2 and key in segment.text:
@@ -224,6 +250,25 @@ class DirectorSkill(Skill):
 
         actions.sort(key=lambda a: a.at)
         return actions
+
+
+def _worth_pointing_at(element) -> bool:
+    """Whether there is anything on this element worth a viewer's eye.
+
+    Non-text elements — a chart, an image, a table — are always worth it; they
+    are the picture. Text has to say something: a lone digit or a stock heading
+    is page furniture, and a box drawn around furniture reads as a mistake even
+    when the sentence it belongs to is right.
+    """
+    if element.kind in ZOOM_KINDS and element.kind is not ElementKind.NUMBER:
+        return True
+    text = (element.text or "").strip()
+    if len(text) < MIN_TARGET_CHARS:
+        return False
+    if text.lower().strip(" .、·:：") in DECORATIVE_TEXT:
+        return False
+    # Digits and punctuation only: a section number, a page number, a bullet.
+    return any(ch.isalpha() or "\u4e00" <= ch <= "\u9fa5" for ch in text)
 
 
 def _coverage(element, page: DocumentPage) -> float:

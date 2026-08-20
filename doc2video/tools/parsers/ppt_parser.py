@@ -21,7 +21,17 @@ from ...core.config import Settings, which
 from ...core.errors import UnsupportedSource
 from ...core.ids import element_id
 from ...core.logging import get_logger
-from ...schemas import BBox, DocumentModel, DocumentPage, ElementKind, SlideElement
+from ...schemas import (
+    BBox,
+    ChartFacts,
+    ChartSeriesFacts,
+    DiagramEdge,
+    DiagramFacts,
+    DocumentModel,
+    DocumentPage,
+    ElementKind,
+    SlideElement,
+)
 from .slide_raster import rasterize_page
 
 log = get_logger(__name__)
@@ -48,14 +58,26 @@ def parse_ppt(
     px_w = target_width
     px_h = int(round(slide_h.inches * 96 * scale))
 
+    # The deck's theme, because a chart series that inherits its colour
+    # resolves against it. Read once here and passed down: extracted without
+    # it, the stored colours came out of a default palette and disagreed with
+    # the very same chart drawn into the page image — brick red on the page,
+    # orange in the animation drawn on top of it.
+    theme = _deck_theme(source)
+
     pages: list[DocumentPage] = []
     for index, slide in enumerate(prs.slides, start=1):
-        elements = _extract_elements(slide, index, slide_w, slide_h, px_w, px_h, assets_dir)
+        with ledger.call("parser:python-pptx", f"第 {index} 页"):
+            elements = _extract_elements(
+                slide, index, slide_w, slide_h, px_w, px_h, assets_dir, theme
+            )
+            diagram = _diagram_facts(slide, elements)
         pages.append(
             DocumentPage(
                 index=index,
                 title=_slide_title(slide, elements),
                 elements=elements,
+                diagram=diagram,
                 speaker_notes=_notes(slide),
                 width=float(px_w),
                 height=float(px_h),
@@ -77,8 +99,95 @@ def parse_ppt(
 # --------------------------------------------------------------------------
 
 
+# The connector's own XML names the shapes it joins. Reading those is the
+# difference between a diagram this project may redraw and one it must leave
+# alone: a declared endpoint is a fact about the file, an inferred one is a
+# guess about a picture.
+_A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_P_NS = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+# A flow of one arrow is a label with a line under it, not a diagram.
+MIN_DIAGRAM_EDGES = 2
+
+
+def _diagram_facts(slide, elements: list[SlideElement]) -> DiagramFacts | None:
+    """The flow this slide draws, when it says what it joins to what.
+
+    The gate the whole thing turns on. A connector that declares its start and
+    end shapes gives a graph that is read, not recognised — nothing here looks
+    at a picture and decides what it means. A slide whose arrows are loose
+    lines produces nothing, and the picture stays the picture.
+    """
+    by_shape: dict[str, str] = {}
+    for shape, element in _shape_pairs(slide, elements):
+        try:
+            by_shape[str(shape.shape_id)] = element.id
+        except (AttributeError, ValueError):
+            continue
+
+    edges: list[DiagramEdge] = []
+    for shape in slide.shapes:
+        node = getattr(shape, "_element", None)
+        if node is None or not node.tag.endswith("}cxnSp"):
+            continue
+        start = node.find(f".//{_A_NS}stCxn")
+        end = node.find(f".//{_A_NS}endCxn")
+        if start is None or end is None:
+            continue
+        source = by_shape.get(start.get("id", ""))
+        target = by_shape.get(end.get("id", ""))
+        if not source or not target or source == target:
+            continue
+        edges.append(DiagramEdge(source=source, target=target))
+
+    if len(edges) < MIN_DIAGRAM_EDGES:
+        return None
+    nodes: list[str] = []
+    for edge in edges:
+        for end_id in (edge.source, edge.target):
+            if end_id not in nodes:
+                nodes.append(end_id)
+    return DiagramFacts(nodes=nodes, edges=edges)
+
+
+def _shape_pairs(slide, elements: list[SlideElement]):
+    """Match each shape back to the element extracted from it, by text.
+
+    Position would be sturdier, but the extractor drops shapes it has no use
+    for, so indices do not line up. Text does, for the shapes a diagram is
+    made of: a node in a flow has a name on it, which is why it is a node.
+    """
+    by_text: dict[str, SlideElement] = {}
+    for element in elements:
+        key = (element.text or "").strip()
+        if key and key not in by_text:
+            by_text[key] = element
+    for shape in slide.shapes:
+        text = (getattr(shape, "text", "") or "").strip()
+        element = by_text.get(text)
+        if element is not None:
+            yield shape, element
+
+
+def _deck_theme(source: Path):
+    """The deck's theme, or a blank one when it cannot be read."""
+    from ..slides.theme import Theme, load_theme
+
+    try:
+        return load_theme(source)
+    except Exception as exc:  # noqa: BLE001 - a themeless deck still parses
+        log.debug("读取主题失败：%s", exc)
+        return Theme()
+
+
 def _extract_elements(
-    slide, page_index: int, slide_w, slide_h, px_w: int, px_h: int, assets_dir: Path
+    slide,
+    page_index: int,
+    slide_w,
+    slide_h,
+    px_w: int,
+    px_h: int,
+    assets_dir: Path,
+    theme=None,
 ) -> list[SlideElement]:
     elements: list[SlideElement] = []
     font_sizes: dict[str, float] = {}
@@ -113,6 +222,7 @@ def _extract_elements(
                     bbox=bbox,
                     label=f"chart_{seq}",
                     importance=0.85,
+                    chart=_chart_facts(shape, theme),
                 )
             )
             continue
@@ -225,6 +335,33 @@ def _save_picture(shape, page_index: int, seq: int, assets_dir: Path) -> str | N
     name = f"p{page_index:03d}_img{seq:02d}.{image.ext}"
     (assets_dir / name).write_bytes(image.blob)
     return str(assets_dir / name)
+
+
+def _chart_facts(shape, theme=None) -> ChartFacts | None:
+    """The chart's numbers, kept on the element so the video can redraw it.
+
+    Read from the OOXML, so this is what the deck states rather than what
+    anything inferred from a picture — which is why redrawing it is allowed to
+    animate rather than merely zoom.
+    """
+    from ..slides import chart_of
+
+    try:
+        data = chart_of(shape, theme)
+    except Exception as exc:  # noqa: BLE001 - a chart nobody can read is still a page
+        log.debug("读取图表数据失败：%s", exc)
+        return None
+    if data is None or not data.series:
+        return None
+    return ChartFacts(
+        kind=str(data.kind.value if hasattr(data.kind, "value") else data.kind),
+        title=data.title,
+        categories=list(data.categories),
+        series=[
+            ChartSeriesFacts(name=s.name, values=list(s.values), color=s.color)
+            for s in data.series
+        ],
+    )
 
 
 def _chart_text(shape) -> str:

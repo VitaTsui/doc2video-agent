@@ -37,6 +37,12 @@ class TTSResult:
     provider: str
     voice: str = ""
     segments: list[Segment] = field(default_factory=list)
+    # Where the segment times came from: "provider" if the engine reported
+    # them, "silence" if they were measured off the clip, "estimate" if they
+    # were inferred from how long the sentences are. Carried because the three
+    # are not equally trustworthy and the director acts on all of them the
+    # same way — so the difference has to be visible somewhere.
+    timing_source: str = "estimate"
 
 
 class TTSProvider:
@@ -48,6 +54,27 @@ class TTSProvider:
     def synthesize(self, text: str, out_path: Path, *, voice: str = "", rate: float = 1.0) -> float:
         """Write audio for ``text`` to ``out_path`` and return its duration."""
         raise NotImplementedError
+
+    def timings(self, text: str, out_path: Path, duration: float) -> list[Segment] | None:
+        """Real sentence timings, when the engine reported them.
+
+        None means "I don't know", which is the honest answer for every engine
+        this project ships with today — `say` and Piper both hand back audio
+        and nothing else. A provider that does know should say so here, and be
+        believed over anything measured or estimated afterwards.
+        """
+        return None
+
+    def voices(self) -> list[str]:
+        """The voices this provider can actually speak Chinese with, here.
+
+        Answered by the provider because the answer is different in kind on
+        each platform: macOS has a dozen built in, Piper has whatever model
+        files are on disk — the runtime ships exactly one — and silence has
+        none. A caller offering the user a choice must not assume the macOS
+        shape, or the choice is empty everywhere else.
+        """
+        return []
 
 
 # --------------------------------------------------------------------------
@@ -153,3 +180,40 @@ def audio_duration(path: Path) -> float | None:
     from ..media_binaries import probe_duration
 
     return probe_duration(path)
+
+
+def join_units(clips: list[Path], pauses: list[float], out_path: Path) -> list[tuple[float, float]]:
+    """Write `clips` end to end with `pauses[i]` of silence before clip i.
+
+    Returns each clip's window in the joined file. The windows are exact — the
+    silence is written here, frame by frame, so where one unit stops and the
+    next begins is arithmetic on sample counts rather than something to be
+    measured or guessed at afterwards.
+
+    Standard library only, like `pad_silence`: joining speech should not cost
+    an external binary, and re-encoding to join would lose the sample-exact
+    boundaries that are the point.
+    """
+    if not clips:
+        return []
+
+    windows: list[tuple[float, float]] = []
+    frames = bytearray()
+    params = None
+    for clip, pause in zip(clips, pauses, strict=True):
+        with wave.open(str(clip), "rb") as handle:
+            if params is None:
+                params = handle.getparams()
+            body = handle.readframes(handle.getnframes())
+        gap = max(0, int(max(pause, 0.0) * params.framerate))
+        frames += b"\x00" * (gap * params.sampwidth * params.nchannels)
+        start = len(frames) / (params.framerate * params.sampwidth * params.nchannels)
+        frames += body
+        end = len(frames) / (params.framerate * params.sampwidth * params.nchannels)
+        windows.append((round(start, 4), round(end, 4)))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out_path), "wb") as handle:
+        handle.setparams(params)
+        handle.writeframes(bytes(frames))
+    return windows

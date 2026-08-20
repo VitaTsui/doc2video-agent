@@ -56,6 +56,39 @@ def test_piper_says_what_it_needs_rather_than_downloading_mid_render(tmp_path: P
     assert "doc2video voices" in reason or "piper-tts" in reason
 
 
+def test_the_voice_shipped_with_the_runtime_is_found(tmp_path: Path):
+    """The packaged app ships a voice; nothing was looking where it lands.
+
+    The build downloads one into `<runtime>/voices` so the first render does
+    not wait on 61MB, but the search only ever covered the data directory —
+    which `doc2video voices` writes to and a fresh install has nothing in.
+    Piper then called itself unavailable, and on a machine with no `say` the
+    order fell through to silence: an audio track, correct durations, no sound.
+    """
+    runtime = tmp_path / "runtime"
+    (runtime / "voices").mkdir(parents=True)
+    (runtime / "voices" / "zh_CN-huayan-medium.onnx").write_bytes(b"not really a model")
+
+    provider = PiperProvider(
+        Settings(storage_dir=tmp_path / "data", node_dir=runtime / "node")
+    )
+    found = provider.voice_path()
+    assert found is not None and found.name == "zh_CN-huayan-medium.onnx"
+
+
+def test_a_downloaded_voice_wins_over_the_shipped_one(tmp_path: Path):
+    """Someone who ran `doc2video voices` chose that one; the other is a default."""
+    runtime = tmp_path / "runtime"
+    (runtime / "voices").mkdir(parents=True)
+    (runtime / "voices" / "zh_CN-huayan-medium.onnx").write_bytes(b"shipped")
+    data = tmp_path / "data"
+    (data / "voices").mkdir(parents=True)
+    (data / "voices" / "zh_CN-huayan-medium.onnx").write_bytes(b"downloaded")
+
+    provider = PiperProvider(Settings(storage_dir=data, node_dir=runtime / "node"))
+    assert provider.voice_path() == data / "voices" / "zh_CN-huayan-medium.onnx"
+
+
 def test_an_unavailable_provider_never_leaves_the_pipeline_without_one():
     """Voicing must degrade to silence, not fail: the video is still watchable."""
     assert resolve_provider("piper").available()
@@ -102,3 +135,24 @@ def test_output_streams_are_made_utf8_before_anything_prints(monkeypatch):
     # is bad, taking the process down with it is worse.
     monkeypatch.setattr(sys, "stdout", object())
     use_utf8()
+
+
+def test_each_provider_answers_for_its_own_voices(tmp_path: Path):
+    """What "the voices" means differs in kind by platform.
+
+    macOS has a dozen built into `say`; Piper has whatever model files are on
+    disk, and the runtime ships exactly one; silence has none. Asking the
+    machine one way — reading `say -v ?` — gives an empty list on Windows and
+    Linux, and 「换个女声」 there quietly does nothing.
+    """
+    from doc2video.tools.tts.base import TTSProvider
+    from doc2video.tools.tts.providers import SilentProvider
+
+    assert TTSProvider().voices() == []
+    assert SilentProvider().voices() == []
+
+    runtime = tmp_path / "runtime"
+    (runtime / "voices").mkdir(parents=True)
+    (runtime / "voices" / "zh_CN-huayan-medium.onnx").write_bytes(b"model")
+    piper = PiperProvider(Settings(storage_dir=tmp_path / "data", node_dir=runtime / "node"))
+    assert piper.voices() == ["zh_CN-huayan-medium"]

@@ -18,7 +18,7 @@ from ..schemas import (
     VideoClip,
     VisualType,
 )
-from ..tools.renderer import PlanAction, PlanArea, PlanSubtitle, ScenePlan
+from ..tools.renderer import PlanAction, PlanArea, PlanChart, PlanSubtitle, ScenePlan
 from .base import Skill
 from .layout import build_subtitles, to_frame_area, with_highlight_padding
 
@@ -123,6 +123,38 @@ class MotionSkill(Skill):
         return cues
 
     # -- render plans ----------------------------------------------------
+    def _charts_for(self, scene: Scene, timeline, start: float) -> list[PlanChart]:
+        """Charts this scene points at, ready to be drawn rather than shown.
+
+        Only the ones an action names. A page can hold three charts and the
+        narrator talk about one; animating the other two would move things
+        nobody is looking at, which is the opposite of pointing.
+        """
+        page = self.project.document.page(scene.source_page)
+        if page is None:
+            return []
+        out: list[PlanChart] = []
+        seen: set[str] = set()
+        for cue in timeline.actions:
+            if cue.scene_id != scene.scene_id or not cue.target or cue.target in seen:
+                continue
+            element = page.element(cue.target)
+            if element is None or element.chart is None or cue.area is None:
+                continue
+            seen.add(cue.target)
+            out.append(
+                PlanChart(
+                    area=PlanArea(**cue.area.model_dump()),
+                    start=round(max(cue.start - start, 0.0), 3),
+                    kind=element.chart.kind,
+                    title=element.chart.title,
+                    categories=list(element.chart.categories),
+                    series=[s.model_dump() for s in element.chart.series],
+                    backdrop=_backdrop_at(self.ctx.asset_path(page.image_path), element.bbox),
+                )
+            )
+        return out
+
     def scene_plans(self, scenes: list[Scene] | None = None) -> list[ScenePlan]:
         """Build renderer-facing plans, with times relative to each scene."""
         timeline = self.project.timeline or self.build_timeline()
@@ -165,6 +197,7 @@ class MotionSkill(Skill):
                         for cue in timeline.actions
                         if cue.scene_id == scene.scene_id and cue.type is not ActionType.TRANSITION
                     ],
+                    charts=self._charts_for(scene, timeline, start),
                     subtitles=[
                         PlanSubtitle(
                             start=round(cue.start - start, 3),
@@ -177,3 +210,38 @@ class MotionSkill(Skill):
                 )
             )
         return plans
+
+
+def _backdrop_at(image, bbox) -> str:
+    """The page's own colour just inside a chart's box, as `#rrggbb`.
+
+    Read off the rendered page rather than assumed, because the live chart has
+    to hide the printed one while it grows and a wrong colour is a visible
+    patch. The corners of a chart are its plot background almost by
+    definition — the bars are in the middle.
+    """
+    if image is None or not image.exists():
+        return "#ffffff"
+    try:
+        from PIL import Image
+
+        with Image.open(image) as page:
+            frame = page.convert("RGB")
+            x0, y0 = int(bbox.x), int(bbox.y)
+            x1, y1 = int(bbox.x + bbox.w) - 1, int(bbox.y + bbox.h) - 1
+            inset = 3
+            corners = [
+                (min(max(x, 0), frame.width - 1), min(max(y, 0), frame.height - 1))
+                for x, y in (
+                    (x0 + inset, y0 + inset),
+                    (x1 - inset, y0 + inset),
+                    (x0 + inset, y1 - inset),
+                    (x1 - inset, y1 - inset),
+                )
+            ]
+            pixels = [frame.getpixel(point) for point in corners]
+    except Exception:  # noqa: BLE001 - a backdrop nobody could read is white
+        return "#ffffff"
+
+    channels = [sorted(channel)[len(channel) // 2] for channel in zip(*pixels, strict=True)]
+    return "#{:02x}{:02x}{:02x}".format(*channels)

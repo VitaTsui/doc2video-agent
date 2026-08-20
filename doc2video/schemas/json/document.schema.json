@@ -29,6 +29,112 @@
       "title": "BBox",
       "type": "object"
     },
+    "ChartFacts": {
+      "description": "A chart's numbers, as the deck states them.\n\nEnough to draw the chart again and no more — the deck's own categories,\nseries, values and colours. Re-palettizing or re-scaling would make the\nvideo disagree with the slide it came from, so neither is possible here.",
+      "properties": {
+        "kind": {
+          "default": "column",
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "categories": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Categories",
+          "type": "array"
+        },
+        "series": {
+          "items": {
+            "$ref": "#/$defs/ChartSeriesFacts"
+          },
+          "title": "Series",
+          "type": "array"
+        }
+      },
+      "title": "ChartFacts",
+      "type": "object"
+    },
+    "ChartSeriesFacts": {
+      "properties": {
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Values",
+          "type": "array"
+        },
+        "color": {
+          "default": "",
+          "title": "Color",
+          "type": "string"
+        }
+      },
+      "title": "ChartSeriesFacts",
+      "type": "object"
+    },
+    "DiagramEdge": {
+      "description": "One arrow, by the elements it actually joins.",
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "target"
+      ],
+      "title": "DiagramEdge",
+      "type": "object"
+    },
+    "DiagramFacts": {
+      "description": "A flow on a slide, read rather than recognised.\n\nPresent only when the deck *declares* the structure: a connector in OOXML\nnames the shapes it starts and ends at, so the graph is a fact about the\nfile rather than a guess about a picture. That distinction is the whole\ngate — a diagram whose arrows are drawn as free-floating lines cannot be\nread this way, and is left as the picture it is (方案 §12、§20).",
+      "properties": {
+        "nodes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Nodes",
+          "type": "array"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/DiagramEdge"
+          },
+          "title": "Edges",
+          "type": "array"
+        }
+      },
+      "title": "DiagramFacts",
+      "type": "object"
+    },
     "DocumentPage": {
       "properties": {
         "index": {
@@ -51,6 +157,17 @@
           },
           "title": "Elements",
           "type": "array"
+        },
+        "diagram": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiagramFacts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "speaker_notes": {
           "default": "",
@@ -202,6 +319,17 @@
           ],
           "default": null,
           "title": "Asset Path"
+        },
+        "chart": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChartFacts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

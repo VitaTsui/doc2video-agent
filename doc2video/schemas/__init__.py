@@ -2,6 +2,10 @@
 
 from .document import (
     BBox,
+    ChartFacts,
+    ChartSeriesFacts,
+    DiagramEdge,
+    DiagramFacts,
     DocumentModel,
     DocumentPage,
     ElementKind,
@@ -49,6 +53,10 @@ __all__ = [
     "SceneAudio",
     "SceneVisual",
     "Section",
+    "ChartFacts",
+    "DiagramEdge",
+    "DiagramFacts",
+    "ChartSeriesFacts",
     "SlideElement",
     "Source",
     "SourceType",

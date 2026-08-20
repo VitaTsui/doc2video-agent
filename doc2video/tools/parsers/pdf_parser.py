@@ -32,11 +32,12 @@ def parse_pdf(path: Path, assets_dir: Path, *, target_width: int = 1920) -> Docu
             zoom = target_width / page.rect.width if page.rect.width else 1.0
             matrix = fitz.Matrix(zoom, zoom)
 
-            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
-            image_name = f"page_{page_number:03d}.png"
-            pixmap.save(assets_dir / image_name)
+            with ledger.call("parser:pymupdf", f"第 {page_number} 页"):
+                pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+                image_name = f"page_{page_number:03d}.png"
+                pixmap.save(assets_dir / image_name)
 
-            elements = _extract_elements(page, page_number, zoom)
+                elements = _extract_elements(page, page_number, zoom)
             title = _guess_title(elements)
 
             pages.append(
@@ -65,7 +66,7 @@ def _extract_elements(page: fitz.Page, page_number: int, zoom: float) -> list[Sl
     candidates: list[tuple[float, SlideElement]] = []
     seq = 0
 
-    for block in raw.get("blocks", []):
+    for block in _joined_paragraphs(raw.get("blocks", [])):
         bbox = _scaled_bbox(block.get("bbox"), zoom)
         if bbox is None:
             continue
@@ -129,6 +130,73 @@ def _extract_elements(page: fitz.Page, page_number: int, zoom: float) -> list[Sl
                 el.importance = 0.8
 
     return [el for _, el in candidates]
+
+
+# Two blocks belong to the same paragraph when they line up left, are the same
+# size of type, and sit one line apart. The tolerances are in points, before
+# the render zoom, and deliberately tight — a wrong merge joins two unrelated
+# boxes into one that points at neither.
+_SAME_LEFT_PT = 4.0
+_SAME_SIZE_RATIO = 0.15
+_LINE_GAP_RATIO = 0.9
+
+
+def _joined_paragraphs(blocks: list[dict]) -> list[dict]:
+    """Put a paragraph's lines back together when the PDF split them.
+
+    Some generators emit every visual line as its own block. Taken at face
+    value each line becomes an element, and two things go wrong at once: the
+    text is cut mid-sentence (「…组织为可连续分」), and a highlight aimed at
+    that sentence draws a box around one of its lines — which is the shape the
+    viewer sees as "the box is on the wrong row".
+
+    Merging is conservative: same left edge, same type size, the vertical gap
+    no larger than a line. Anything else is left alone, because a paragraph
+    wrongly joined to its neighbour aims the camera at the two of them.
+    """
+    merged: list[dict] = []
+    for block in blocks:
+        if block.get("type") == 1 or not block.get("lines"):
+            merged.append(block)
+            continue
+        previous = merged[-1] if merged else None
+        if previous is not None and _continues(previous, block):
+            previous["lines"] = list(previous["lines"]) + list(block["lines"])
+            px0, py0, px1, py1 = previous["bbox"]
+            bx0, by0, bx1, by1 = block["bbox"]
+            previous["bbox"] = (min(px0, bx0), min(py0, by0), max(px1, bx1), max(py1, by1))
+            continue
+        merged.append(dict(block))
+    return merged
+
+
+def _continues(previous: dict, block: dict) -> bool:
+    """Whether `block` is the next line of the paragraph `previous` ends."""
+    if previous.get("type") == 1 or not previous.get("lines"):
+        return False
+    px0, _, px1, py1 = previous["bbox"]
+    bx0, by0, bx1, _ = block["bbox"]
+    if abs(px0 - bx0) > _SAME_LEFT_PT:
+        return False
+    # Below it, by no more than a line's worth of space. `by0 < py1` would be
+    # an overlap — two columns, not two lines.
+    size = max(_max_size(previous), _max_size(block))
+    if not size or not (0 <= by0 - py1 <= size * _LINE_GAP_RATIO):
+        return False
+    if abs(_max_size(previous) - _max_size(block)) > size * _SAME_SIZE_RATIO:
+        return False
+    # Comparable width: a one-word line under a full-width paragraph is a
+    # caption or a heading, not its continuation.
+    return min(px1 - px0, bx1 - bx0) >= 0.35 * max(px1 - px0, bx1 - bx0)
+
+
+def _max_size(block: dict) -> float:
+    sizes = (
+        float(span.get("size", 0))
+        for line in block.get("lines", [])
+        for span in line.get("spans", [])
+    )
+    return max(sizes, default=0.0)
 
 
 def _block_text(block: dict) -> tuple[str, float]:

@@ -22,7 +22,7 @@ import re
 
 from pydantic import BaseModel
 
-from ..core import telemetry
+from ..core import ledger, telemetry
 from ..core.ids import scene_id
 from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisual, VisualType
 from ..tools.llm import model_schema
@@ -60,6 +60,18 @@ TRANSITIONS = [
     "说到这里，就要提到{title}。",
     "顺着这个思路，{title}。",
 ]
+
+
+# What a style name means to someone writing the words. The enum value alone
+# ("lively") tells the model a category; these tell it what to do differently,
+# which is the only form a style instruction can be obeyed in.
+STYLE_BRIEF = {
+    "professional": "专业、克制。用行业里通行的说法，不解释常识，不铺陈形容词。",
+    "tech": "技术向。讲清楚机制与取舍，敢用具体数字和术语，句子干脆。",
+    "lively": "活泼。多用短句和口语连接，可以带一点反问和轻微夸张，不端着。",
+    "casual": "轻松。像同事之间讲一件事，允许口语词和插入语，不用书面套话。",
+    "formal": "正式。完整句、书面用词，不用口语缩略，语气持重。",
+}
 
 
 class SegmentDraft(BaseModel):
@@ -209,11 +221,12 @@ class NarrationSkill(Skill):
             self.log.warning("没有模型，无法按「%s」改写场景 %s", instruction, scene.scene_id)
 
         def rewrite() -> None:
-            result = self.llm.complete_json(
-                self._revise_prompt(scene, page, instruction, budget),
-                schema=model_schema(PageNarration),
-                system=load_prompt("narration"),
-            )
+            with ledger.call(self.llm.source, f"改写 {scene.scene_id}"):
+                result = self.llm.complete_json(
+                    self._revise_prompt(scene, page, instruction, budget),
+                    schema=model_schema(PageNarration),
+                    system=load_prompt("narration"),
+                )
             revised = PageNarration.model_validate(result)
             if revised.narration.strip():
                 self.rewrite_scene(scene, revised.narration.strip())
@@ -299,12 +312,13 @@ class NarrationSkill(Skill):
         drafts: dict[int, PageNarration] = {}
         for start in range(0, len(pages), BATCH_SIZE):
             batch = pages[start : start + BATCH_SIZE]
-            result = self.llm.complete_json(
-                self._prompt(batch, budgets, position=start),
-                schema=model_schema(NarrationResult),
-                system=load_prompt("narration"),
-                max_tokens=self.ctx.settings.llm_max_tokens,
-            )
+            with ledger.call(self.llm.source, f"第 {batch[0].index}-{batch[-1].index} 页"):
+                result = self.llm.complete_json(
+                    self._prompt(batch, budgets, position=start),
+                    schema=model_schema(NarrationResult),
+                    system=load_prompt("narration"),
+                    max_tokens=self.ctx.settings.llm_max_tokens,
+                )
             for page in NarrationResult.model_validate(result).pages:
                 if page.narration.strip():
                     drafts[page.index] = page
@@ -335,7 +349,9 @@ class NarrationSkill(Skill):
             f"主题：{document.topic or '未知'}",
             f"整体摘要：{document.summary or '（无）'}",
             "",
-            f"# 观众与风格\n受众：{intent.audience}\n语气：{intent.tone}\n"
+            f"# 观众与风格\n受众：{intent.audience}\n"
+            f"风格：{STYLE_BRIEF.get(intent.style, intent.style)}\n"
+            f"语气：{intent.tone}\n"
             f"额外要求：{intent.instructions or '（无）'}",
             "",
             f"# 需要写讲稿的页面（全文第 {position + 1} 页起，共 {len(budgets)} 页）",
@@ -344,6 +360,14 @@ class NarrationSkill(Skill):
             lines.append(
                 f"\n## 第 {page.index} 页｜{page.page_type.value}｜{page.title or '无标题'}"
             )
+            if flow := _flow_of(page):
+                # The order the arrows go, which is the order the page has to
+                # be explained in. Given to the writer rather than used to
+                # reorder the camera: a shot is bound to the sentence that
+                # mentions it, and pointing at a box the current sentence is
+                # not talking about is worse than crossing the diagram out of
+                # order (方案 §20).
+                lines.append(f"这一页画的是一条流程，按箭头走是：{flow}")
             lines.append(f"字数预算：{self._char_budget(budgets[page.index])} 字（正负 15%）")
             if page.summary:
                 lines.append(f"页面摘要：{page.summary}")
@@ -475,3 +499,12 @@ class NarrationSkill(Skill):
 def _truncate(text: str, limit: int) -> str:
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def _flow_of(page: DocumentPage) -> str:
+    """A page's declared flow as words, or empty when it declares none."""
+    if page.diagram is None:
+        return ""
+    labels = {e.id: (e.text or e.label or e.id).strip() for e in page.elements}
+    walked = [labels.get(node, node) for node in page.diagram.order()]
+    return " → ".join(name for name in walked if name)

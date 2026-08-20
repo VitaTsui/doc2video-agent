@@ -157,3 +157,53 @@ def test_truncate_prefers_a_clause_boundary():
 
 def test_truncate_leaves_short_text_alone():
     assert _truncate("短", 60) == "短"
+
+
+def test_a_chart_the_narrator_points_at_is_carried_into_the_plan(settings, store, demo_pptx):
+    """A chart is the one thing on a deck where zooming explains nothing.
+
+    "Revenue went from 120 to 250" wants the bars to arrive in that order; a
+    camera push on a finished bar chart shows the answer larger. The numbers
+    come from the OOXML, so redrawing cannot change what the slide says — that
+    is the only reason a rebuilt chart is allowed to move at all.
+    """
+    from doc2video.agent import Doc2VideoAgent
+    from doc2video.agent.executor import Executor
+    from doc2video.agent.planner import Stage
+    from doc2video.skills.base import SkillContext
+    from doc2video.skills.motion import MotionSkill
+
+    agent = Doc2VideoAgent(settings, store)
+    project = agent.create_project(demo_pptx)
+    plan = agent.planner.initial_plan("讲清楚这几页的数据", project)
+    plan.stages = [s for s in plan.stages if s is not Stage.RENDER]
+    ctx = SkillContext.build(project, store=store, settings=settings)
+    project = Executor(ctx).run(plan, message="test")
+
+    charted = [
+        element
+        for page in project.document.pages
+        for element in page.elements
+        if element.chart is not None
+    ]
+    assert charted, "样例文稿里有图表，解析时应当把数字一起留下"
+    assert all(element.chart.categories for element in charted)
+    assert all(element.chart.series for element in charted)
+
+    # And the colours are the deck's own, resolved against its theme — the
+    # page image was rasterised from the same numbers by the same component,
+    # so a live redraw that used a different palette would visibly disagree
+    # with the chart printed underneath it.
+    assert all(
+        series.color.startswith("#")
+        for element in charted
+        for series in element.chart.series
+    )
+
+    plans = {plan.scene_id: plan for plan in MotionSkill(ctx).scene_plans()}
+    with_charts = [p for p in plans.values() if p.charts]
+    if with_charts:  # only when the director happened to point at one
+        chart = with_charts[0].charts[0]
+        assert chart.categories and chart.series
+        assert chart.backdrop.startswith("#")
+        assert chart.start >= 0

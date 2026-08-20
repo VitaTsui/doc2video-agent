@@ -8,6 +8,7 @@ leaves everything up to it readable.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 from doc2video.core import ledger
@@ -85,3 +86,48 @@ def test_recording_outside_a_run_is_a_no_op():
     ledger.note("没人在记")
     ledger.decision("也没人在记", "所以什么也不会发生")
     assert ledger.current() is None
+
+
+def test_every_call_is_recorded_under_the_step_that_made_it(tmp_path):
+    """A stage says a deck was voiced; the calls say which scene took eight seconds.
+
+    Flat, they would be useless: a thirty-scene render writes thirty entries
+    that sit as peers of 「解析文档」 and the shape of the run disappears. So a
+    stage claims its number before its body runs, and every call inside names
+    it.
+    """
+    path = tmp_path / "ledger.jsonl"
+    with ledger.recording(path, "run_1") as recorder:
+        with recorder.stage("配音", skill="presentation-voice"):
+            for index in (1, 2):
+                with ledger.call("tts:mock", f"第 {index} 页"):
+                    pass
+        with recorder.stage("渲染合成"):
+            with ledger.call("renderer:ffmpeg", "scene_01"):
+                pass
+
+    entries = ledger.read(path)
+    stages = {e.name: e for e in entries if e.kind == EntryKind.STAGE}
+    calls = [e for e in entries if e.kind == EntryKind.CALL]
+
+    assert len(calls) == 3
+    assert [c.parent for c in calls[:2]] == [stages["配音"].seq] * 2
+    assert calls[2].parent == stages["渲染合成"].seq
+    assert stages["配音"].skill == "presentation-voice"
+    # The tool a call went through is still named on the step, so the summary
+    # line does not have to walk the calls to say what did the work.
+    assert stages["配音"].tools == ["tts:mock"]
+
+
+def test_a_failed_call_is_kept_and_says_so(tmp_path):
+    """The call that failed is the one worth finding, so it must be written."""
+    path = tmp_path / "ledger.jsonl"
+    with ledger.recording(path, "run_1") as recorder, contextlib.suppress(RuntimeError):
+        with recorder.stage("配音"):
+            with ledger.call("tts:mock", "第 3 页"):
+                raise RuntimeError("合成失败")
+
+    calls = [e for e in ledger.read(path) if e.kind == EntryKind.CALL]
+    assert len(calls) == 1
+    assert calls[0].status == "failed"
+    assert "合成失败" in calls[0].detail

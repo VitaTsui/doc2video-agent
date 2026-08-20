@@ -325,7 +325,8 @@ def _resolve_config(settings: Settings) -> Path:
     if runtime not in RUNTIMES:
         raise RuntimeError(f"不认识的 CLI 运行时：{runtime}（可选 {'、'.join(RUNTIMES)}）")
     binary = RUNTIMES[runtime]
-    if shutil.which(binary) is None:
+    found = programs.find(binary)
+    if found is None:
         raise RuntimeError(f"未安装 {binary}（{runtime}）")
 
     # One file per runtime: switching between them must not silently reuse the
@@ -333,7 +334,7 @@ def _resolve_config(settings: Settings) -> Path:
     path = (settings.storage_dir / f"agent-virtualization.{runtime}.json").resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(_default_config(runtime, settings), ensure_ascii=False, indent=2),
+        json.dumps(_default_config(runtime, settings, Path(found)), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     return path
@@ -361,8 +362,19 @@ PROXY_VARS = (
     "no_proxy",
 )
 
+# Who is running this. On macOS the CLI's credentials live in the login
+# keychain, and it finds that keychain by user — without `USER` it reports
+#
+#     Not logged in · Please run /login
+#
+# on a machine where `claude -p` answers perfectly from a shell. Same shape as
+# the proxy problem above: a routing failure wearing a credential failure's
+# words, and the pipeline then degrades to placeholder narration without
+# anyone learning why. `HOME` alone is not enough; this was bisected.
+IDENTITY_VARS = ("USER", "LOGNAME")
 
-def _default_config(runtime: str, settings: Settings) -> dict[str, Any]:
+
+def _default_config(runtime: str, settings: Settings, binary: Path) -> dict[str, Any]:
     """No tools, no network restriction, nothing writable that matters.
 
     The CLI is being used as a model, so every capability it might be given is
@@ -394,7 +406,21 @@ def _default_config(runtime: str, settings: Settings) -> dict[str, Any]:
             # Network is inherited above; the way *to* the network has to be
             # passed as well, or "inherit" means a route this machine does not
             # have.
-            "inheritEnv": [name for name in PROXY_VARS if os.environ.get(name)],
+            "inheritEnv": [
+                name for name in PROXY_VARS + IDENTITY_VARS if os.environ.get(name)
+            ],
+            # The sandbox starts with a scrubbed environment, PATH included, and
+            # then runs the CLI by name — so a CLI installed anywhere but the
+            # system directories cannot be executed at all:
+            #
+            #     sandbox-exec: execvp() of 'claude' failed: No such file or directory
+            #
+            # We already know where it is; the check above found it. This is the
+            # same mistake `core.programs` exists to prevent, one layer further
+            # out: look the program up, then spawn a name and hope. Its own
+            # directory is enough — these CLIs ship as native binaries, not as
+            # scripts needing an interpreter on the path.
+            "env": {"PATH": os.pathsep.join([str(binary.parent), os.defpath])},
             # claude-code's half of the same problem: without the real HOME it
             # cannot see the credentials it was logged in with.
             **({"homeMode": "inherit"} if runtime == "claude-code" else {}),

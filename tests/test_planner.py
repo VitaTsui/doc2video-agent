@@ -130,3 +130,38 @@ def test_reading_the_deck_and_writing_it_are_two_steps(settings, store):
 
     # The deck is not re-read to write against it — it was read in step one.
     assert Stage.PARSE not in writing.stages
+
+
+def test_the_tone_knob_is_connected_to_something():
+    """`tone` was read by the prompt and written by nothing.
+
+    Every deck ever made came out 「清晰、稳重」 however it was asked for,
+    because the field existed, the prompt printed it, and no code path
+    assigned it. `style` had the mirror-image problem: parsed, stored, and
+    never put in front of the model.
+    """
+    lively = parse_intent_rules("活泼一点，讲给年轻人听", VideoIntent())
+    assert lively.style == "lively"
+    assert lively.tone != VideoIntent().tone
+
+    # An explicit tone is a correction of the one the style implied.
+    both = parse_intent_rules("专业一点，但语气亲切些", VideoIntent())
+    assert both.style == "professional"
+    assert "亲切" in both.tone
+
+    from doc2video.skills.narration import STYLE_BRIEF
+
+    assert set(STYLE_BRIEF) >= {"professional", "tech", "lively", "casual", "formal"}
+
+
+def test_asking_for_a_slower_voice_is_understood():
+    """Voice and speed belong to the video, so they can be said rather than configured."""
+    slower = parse_intent_rules("语速慢一点", VideoIntent())
+    assert 0 < slower.speech_rate < 1
+
+    # The longer phrase wins over the shorter one it contains.
+    much_slower = parse_intent_rules("再慢一点", VideoIntent())
+    assert much_slower.speech_rate < slower.speech_rate
+
+    assert parse_intent_rules("快一点", VideoIntent()).speech_rate > 1
+    assert parse_intent_rules("按默认来", VideoIntent()).speech_rate == 0

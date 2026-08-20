@@ -62,6 +62,77 @@ class PageType(StrEnum):
     OTHER = "other"
 
 
+class ChartSeriesFacts(BaseModel):
+    name: str = ""
+    # None is a gap in the data, not a zero: a line must not be joined across it.
+    values: list[float | None] = Field(default_factory=list)
+    color: str = ""
+
+
+class ChartFacts(BaseModel):
+    """A chart's numbers, as the deck states them.
+
+    Enough to draw the chart again and no more — the deck's own categories,
+    series, values and colours. Re-palettizing or re-scaling would make the
+    video disagree with the slide it came from, so neither is possible here.
+    """
+
+    kind: str = "column"
+    title: str = ""
+    categories: list[str] = Field(default_factory=list)
+    series: list[ChartSeriesFacts] = Field(default_factory=list)
+
+
+class DiagramEdge(BaseModel):
+    """One arrow, by the elements it actually joins."""
+
+    source: str
+    target: str
+    # What the connector had written on it, when anything did.
+    label: str = ""
+
+
+class DiagramFacts(BaseModel):
+    """A flow on a slide, read rather than recognised.
+
+    Present only when the deck *declares* the structure: a connector in OOXML
+    names the shapes it starts and ends at, so the graph is a fact about the
+    file rather than a guess about a picture. That distinction is the whole
+    gate — a diagram whose arrows are drawn as free-floating lines cannot be
+    read this way, and is left as the picture it is (方案 §12、§20).
+    """
+
+    nodes: list[str] = Field(default_factory=list)
+    edges: list[DiagramEdge] = Field(default_factory=list)
+
+    def order(self) -> list[str]:
+        """The nodes in the order the arrows walk them.
+
+        A flow is told in the order it flows: the narration and the camera
+        should follow the arrows rather than the reading order of the boxes,
+        which on a slide is often neither left-to-right nor top-to-bottom.
+        Cycles keep their remaining nodes rather than dropping them.
+        """
+        incoming = {node: 0 for node in self.nodes}
+        outgoing: dict[str, list[str]] = {node: [] for node in self.nodes}
+        for edge in self.edges:
+            if edge.source in incoming and edge.target in incoming:
+                incoming[edge.target] += 1
+                outgoing[edge.source].append(edge.target)
+
+        ready = [node for node in self.nodes if incoming[node] == 0]
+        walked: list[str] = []
+        while ready:
+            node = ready.pop(0)
+            walked.append(node)
+            for nxt in outgoing[node]:
+                incoming[nxt] -= 1
+                if incoming[nxt] == 0:
+                    ready.append(nxt)
+        walked += [node for node in self.nodes if node not in walked]
+        return walked
+
+
 class SlideElement(BaseModel):
     """One addressable thing on a page — the unit the director points at."""
 
@@ -75,6 +146,18 @@ class SlideElement(BaseModel):
     # 0..1, how central this element is to the page's message.
     importance: float = 0.5
     asset_path: str | None = None
+    # The numbers behind a chart, when this element is one.
+    #
+    # Kept on the element rather than re-read from the source file when it is
+    # wanted. The source is a `.pptx` the user may have moved, and the project
+    # is supposed to be the whole truth about the video — a chart that can only
+    # be animated while the original file is still where it was is a chart that
+    # stops animating for reasons nobody can see.
+    #
+    # Exact, not recognised: it comes out of the OOXML, so redrawing it cannot
+    # change what the slide says. That is the whole reason a rebuilt chart is
+    # allowed here at all (方案 §12).
+    chart: ChartFacts | None = None
 
 
 class DocumentPage(BaseModel):
@@ -82,6 +165,11 @@ class DocumentPage(BaseModel):
     page_type: PageType = PageType.CONTENT
     title: str = ""
     elements: list[SlideElement] = Field(default_factory=list)
+    # The flow this page draws, when it declares one. None means "this page
+    # has no readable structure", which is not the same as "this page has no
+    # diagram" — an architecture drawn as a picture is still a picture, and
+    # the honest thing to do with it is show it.
+    diagram: DiagramFacts | None = None
     speaker_notes: str = ""
     # Rendered full-resolution page image, relative to the project directory.
     image_path: str | None = None

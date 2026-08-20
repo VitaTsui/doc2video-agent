@@ -8,10 +8,14 @@ reads the slide, broken transitions, factual drift.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel
 
 from ..schemas import PageType, ReviewFinding
 from ..schemas.telemetry import QualityDimension, QualityReport
+from ..tools.renderer.base import SUBTITLE_BOTTOM_MARGIN
+from . import render_review
 from .base import Skill
 
 DURATION_TOLERANCE = 0.25
@@ -19,6 +23,47 @@ LONG_SCENE_SECONDS = 90.0
 SHORT_SCENE_SECONDS = 3.0
 # Above this overlap the script is essentially reading the page aloud.
 READALOUD_THRESHOLD = 0.72
+
+# A page whose sentences are all about the same length reads as a machine
+# reporting, however accurate it is — speech carries emphasis by breaking
+# rhythm, and a flat rhythm has nowhere to put it. Measured as the spread of
+# sentence lengths relative to their mean, over enough sentences for the
+# number to mean anything.
+MIN_SENTENCES_FOR_RHYTHM = 4
+MIN_LENGTH_SPREAD = 0.28
+
+# The tics that make a Chinese script sound machine-written. Each is a shape
+# rather than a topic: a script can be perfectly accurate and still read like a
+# summary generator, and the shapes are what gives it away.
+#
+# Checked here rather than only asked for in the prompt, for the reason review
+# exists at all: a model asked not to do something does it less, not never, and
+# the only way anyone finds out is by reading 2000 characters looking for it.
+# The patterns come from the `chinese-writing-style` rules the prompt states —
+# stated there, enforced here.
+AI_TICS: tuple[tuple[str, str, str], ...] = (
+    (
+        "否定断言",
+        r"不是[^。，！？]{1,14}[，,]\s*(?:而是|是|只是)|并非[^。，！？]{1,14}[，,]\s*而是"
+        r"|与其说是[^。]{1,16}不如说|重点不在[^。，]{1,12}[，,]\s*而在",
+        "「不是A而是B」这类对比架子，改成直接说肯定的那半句",
+    ),
+    (
+        "顶针重锤",
+        r"是([\u4e00-\u9fa5]{1,3})[，,]\1",
+        "「是X，X……」把一个词敲两遍，改成把那件事讲具体",
+    ),
+    (
+        "评价尾巴",
+        r"这(?:就)?是[^。！？]{0,14}的(?:关键|核心|价值所在|根本|本钱)|说白了|别人学不来",
+        "给页面下断语的尾巴，事实说完就走",
+    ),
+    (
+        "举牌词",
+        r"值得一提的是|不难看出|需要强调的是|更重要的是|众所周知",
+        "举牌提醒别人注意，改成把那件事讲具体",
+    ),
+)
 MAX_SUBTITLE_CUE_CHARS = 34
 
 
@@ -39,6 +84,23 @@ class ReviewSkill(Skill):
 
     def run(self) -> None:
         findings = self._structural_checks()
+        # What the viewer sees, which the checks above cannot reach: a caption
+        # can be perfectly timed, correctly split and sitting on top of the
+        # number it is describing. Geometry, not pixels — the renderer's layout
+        # is ours, so the answer is arithmetic.
+        findings.extend(
+            render_review.check_subtitles(
+                self.project,
+                self.ctx.settings.video_width,
+                self.ctx.settings.video_height,
+                SUBTITLE_BOTTOM_MARGIN,
+            )
+        )
+        # And whether anything was actually drawn. Only once there are clips to
+        # look at: before a render there is no picture to have an opinion about.
+        if self.project.render.scene_clips:
+            findings.extend(render_review.check_frames(self.project, self.ctx.asset_path))
+            findings.extend(render_review.check_actions(self.project, self.ctx.asset_path))
         self.project.review = findings
         self.project.quality = self._score(findings)
 
@@ -60,7 +122,8 @@ class ReviewSkill(Skill):
         ratio of what went wrong to what could have, so the score does not drift
         with deck length.
         """
-        scenes = self.project.scenes
+        project = self.project
+        scenes = project.scenes
         by_kind: dict[str, int] = {}
         for finding in findings:
             by_kind[finding.kind] = by_kind.get(finding.kind, 0) + 1
@@ -77,9 +140,24 @@ class ReviewSkill(Skill):
         dangling = by_kind.get("dangling_action", 0) + by_kind.get("action_overflow", 0)
         dimensions = [
             QualityDimension(
+                name="render",
+                # A scene that came out empty is not a lesser video, it is a
+                # missing one — and unlike everything else here, nothing in the
+                # project can tell you it happened.
+                score=_ratio_score(
+                    by_kind.get("blank_frame", 0) + by_kind.get("action_not_visible", 0),
+                    max(len(scenes), 1),
+                ),
+                weight=0.20,  # with completeness, half the score is "is there a video"
+                detail=(
+                    f"{by_kind.get('blank_frame', 0)} 个场景画面是空的，"
+                    f"{by_kind.get('action_not_visible', 0)} 个动作没画出来"
+                ),
+            ),
+            QualityDimension(
                 name="completeness",
                 score=_ratio_score(broken, expected),
-                weight=0.35,
+                weight=0.30,
                 detail=(
                     f"{broken} 处不完整"
                     + (f"，其中 {uncovered} 页没有进片" if uncovered else "")
@@ -88,26 +166,46 @@ class ReviewSkill(Skill):
             QualityDimension(
                 name="pacing",
                 score=self._pacing_score(by_kind),
-                weight=0.20,
+                weight=0.15,
                 detail=f"时长偏差与节奏问题 {by_kind.get('pacing', 0)} 条",
             ),
             QualityDimension(
                 name="originality",
-                score=_ratio_score(by_kind.get("read_aloud", 0), len(scenes)),
-                weight=0.20,
-                detail=f"{by_kind.get('read_aloud', 0)} 个场景讲稿接近照读页面",
+                # Two ways a script fails to be worth listening to: it reads the
+                # page aloud, or it writes like a machine. Same dimension
+                # because the fix is the same one — write it again, properly.
+                score=_ratio_score(
+                    by_kind.get("read_aloud", 0) + by_kind.get("ai_tic", 0), len(scenes)
+                ),
+                weight=0.15,
+                detail=(
+                    f"{by_kind.get('read_aloud', 0)} 个场景接近照读，"
+                    f"{by_kind.get('ai_tic', 0)} 个场景有 AI 腔句式"
+                ),
             ),
             QualityDimension(
                 name="direction",
                 score=self._direction_score(dangling),
-                weight=0.15,
+                weight=0.10,
                 detail=f"{self._scenes_with_actions()}/{len(scenes)} 个场景有镜头动作",
             ),
             QualityDimension(
                 name="subtitles",
-                score=100.0 if not by_kind.get("subtitle") else 60.0,
+                # Three ways a caption goes wrong and only one of them is about
+                # the text: too long to read, off the frame, or on top of the
+                # thing being talked about.
+                score=_ratio_score(
+                    by_kind.get("subtitle", 0)
+                    + by_kind.get("subtitle_overflow", 0)
+                    + by_kind.get("subtitle_cover", 0),
+                    max(len(project.timeline.subtitles), 1),
+                ),
                 weight=0.10,
-                detail=f"字幕问题 {by_kind.get('subtitle', 0)} 条",
+                detail=(
+                    f"字幕问题 {by_kind.get('subtitle', 0)} 条，"
+                    f"出界 {by_kind.get('subtitle_overflow', 0)} 条，"
+                    f"遮挡 {by_kind.get('subtitle_cover', 0)} 条"
+                ),
             ),
         ]
         total_weight = sum(d.weight for d in dimensions)
@@ -215,6 +313,17 @@ class ReviewSkill(Skill):
                     )
                 )
 
+            if (flat := _length_spread(scene.narration)) is not None:
+                findings.append(
+                    ReviewFinding(
+                        severity="warning", kind="pacing", scene_id=scene.scene_id,
+                        message=(
+                            f"句子长度过于均匀（离散度 {flat:.2f}），"
+                            "念出来是一条直线，长短句交错一下"
+                        ),
+                    )
+                )
+
             if scene.duration > LONG_SCENE_SECONDS:
                 findings.append(
                     ReviewFinding(
@@ -256,6 +365,16 @@ class ReviewSkill(Skill):
                         )
                     )
 
+            for label, pattern, advice in AI_TICS:
+                if (hit := re.search(pattern, scene.narration)) is None:
+                    continue
+                findings.append(
+                    ReviewFinding(
+                        severity="warning", kind="ai_tic", scene_id=scene.scene_id,
+                        message=f"{label}：「{hit.group(0)}」——{advice}",
+                    )
+                )
+
         for cue in project.timeline.subtitles:
             if len(cue.text) > MAX_SUBTITLE_CUE_CHARS:
                 findings.append(
@@ -284,3 +403,21 @@ def _overlap_ratio(narration: str, page_text: str) -> float:
     if not narration_grams:
         return 0.0
     return len(narration_grams & page_grams) / len(narration_grams)
+
+
+def _length_spread(narration: str) -> float | None:
+    """How varied this page's sentence lengths are, or None when they are fine.
+
+    Returns the coefficient of variation only when it is too low to pass —
+    a number a reader can act on ("0.11" says flatter than "0.28"), and
+    nothing at all when the rhythm is already varied.
+    """
+    lengths = [len(part) for part in re.split(r"[。！？；]", narration) if part.strip()]
+    if len(lengths) < MIN_SENTENCES_FOR_RHYTHM:
+        return None
+    mean = sum(lengths) / len(lengths)
+    if mean <= 0:
+        return None
+    variance = sum((length - mean) ** 2 for length in lengths) / len(lengths)
+    spread = variance**0.5 / mean
+    return spread if spread < MIN_LENGTH_SPREAD else None

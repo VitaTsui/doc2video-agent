@@ -78,7 +78,7 @@ export interface LedgerArtifact {
 
 export interface LedgerEntry {
   seq: number
-  kind: 'stage' | 'decision' | 'degradation' | 'note'
+  kind: 'stage' | 'call' | 'decision' | 'degradation' | 'note'
   name: string
   detail: string
   status: string
@@ -86,6 +86,10 @@ export interface LedgerEntry {
   artifacts: LedgerArtifact[]
   /** Which tools did the work: the parser, the voice, the renderer, the model. */
   tools: string[]
+  /** The skill this step is the work of, e.g. `presentation-narration`. */
+  skill: string
+  /** For a call, the `seq` of the stage it happened inside. */
+  parent: number
 }
 
 /** How this project got made, step by step, with what each step produced. */

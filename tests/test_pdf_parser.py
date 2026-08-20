@@ -66,3 +66,52 @@ def test_element_boxes_stay_inside_the_page(demo_pdf: Path, tmp_path: Path):
             assert 0 <= element.bbox.x <= page.width
             assert 0 <= element.bbox.y <= page.height
             assert element.bbox.w > 0 and element.bbox.h > 0
+
+
+def test_a_paragraph_split_into_lines_is_put_back_together():
+    """Some PDFs emit every visual line as its own block.
+
+    Taken at face value each line becomes an element, and two things break at
+    once: the text is cut mid-sentence, and a highlight aimed at the sentence
+    draws its box around one row of it — which is what the viewer sees as the
+    box sitting on the wrong line.
+    """
+    from doc2video.tools.parsers.pdf_parser import _joined_paragraphs
+
+    def line(text: str, size: float = 12.0) -> dict:
+        return {"spans": [{"text": text, "size": size}]}
+
+    blocks = [
+        {"type": 0, "bbox": (60, 100, 560, 116), "lines": [line("围绕重点原料建立监测清单，")]},
+        {"type": 0, "bbox": (60, 118, 560, 134), "lines": [line("组织为可连续分析的数据。")]},
+        # A different column: same size, but it starts somewhere else.
+        {"type": 0, "bbox": (700, 100, 900, 116), "lines": [line("右栏另起一段")]},
+    ]
+    joined = _joined_paragraphs(blocks)
+
+    assert len(joined) == 2
+    assert joined[0]["bbox"] == (60, 100, 560, 134)
+    assert len(joined[0]["lines"]) == 2
+    assert joined[1]["bbox"][0] == 700
+
+
+def test_a_heading_is_not_swallowed_by_the_paragraph_above_it():
+    """A wrong merge aims the camera at two things and lands on neither."""
+    from doc2video.tools.parsers.pdf_parser import _joined_paragraphs
+
+    def line(text: str, size: float) -> dict:
+        return {"spans": [{"text": text, "size": size}]}
+
+    blocks = [
+        {"type": 0, "bbox": (60, 100, 560, 116), "lines": [line("正文一行", 12.0)]},
+        # Same left edge, one line below — but twice the type size.
+        {"type": 0, "bbox": (60, 120, 560, 148), "lines": [line("下一个标题", 24.0)]},
+    ]
+    assert len(_joined_paragraphs(blocks)) == 2
+
+    far = [
+        {"type": 0, "bbox": (60, 100, 560, 116), "lines": [line("正文一行", 12.0)]},
+        # Same size and left edge, but a whole blank line away.
+        {"type": 0, "bbox": (60, 160, 560, 176), "lines": [line("隔了一段", 12.0)]},
+    ]
+    assert len(_joined_paragraphs(far)) == 2

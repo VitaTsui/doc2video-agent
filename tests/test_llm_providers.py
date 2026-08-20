@@ -8,6 +8,7 @@ must degrade to MockLLM, and MockLLM must be something the pipeline can hold.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -188,8 +189,9 @@ def test_each_runtime_gets_the_credential_option_it_understands(tmp_path: Path):
     from doc2video.tools.llm.virtualized import _default_config
 
     settings = Settings(storage_dir=tmp_path)
-    claude = _default_config("claude-code", settings)
-    codex = _default_config("codex", settings)
+    binary = Path("/usr/local/bin/claude")
+    claude = _default_config("claude-code", settings, binary)
+    codex = _default_config("codex", settings, binary)
 
     assert claude["environment"]["homeMode"] == "inherit"
     assert "inheritHostCredentials" not in claude["runtime"]
@@ -331,7 +333,10 @@ def test_the_sandboxed_cli_is_given_the_way_out_that_the_machine_uses(monkeypatc
 
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
     monkeypatch.delenv("HTTP_PROXY", raising=False)
-    environment = _default_config("claude-code", Settings())["environment"]
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("LOGNAME", raising=False)
+    binary = Path("/usr/local/bin/claude")
+    environment = _default_config("claude-code", Settings(), binary)["environment"]
 
     assert environment["sandbox"]["network"] == "inherit"
     assert environment["inheritEnv"] == ["HTTPS_PROXY"]
@@ -339,4 +344,28 @@ def test_the_sandboxed_cli_is_given_the_way_out_that_the_machine_uses(monkeypatc
     # Only what is set. Naming an absent variable would hand the sandbox an
     # empty proxy setting, which some clients read as "proxy to nowhere".
     monkeypatch.delenv("HTTPS_PROXY")
-    assert _default_config("claude-code", Settings())["environment"]["inheritEnv"] == []
+    assert _default_config("claude-code", Settings(), binary)["environment"]["inheritEnv"] == []
+
+
+def test_the_sandboxed_cli_can_be_executed_and_knows_who_it_is(monkeypatch):
+    """Two ways a logged-in CLI reports itself unusable, both environmental.
+
+    The sandbox starts from a scrubbed environment and then runs the CLI by
+    name, so a CLI installed outside the system directories cannot be spawned
+    at all — `execvp() of 'claude' failed`, for a program the check right
+    above just located. And on macOS the credentials are in the login
+    keychain, which the CLI finds by user: without `USER` it says
+    「Not logged in · Please run /login」 on a machine where the same binary
+    answers fine from a shell. Both end the same way — the pipeline degrades
+    to placeholder narration and nobody learns why.
+    """
+    from doc2video.tools.llm.virtualized import _default_config
+
+    monkeypatch.setenv("USER", "someone")
+    monkeypatch.delenv("LOGNAME", raising=False)
+    environment = _default_config(
+        "claude-code", Settings(), Path("/opt/homebrew/bin/claude")
+    )["environment"]
+
+    assert "USER" in environment["inheritEnv"]
+    assert environment["env"]["PATH"].split(os.pathsep)[0] == "/opt/homebrew/bin"

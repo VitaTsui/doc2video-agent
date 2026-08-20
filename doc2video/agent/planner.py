@@ -86,6 +86,12 @@ class ExecutionPlan(BaseModel):
     # Caller-written script: page index -> text for a full run, scene id -> text
     # for a targeted edit. Empty means "no script supplied" (placeholder path).
     narrations: dict[int, str] = Field(default_factory=dict)
+    # Set when the script came from the caller rather than being written here.
+    # Not the same question as "is `narrations` empty": a caller can submit an
+    # empty script, and that is still a caller's script — every page falls back
+    # to placeholder text. What it decides is only what the step is called, and
+    # 「生成讲稿」 for a step that writes nothing is the wrong name.
+    adopts_script: bool = False
     scene_narrations: dict[str, str] = Field(default_factory=dict)
     # Seconds a scene was asked to become. Informational: nothing here writes to
     # a length any more, but the caller needs the number to rewrite against it.
@@ -146,6 +152,7 @@ class Planner:
             summary="按调用方讲稿生成视频",
             stages=list(POST_SCRIPT_STAGES),
             narrations=dict(narrations),
+            adopts_script=True,
         )
 
     def initial_plan(self, message: str, project: VideoProject) -> ExecutionPlan:
@@ -225,6 +232,42 @@ _STYLE_HINTS = {
     "正式": "formal",
 }
 
+# How the narration should sound, said in words the writer can act on. The
+# field existed, the prompt read it, and nothing ever wrote it — every deck
+# ever made came out 「清晰、稳重」 no matter what was asked for. Keyed by the
+# words people actually type.
+_TONE_HINTS = {
+    "亲切": "亲切、像在跟人聊",
+    "热情": "热情、有推进感",
+    "沉稳": "沉稳、不急不缓",
+    "稳重": "清晰、稳重",
+    "严肃": "严肃、克制",
+    "干脆": "干脆、句子短",
+    "冷静": "冷静、只讲事实",
+    "幽默": "轻快、偶尔带一点玩笑",
+    "年轻": "年轻、口语化",
+}
+
+# Speaking speed, as people ask for it. Multipliers on the machine's natural
+# pace, kept mild: past about a quarter either way the synthesiser stops
+# sounding like a person reading and starts sounding like a tape.
+_RATE_HINTS = (
+    (("再慢一点", "慢很多", "太快了"), 0.85),
+    (("慢一点", "慢些", "放慢"), 0.9),
+    (("快一点", "快些", "加快", "太慢了"), 1.12),
+    (("再快一点", "快很多"), 1.25),
+)
+
+# When only a style was named, it implies how it should sound. Stated so that
+# 「活泼一点」 changes the delivery too, rather than only a label nobody reads.
+_STYLE_TONE = {
+    "professional": "清晰、稳重",
+    "tech": "干脆、重逻辑",
+    "lively": "轻快、有起伏",
+    "casual": "放松、像同事之间讲事",
+    "formal": "持重、书面",
+}
+
 
 def parse_intent_rules(message: str, current: VideoIntent) -> VideoIntent:
     """Regex intent parsing — covers the phrasings users actually type."""
@@ -238,6 +281,14 @@ def parse_intent_rules(message: str, current: VideoIntent) -> VideoIntent:
     for keyword, style in _STYLE_HINTS.items():
         if keyword in message:
             intent.style = style
+            intent.tone = _STYLE_TONE.get(style, intent.tone)
+            break
+
+    # An explicit tone wins over the one the style implies: 「专业一点，但亲切」
+    # names both, and the second one is the correction.
+    for keyword, tone in _TONE_HINTS.items():
+        if keyword in message:
+            intent.tone = tone
             break
 
     if "企业客户" in message or "客户" in message:
@@ -258,8 +309,45 @@ def parse_intent_rules(message: str, current: VideoIntent) -> VideoIntent:
     if "放大" in message and ("数字" in message or "数据" in message):
         intent.zoom_on_key_data = True
 
+    # Longest phrase first: 「再慢一点」 contains 「慢一点」, and the shorter
+    # match would quietly take a smaller step than the one that was asked for.
+    for words, rate in sorted(_RATE_HINTS, key=lambda item: -max(len(w) for w in item[0])):
+        if any(word in message for word in words):
+            intent.speech_rate = rate
+            break
+
+    if voice := _voice_from(message):
+        intent.voice = voice
+
     intent.instructions = message.strip()[:500]
     return intent
+
+
+def _voice_from(message: str) -> str:
+    """A voice named in the message, if this machine has one to match.
+
+    Asked for by kind (「换个女声」) rather than by name, almost always — so the
+    words map onto whatever the machine actually installed, and a machine with
+    no Chinese voices gets nothing rather than a name that will fail at
+    synthesis time.
+    """
+    from ..tools.tts import VOICE_GENDER, voices_available
+
+    installed = voices_available()
+    if not installed:
+        return ""
+    lowered = message.lower()
+    for name in installed:
+        if name.lower() in lowered:
+            return name
+    wanted = None
+    if any(word in message for word in ("女声", "女生", "女的")):
+        wanted = "female"
+    elif any(word in message for word in ("男声", "男生", "男的")):
+        wanted = "male"
+    if wanted is None:
+        return ""
+    return next((name for name in installed if VOICE_GENDER.get(name) == wanted), "")
 
 
 def parse_edit_rules(message: str, project: VideoProject) -> EditPlan:

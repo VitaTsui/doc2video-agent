@@ -31,6 +31,21 @@ export type PlanAction = {
   params: Record<string, unknown>;
 };
 
+/** A chart to draw live over the region the page image already shows it in. */
+export type PlanChart = {
+  area: PlanArea;
+  /** Seconds into the scene when the drawing starts. */
+  start: number;
+  /** How long the bars take to reach their real height. */
+  grow: number;
+  kind: string;
+  title: string;
+  categories: string[];
+  series: { name: string; values: (number | null)[]; color: string }[];
+  /** Painted behind the growing chart so the printed one cannot show through. */
+  backdrop: string;
+};
+
 export type PlanSubtitle = {
   start: number;
   end: number;
@@ -48,6 +63,7 @@ export type ScenePlan = {
   video: string | null;
   audio: string | null;
   actions: PlanAction[];
+  charts: PlanChart[];
   subtitles: PlanSubtitle[];
   /** Gap below the caption box, as a fraction of frame *height*. */
   subtitleMargin: number;
@@ -66,6 +82,7 @@ export type RawScenePlan = {
   video: string | null;
   audio: string | null;
   actions: PlanAction[];
+  charts: PlanChart[];
   subtitles: PlanSubtitle[];
   subtitle_margin: number;
   transition_in: string;
@@ -82,6 +99,7 @@ export const normalizePlan = (raw: RawScenePlan): ScenePlan => ({
   video: raw.video,
   audio: raw.audio,
   actions: raw.actions ?? [],
+  charts: raw.charts ?? [],
   subtitles: raw.subtitles ?? [],
   subtitleMargin: raw.subtitle_margin ?? 0.03,
   transitionIn: raw.transition_in ?? "fade",

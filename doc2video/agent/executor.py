@@ -68,6 +68,34 @@ STAGE_LABEL = {
     Stage.REVIEW: "质检",
 }
 
+# Which skill did the work, for the stages that are one skill's job. Named in
+# the account because 「生成讲稿」 says what was attempted and
+# `presentation-narration` says what was run — and the second is the name that
+# appears in the plan, in the logs, and in this repository's own vocabulary.
+STAGE_SKILL = {
+    Stage.UNDERSTAND: "presentation-understanding",
+    Stage.NARRATE: "presentation-narration",
+    Stage.VOICE: "presentation-voice",
+    Stage.DIRECT: "presentation-director",
+    Stage.MOTION: "presentation-motion",
+    Stage.REVIEW: "presentation-review",
+}
+
+
+def stage_label(stage: Stage, plan: ExecutionPlan) -> str:
+    """What to call this step, given what it is actually about to do.
+
+    Narration is two different jobs behind one name. Writing a script and
+    adopting one the caller already wrote both run through `Stage.NARRATE`,
+    and since the script became its own step they now happen in that order on
+    every project — so the account showed 「生成讲稿」 twice and read as the
+    same work done twice. The second one writes nothing; it takes what is in
+    the boxes, splits it into segments and rebuilds the scenes.
+    """
+    if stage is Stage.NARRATE and plan.adopts_script:
+        return "采用讲稿"
+    return STAGE_LABEL.get(stage, stage.value)
+
 STAGE_STATUS = {
     Stage.PARSE: ProjectStatus.PARSING,
     Stage.UNDERSTAND: ProjectStatus.PARSING,
@@ -99,13 +127,16 @@ class Executor:
             for stage in plan.stages:
                 self.project.status = STAGE_STATUS.get(stage, self.project.status)
                 self._progress(stage.value, f"开始 {stage.value}", 0, 0)
-                label = STAGE_LABEL.get(stage, stage.value)
+                label = stage_label(stage, plan)
                 recorder = ledger.current()
                 if recorder is None:
                     with _timed(stage.value):
                         self._run_stage(stage, plan)
                 else:
-                    with recorder.stage(label) as artifacts, _timed(stage.value):
+                    with (
+                        recorder.stage(label, skill=STAGE_SKILL.get(stage, "")) as artifacts,
+                        _timed(stage.value),
+                    ):
                         self._run_stage(stage, plan)
                         artifacts.extend(self._artifacts_of(stage))
                 self.ctx.store.save(self.project)
