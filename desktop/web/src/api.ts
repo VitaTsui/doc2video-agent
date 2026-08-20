@@ -158,20 +158,17 @@ export async function chooseVoice(voice: string) {
 }
 
 /**
- * One sentence in this voice, as playable audio.
+ * One sentence in this voice, as a URL an `<audio>` can play.
  *
- * Fetched rather than pointed at with a URL: it is a POST, and the answer is
- * bytes rather than JSON. The caller owns the object URL and should revoke it.
+ * A URL rather than a fetched blob: the app's CSP allows media from the
+ * backend and not from `blob:`, so a blob plays in a browser and fails inside
+ * the window it was built for. The token rides in the query for the same
+ * reason it does for the finished video — a media element cannot send a header.
  */
-export async function previewVoice(voice: string): Promise<string> {
+export function previewVoiceUrl(voice: string): string {
   const { base_url, token } = required()
-  const response = await fetch(`${base_url}/health/voices/preview`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ voice }),
-  })
-  if (!response.ok) throw await asError(response)
-  return URL.createObjectURL(await response.blob())
+  const query = new URLSearchParams({ voice, token })
+  return `${base_url}/health/voices/preview?${query}`
 }
 
 /** Put a pack into the runtime. Slow for the big one; it says its size first. */

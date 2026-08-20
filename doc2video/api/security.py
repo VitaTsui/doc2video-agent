@@ -38,7 +38,7 @@ PUBLIC_PATHS = frozenset({"/health"})
 # for GET — the token may ride in the query string instead. Everything else
 # still requires the header, so a leaked URL cannot start a render or read a
 # project's JSON.
-MEDIA_PATH = re.compile(r"^/projects/[^/]+/(video|assets/.+)$")
+MEDIA_PATH = re.compile(r"^/(projects/[^/]+/(video|assets/.+)|health/voices/preview)$")
 
 
 class BearerTokenMiddleware(BaseHTTPMiddleware):

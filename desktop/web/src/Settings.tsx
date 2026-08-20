@@ -671,12 +671,20 @@ function VoiceSettings({ busy }: { busy: boolean }) {
     }
   }
 
-  /** Say the sample sentence. The object URL is revoked when it finishes. */
+  /**
+   * Say the sample sentence.
+   *
+   * `play()` rejects when the element cannot load the source, and that
+   * rejection is the only place a failure shows — a silent audio element is
+   * indistinguishable from a voice that has not started yet — so it is
+   * reported rather than swallowed.
+   */
   const play = async (voice: string) => {
-    const url = await api.previewVoice(voice)
-    const audio = new Audio(url)
-    audio.addEventListener('ended', () => URL.revokeObjectURL(url), { once: true })
-    await audio.play()
+    try {
+      await new Audio(api.previewVoiceUrl(voice)).play()
+    } catch (error) {
+      setFailure(`试听放不出来：${api.describeError(error)}`)
+    }
   }
 
   const install = async (pack: api.VoicePack) => {
@@ -715,7 +723,7 @@ function VoiceSettings({ busy }: { busy: boolean }) {
                 type="text"
                 disabled={choosing}
                 style={{ marginLeft: 8 }}
-                onClick={() => void play(state.voice).catch((e) => setFailure(api.describeError(e)))}
+                onClick={() => void play(state.voice)}
               >
                 试听
               </Button>
