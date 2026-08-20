@@ -18,6 +18,8 @@ export function MessageList({
    * `drafting` is the model writing it right now — non-null only for as long
    * as that takes. */
   deck: {
+    /** The document all of these fields describe. */
+    projectId: string | null
     written: number
     locked: boolean
     generated: boolean
@@ -61,7 +63,7 @@ export function MessageList({
                   everything before it takes seconds and everything after it
                   takes minutes — and a button in a side panel is not where
                   anyone looks for the thing they were asked to confirm. */}
-              {message.kind === 'deck' && (
+              {message.kind === 'deck' && message.projectId === deck.projectId && (
                 <div className="deckgate">
                   <button
                     type="button"
@@ -116,6 +118,22 @@ export function MessageList({
                   )}
                 </div>
               )}
+              {/* An earlier document in the same conversation: still openable,
+                  but the gate below belongs to the one being worked on now. */}
+              {message.kind === 'deck' && message.projectId !== deck.projectId && (
+                <div className="deckgate">
+                  <button
+                    type="button"
+                    className="turn__artifact"
+                    onClick={() => onShow(message.projectId)}
+                  >
+                    {'文档 · '}
+                    {message.pages.length}
+                    {' 页'}
+                  </button>
+                </div>
+              )}
+
               {message.kind === 'job' && <JobCard job={message.job} />}
               {/* A reference, not the thing itself. Unrolling a player, a
                   quality report and a thirty-entry ledger into the middle of

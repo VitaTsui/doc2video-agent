@@ -707,6 +707,11 @@ export function App() {
           <MessageList
             messages={messages}
             deck={{
+              // Which deck all of this is about. A conversation can hold more
+              // than one document card, and every field below describes the
+              // one being worked on — without this they describe all of them,
+              // and a second upload leaves two cards claiming to be writing.
+              projectId,
               written: Object.values(drafts).filter((text) => text.trim()).length,
               locked: Boolean(artifacts?.deck?.locked),
               drafting,
