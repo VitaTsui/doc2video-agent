@@ -117,6 +117,22 @@ class PiperProvider(TTSProvider):
                 return found
         return None
 
+    def voices(self) -> list[str]:
+        """The models on disk, downloaded ones first.
+
+        On Windows and Linux this is the whole choice, and the runtime ships
+        exactly one — so a machine that has installed nothing else honestly
+        reports a single voice rather than a menu that cannot be acted on.
+        """
+        names: list[str] = []
+        for directory in self._voice_dirs():
+            if not directory.is_dir():
+                continue
+            for model in sorted(directory.glob("*.onnx")):
+                if model.stem not in names:
+                    names.append(model.stem)
+        return names
+
     # -- synthesis -----------------------------------------------------
     def synthesize(self, text: str, out_path: Path, *, voice: str = "", rate: float = 1.0) -> float:
         from piper import SynthesisConfig

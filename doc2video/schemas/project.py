@@ -58,6 +58,14 @@ class VideoIntent(BaseModel):
     skip_pages: list[int] = Field(default_factory=list)
     instructions: str = ""
     zoom_on_key_data: bool = True
+    # Which voice, and how fast. Here rather than in settings because they are
+    # a property of this video, not of the machine: settings are frozen for
+    # the life of the process (`get_settings` is cached), so a voice kept
+    # there could only be changed by restarting the backend — while everything
+    # else about a video can be changed by saying so. Empty means "whatever
+    # the machine is configured with".
+    voice: str = ""
+    speech_rate: float = 0.0
 
 
 class RenderState(BaseModel):

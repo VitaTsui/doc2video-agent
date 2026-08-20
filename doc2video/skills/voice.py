@@ -51,6 +51,8 @@ class VoiceSkill(Skill):
                 scene.narration,
                 out_path,
                 sentences=[s.text for s in scene.segments] or [scene.narration],
+                voice=self.project.intent.voice,
+                rate=self.project.intent.speech_rate,
             )
 
             # Silence at both ends: the page arrives and settles before the
@@ -80,12 +82,16 @@ class VoiceSkill(Skill):
         )
 
     def _fingerprint(self, scene: Scene) -> str:
+        intent = self.project.intent
         payload = "|".join(
             [
                 scene.narration,
                 self.tts.provider_name,
-                self.tts.voice,
-                f"{self.ctx.settings.tts_speech_rate:.2f}",
+                # The project's choice, not the machine's — otherwise asking
+                # for a different voice leaves the fingerprint unchanged, the
+                # existing clip is reused, and the change does nothing at all.
+                intent.voice or self.tts.voice,
+                f"{intent.speech_rate or self.ctx.settings.tts_speech_rate:.2f}",
                 # Part of the clip, so changing either has to re-synthesise.
                 f"{self.ctx.settings.scene_lead_seconds:.2f}",
                 f"{self.ctx.settings.scene_tail_seconds:.2f}",

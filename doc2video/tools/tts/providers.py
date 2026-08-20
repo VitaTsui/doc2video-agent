@@ -31,6 +31,29 @@ class MacOSSayProvider(TTSProvider):
     def available(self) -> bool:
         return which("say") is not None
 
+    def voices(self) -> list[str]:
+        say = which("say")
+        if say is None:
+            return []
+        try:
+            listed = subprocess.run(
+                [say, "-v", "?"], capture_output=True, text=True, timeout=10, check=True
+            ).stdout
+        except (subprocess.SubprocessError, OSError):
+            return []
+        names: list[str] = []
+        for line in listed.splitlines():
+            if "zh_CN" not in line:
+                continue
+            # Two shapes in one listing: 「Flo (中文（中国大陆）) zh_CN …」 and
+            # 「Tingting            zh_CN …」. Cutting at the language code
+            # handles both; cutting at the parenthesis keeps the whole line
+            # for the ones that have none.
+            name = line.split("zh_CN")[0].split("(")[0].strip()
+            if name and name not in names:
+                names.append(name)
+        return names
+
     def synthesize(self, text: str, out_path: Path, *, voice: str = "", rate: float = 1.0) -> float:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         # `say -r` is words per minute; 175 is roughly its natural pace.

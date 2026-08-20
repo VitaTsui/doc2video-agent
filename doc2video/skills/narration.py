@@ -62,6 +62,18 @@ TRANSITIONS = [
 ]
 
 
+# What a style name means to someone writing the words. The enum value alone
+# ("lively") tells the model a category; these tell it what to do differently,
+# which is the only form a style instruction can be obeyed in.
+STYLE_BRIEF = {
+    "professional": "专业、克制。用行业里通行的说法，不解释常识，不铺陈形容词。",
+    "tech": "技术向。讲清楚机制与取舍，敢用具体数字和术语，句子干脆。",
+    "lively": "活泼。多用短句和口语连接，可以带一点反问和轻微夸张，不端着。",
+    "casual": "轻松。像同事之间讲一件事，允许口语词和插入语，不用书面套话。",
+    "formal": "正式。完整句、书面用词，不用口语缩略，语气持重。",
+}
+
+
 class SegmentDraft(BaseModel):
     text: str
     element_refs: list[str]
@@ -337,7 +349,9 @@ class NarrationSkill(Skill):
             f"主题：{document.topic or '未知'}",
             f"整体摘要：{document.summary or '（无）'}",
             "",
-            f"# 观众与风格\n受众：{intent.audience}\n语气：{intent.tone}\n"
+            f"# 观众与风格\n受众：{intent.audience}\n"
+            f"风格：{STYLE_BRIEF.get(intent.style, intent.style)}\n"
+            f"语气：{intent.tone}\n"
             f"额外要求：{intent.instructions or '（无）'}",
             "",
             f"# 需要写讲稿的页面（全文第 {position + 1} 页起，共 {len(budgets)} 页）",

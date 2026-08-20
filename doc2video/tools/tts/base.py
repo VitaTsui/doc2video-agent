@@ -49,6 +49,17 @@ class TTSProvider:
         """Write audio for ``text`` to ``out_path`` and return its duration."""
         raise NotImplementedError
 
+    def voices(self) -> list[str]:
+        """The voices this provider can actually speak Chinese with, here.
+
+        Answered by the provider because the answer is different in kind on
+        each platform: macOS has a dozen built in, Piper has whatever model
+        files are on disk — the runtime ships exactly one — and silence has
+        none. A caller offering the user a choice must not assume the macOS
+        shape, or the choice is empty everywhere else.
+        """
+        return []
+
 
 # --------------------------------------------------------------------------
 # timing

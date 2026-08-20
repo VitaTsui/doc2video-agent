@@ -20,7 +20,7 @@ from .core.logging import setup_logging, use_utf8
 from .storage.run_log import RunLog, summarize
 from .tools.llm import llm_status
 from .tools.renderer import renderer_status
-from .tools.tts import TTSTool
+from .tools.tts import TTSTool, voices_available
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -130,7 +130,13 @@ def cmd_doctor(args) -> int:
             else f"{configured} 不可用"
         )
         print(f"模型       : {note}")
-    print(f"TTS        : {TTSTool(settings).provider_name}")
+    tts = TTSTool(settings)
+    voices = voices_available(settings)
+    print(f"TTS        : {tts.provider_name}")
+    # Worth printing because the number differs by platform in a way that
+    # changes what a user can ask for: a dozen on macOS, the one model the
+    # runtime ships on Windows and Linux, none at all under silence.
+    print(f"可用嗓音   : {('、'.join(voices)) if voices else '（无）'}")
 
     print("\n渲染器：")
     for name, info in renderer_status(settings).items():

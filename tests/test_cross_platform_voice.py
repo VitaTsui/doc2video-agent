@@ -135,3 +135,24 @@ def test_output_streams_are_made_utf8_before_anything_prints(monkeypatch):
     # is bad, taking the process down with it is worse.
     monkeypatch.setattr(sys, "stdout", object())
     use_utf8()
+
+
+def test_each_provider_answers_for_its_own_voices(tmp_path: Path):
+    """What "the voices" means differs in kind by platform.
+
+    macOS has a dozen built into `say`; Piper has whatever model files are on
+    disk, and the runtime ships exactly one; silence has none. Asking the
+    machine one way — reading `say -v ?` — gives an empty list on Windows and
+    Linux, and 「换个女声」 there quietly does nothing.
+    """
+    from doc2video.tools.tts.base import TTSProvider
+    from doc2video.tools.tts.providers import SilentProvider
+
+    assert TTSProvider().voices() == []
+    assert SilentProvider().voices() == []
+
+    runtime = tmp_path / "runtime"
+    (runtime / "voices").mkdir(parents=True)
+    (runtime / "voices" / "zh_CN-huayan-medium.onnx").write_bytes(b"model")
+    piper = PiperProvider(Settings(storage_dir=tmp_path / "data", node_dir=runtime / "node"))
+    assert piper.voices() == ["zh_CN-huayan-medium"]
