@@ -9,6 +9,7 @@ import {
 } from "remotion";
 import { Highlight } from "../components/Highlight";
 import { Pointer } from "../components/Pointer";
+import { LiveChart } from "../components/LiveChart";
 import { Subtitles } from "../components/Subtitles";
 import { useCameraTransform } from "../components/useCameraTransform";
 import { normalizePlan, type RawScenePlan } from "../types";
@@ -52,6 +53,20 @@ export const SceneComposition: React.FC<RawScenePlan> = (raw) => {
             />
           ) : null}
 
+          {/* Before the overlays: a chart is redrawn over the page, and the
+              outline the director put around it has to stay on top of the
+              redraw or pointing at the chart stops being visible while the
+              chart is being drawn. */}
+          {plan.charts.map((chart, index) => (
+            <LiveChart
+              key={`ch-${index}`}
+              chart={chart}
+              time={time}
+              frameWidth={plan.width}
+              frameHeight={plan.height}
+            />
+          ))}
+
           {plan.actions
             .filter((action) => action.type === "highlight" && action.area)
             .map((action, index) => (
@@ -63,6 +78,7 @@ export const SceneComposition: React.FC<RawScenePlan> = (raw) => {
             .map((action, index) => (
               <Pointer key={`pt-${index}`} action={action} time={time} />
             ))}
+
         </AbsoluteFill>
       </AbsoluteFill>
 

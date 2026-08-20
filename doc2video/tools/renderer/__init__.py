@@ -6,7 +6,7 @@ from ...core import flags
 from ...core.config import Settings, get_settings
 from ...core.errors import DependencyMissing
 from ...core.logging import get_logger
-from .base import PlanAction, PlanArea, PlanSubtitle, RendererAdapter, ScenePlan
+from .base import PlanAction, PlanArea, PlanChart, PlanSubtitle, RendererAdapter, ScenePlan
 from .ffmpeg_adapter import FFmpegAdapter
 from .genvideo import GenerativeVideoAdapter
 from .remotion import RemotionAdapter
@@ -77,6 +77,7 @@ __all__ = [
     "GenerativeVideoAdapter",
     "PlanAction",
     "PlanArea",
+    "PlanChart",
     "PlanSubtitle",
     "RemotionAdapter",
     "RendererAdapter",

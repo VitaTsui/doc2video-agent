@@ -51,6 +51,33 @@ class PlanAction(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class PlanChart(BaseModel):
+    """A chart to draw live, over the region the flat page already shows it in.
+
+    The page image already contains this chart — it was rebuilt from the same
+    numbers by the same component when the slide was rasterised. Drawing it
+    again on top is not a second chart; it is the same one, animated, and it
+    settles into exactly the pixels underneath it. That is what makes the
+    animation safe: when it finishes there is nothing to disagree with.
+    """
+
+    area: PlanArea
+    # When the drawing happens. Tied to the action that pointed at it — a chart
+    # animates because the narrator is talking about it, not because it exists.
+    start: float
+    grow: float = 0.9
+    kind: str = "column"
+    title: str = ""
+    categories: list[str] = Field(default_factory=list)
+    series: list[dict] = Field(default_factory=list)
+    # What to paint behind the growing chart, sampled from the page image at
+    # the chart's own corners. Without it the printed chart shows through at
+    # full height while the live one is still growing, and the bars look cut
+    # off rather than rising. Sampled rather than assumed white: a deck is
+    # entitled to a dark slide.
+    backdrop: str = "#ffffff"
+
+
 class PlanSubtitle(BaseModel):
     start: float
     end: float
@@ -70,6 +97,7 @@ class ScenePlan(BaseModel):
     video: str | None = None
     audio: str | None = None
     actions: list[PlanAction] = Field(default_factory=list)
+    charts: list[PlanChart] = Field(default_factory=list)
     subtitles: list[PlanSubtitle] = Field(default_factory=list)
     subtitle_margin: float = SUBTITLE_BOTTOM_MARGIN
     transition_in: str = "fade"

@@ -62,6 +62,27 @@ class PageType(StrEnum):
     OTHER = "other"
 
 
+class ChartSeriesFacts(BaseModel):
+    name: str = ""
+    # None is a gap in the data, not a zero: a line must not be joined across it.
+    values: list[float | None] = Field(default_factory=list)
+    color: str = ""
+
+
+class ChartFacts(BaseModel):
+    """A chart's numbers, as the deck states them.
+
+    Enough to draw the chart again and no more — the deck's own categories,
+    series, values and colours. Re-palettizing or re-scaling would make the
+    video disagree with the slide it came from, so neither is possible here.
+    """
+
+    kind: str = "column"
+    title: str = ""
+    categories: list[str] = Field(default_factory=list)
+    series: list[ChartSeriesFacts] = Field(default_factory=list)
+
+
 class SlideElement(BaseModel):
     """One addressable thing on a page — the unit the director points at."""
 
@@ -75,6 +96,18 @@ class SlideElement(BaseModel):
     # 0..1, how central this element is to the page's message.
     importance: float = 0.5
     asset_path: str | None = None
+    # The numbers behind a chart, when this element is one.
+    #
+    # Kept on the element rather than re-read from the source file when it is
+    # wanted. The source is a `.pptx` the user may have moved, and the project
+    # is supposed to be the whole truth about the video — a chart that can only
+    # be animated while the original file is still where it was is a chart that
+    # stops animating for reasons nobody can see.
+    #
+    # Exact, not recognised: it comes out of the OOXML, so redrawing it cannot
+    # change what the slide says. That is the whole reason a rebuilt chart is
+    # allowed here at all (方案 §12).
+    chart: ChartFacts | None = None
 
 
 class DocumentPage(BaseModel):
