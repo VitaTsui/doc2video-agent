@@ -38,6 +38,7 @@ DEFAULT_VOICE = "zh_CN-huayan-medium"
 
 class PiperProvider(TTSProvider):
     name = "piper"
+    default_voice = DEFAULT_VOICE
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings

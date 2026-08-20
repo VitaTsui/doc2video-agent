@@ -222,9 +222,16 @@ class TTSTool:
             return for_speech(text, pronunciation)
 
         units = plan_units(sentences, emphasis=emphasis)
+        # Which engine this will be, named before the first call rather than
+        # after it. `_speak_once` switches the engine as it goes, so reading
+        # `self._provider` here labelled the deck's first call with whatever
+        # engine happened to be loaded before the voice was looked at — the
+        # record said the first page was spoken by `macos_say` when every page
+        # including that one was spoken by Edge.
+        engine = self._engine_for(voice).name
         if len(units) <= 1:
             text = "".join(sentences)
-            with ledger.call(f"tts:{self._provider.name}", f"{len(text)} 字"):
+            with ledger.call(f"tts:{engine}", f"{len(text)} 字"):
                 duration = self._speak_once(spoken(text), out_path, voice=voice, rate=rate)
             segments, source = self._time(text, out_path, sentences, duration)
             return segments, duration, source
@@ -235,7 +242,7 @@ class TTSTool:
         try:
             for index, unit in enumerate(units):
                 clip = work / f"{index:02d}.wav"
-                with ledger.call(f"tts:{self._provider.name}", f"{len(unit.text)} 字"):
+                with ledger.call(f"tts:{engine}", f"{len(unit.text)} 字"):
                     self._speak_once(spoken(unit.text), clip, voice=voice, rate=rate)
                 clips.append(clip)
 

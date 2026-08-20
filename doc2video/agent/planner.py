@@ -184,7 +184,7 @@ class Planner:
         stages: list[Stage] = []
         scene_ids: list[str] = []
 
-        if plan.rewrite_all or (intent_changed and not edits):
+        if plan.rewrite_all or (intent_changed and not edits and not _only_sound(intent, project)):
             stages = REVISION_STAGES
         elif edits:
             scene_ids = [e.scene_id for e in edits]
@@ -209,6 +209,7 @@ class Planner:
         )
 
     # -- bounds -------------------------------------------------------------
+
     @staticmethod
     def _sanitize_intent(intent: VideoIntent, page_count: int) -> VideoIntent:
         intent.duration = max(15, min(7200, int(intent.duration)))
@@ -218,6 +219,25 @@ class Planner:
         return intent
 
 
+
+
+def _only_sound(intent: VideoIntent, project: VideoProject) -> bool:
+    """Did this request change nothing but how the words are spoken?
+
+    「换个声音」 changes the intent, and any intent change used to mean a full
+    revision — so asking for a different voice rewrote the script, redirected
+    the camera and re-rendered everything, when the words and the shots were
+    exactly what the person wanted to keep. They asked to change the voice,
+    not the video.
+
+    A voice does change how long the script takes to say, and the script was
+    budgeted against the old engine's pace. That is worth reporting rather
+    than acting on: the review measures the finished length, and rewriting the
+    words to protect a target duration is a different request from this one.
+    """
+    was, now = project.intent.model_dump(), intent.model_dump()
+    changed = {key for key in now if was.get(key) != now[key]}
+    return bool(changed) and changed <= {"voice", "speech_rate", "pronunciation", "instructions"}
 
 
 # --------------------------------------------------------------------------

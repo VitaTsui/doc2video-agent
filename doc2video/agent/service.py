@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..core import flags, ledger, telemetry
+from ..core import flags, ledger, prefs, telemetry
 from ..core.config import Settings, get_settings
 from ..core.errors import InvalidRequest
 from ..core.ids import new_project_id
@@ -78,6 +78,11 @@ class Doc2VideoAgent:
             status=ProjectStatus.CREATED,
             source=Source(type=source_type, file=source_file.name, path=stored_path),
         )
+        # The voice chosen in the window, written into the video rather than
+        # read at synthesis time. A video should say which voice it was made
+        # with — changing the default later must not silently change what an
+        # old project would re-render as.
+        project.intent.voice = prefs.load(self.settings).voice
         self.store.save(project)
         log.info("创建工程 %s（来源：%s）", project_id, source_file.name)
         return project

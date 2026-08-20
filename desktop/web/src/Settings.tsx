@@ -25,7 +25,7 @@ import * as api from './api'
 import { ChevronIcon } from './Icon'
 import type { Connection } from './api'
 
-type Tab = 'models' | 'voice' | 'general'
+type Tab = 'models' | 'voice' | 'plugins' | 'general'
 
 export function Settings({
   open,
@@ -128,6 +128,13 @@ export function Settings({
             onClick={() => setTab('voice')}
           >
             语音
+          </button>
+          <button
+            type="button"
+            className={tab === 'plugins' ? 'modal__tab modal__tab--on' : 'modal__tab'}
+            onClick={() => setTab('plugins')}
+          >
+            插件
           </button>
           <button
             type="button"
@@ -265,6 +272,8 @@ export function Settings({
           )}
 
           {tab === 'voice' && <VoiceSettings busy={busy} />}
+
+          {tab === 'plugins' && <Plugins />}
 
           {tab === 'general' && (
             <>
@@ -559,9 +568,77 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
  * product that works on a train is a different product, and that is theirs to
  * decide rather than ours to decide quietly.
  */
+/**
+ * What is inside this build, step by step, and what works on this machine.
+ *
+ * Two questions get asked and only one of them is a feature list: what a step
+ * does is the same everywhere, and whether its tools are usable *here* changes
+ * with what is installed. Both are shown together, in the order the steps run,
+ * because that is the order in which a missing piece shows up in the video.
+ */
+function Plugins() {
+  const [steps, setSteps] = useState<api.PipelineStep[] | null>(null)
+  const [failure, setFailure] = useState('')
+
+  useEffect(() => {
+    void api
+      .plugins()
+      .then(setSteps)
+      .catch((error: Error) => setFailure(api.describeError(error)))
+  }, [])
+
+  return (
+    <>
+      <h2 className="modal__title">插件</h2>
+      <p className="muted">
+        一条流水线，从左到右跑完就是一支视频。每一步用什么、这台机器上能不能用，都在下面。
+      </p>
+
+      {failure && <p className="modal__error">{failure}</p>}
+      {steps === null && !failure && <p className="muted">正在看这台机器装了什么…</p>}
+
+      {steps?.map((step) => (
+        <div key={step.id} className="pack">
+          <div className="pack__head">
+            <span className="pack__name">{step.name}</span>
+            {/* The name in the window next to the name in the code: 「配音」 is
+                what it is called here, `presentation-voice` is what runs. */}
+            {step.skill && <span className="step__skill muted">{step.skill}</span>}
+          </div>
+          <div className="muted pack__note">{step.what}</div>
+          {step.parts.map((part) => (
+            <div key={part.id} className="part">
+              <span className={part.available ? 'part__dot part__dot--on' : 'part__dot'} />
+              <span className="part__name">{part.name}</span>
+              <span className="muted part__what">
+                {part.what}
+                {!part.available && part.reason && `（${part.reason}）`}
+              </span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </>
+  )
+}
+
+/** The engine and voice a video would be made with right now, as one line. */
+function inUse(state: Awaited<ReturnType<typeof api.voicePacks>>): string | null {
+  const pack =
+    state.packs.find((one) => one.id === state.pack) ??
+    state.packs.find((one) => one.voices.some((voice) => voice.id === state.voice))
+  const engine = pack?.name ?? state.provider
+  if (!engine || state.provider === 'silent') return null
+  const voice = state.voice
+    ? (pack?.voices.find((one) => one.id === state.voice)?.name ?? state.voice)
+    : '系统默认音色'
+  return `${engine}｜${voice}`
+}
+
 function VoiceSettings({ busy }: { busy: boolean }) {
   const [state, setState] = useState<Awaited<ReturnType<typeof api.voicePacks>> | null>(null)
   const [installing, setInstalling] = useState('')
+  const [choosing, setChoosing] = useState(false)
   const [failure, setFailure] = useState('')
 
   const load = () => {
@@ -571,6 +648,36 @@ function VoiceSettings({ busy }: { busy: boolean }) {
       .catch((error: Error) => setFailure(error.message))
   }
   useEffect(load, [])
+
+  /**
+   * Pick a voice, and hear it.
+   *
+   * One press rather than two controls per chip: the two things someone wants
+   * from a list of voices are "what does that one sound like" and "use that
+   * one", and doing both makes auditioning the way you choose. It is cheap to
+   * undo — the choice only applies to videos made after it, and pressing the
+   * one in use hands the choice back to the machine.
+   */
+  const choose = async (voice: string) => {
+    setFailure('')
+    setChoosing(true)
+    try {
+      setState(await api.chooseVoice(voice))
+      if (voice) await play(voice)
+    } catch (error) {
+      setFailure(api.describeError(error))
+    } finally {
+      setChoosing(false)
+    }
+  }
+
+  /** Say the sample sentence. The object URL is revoked when it finishes. */
+  const play = async (voice: string) => {
+    const url = await api.previewVoice(voice)
+    const audio = new Audio(url)
+    audio.addEventListener('ended', () => URL.revokeObjectURL(url), { once: true })
+    await audio.play()
+  }
 
   const install = async (pack: api.VoicePack) => {
     setFailure('')
@@ -589,8 +696,33 @@ function VoiceSettings({ busy }: { busy: boolean }) {
     <>
       <h2 className="modal__title">语音</h2>
       <p className="muted">
-        换声音说一句话就行：「用播音腔讲」「换个女声」「语速慢一点」。这里是这台机器上有什么。
+        点一个音色，会念一句给你听，同时设成默认，之后的视频都用它；再点一下取消，交回给这台机器自己定。
+        单个视频想换，说一句就行：「用播音腔讲」「换个女声」「语速慢一点」。
       </p>
+
+      {/* 「现在用的是哪个」 has to be answerable without making a video. The
+          configured value is usually empty and means 「这台机器自己定」, which
+          is true but unreadable — so what it resolves to is shown instead, and
+          a video that was told otherwise says so on its own page. */}
+      {state && (
+        <ul className="providers">
+          <Line label="当前">
+            {inUse(state) ?? '无（本平台暂无可用语音）'}
+            {!state.current && <span className="muted">　（这台机器自己定的）</span>}
+            {inUse(state) && (
+              <Button
+                size="small"
+                type="text"
+                disabled={choosing}
+                style={{ marginLeft: 8 }}
+                onClick={() => void play(state.voice).catch((e) => setFailure(api.describeError(e)))}
+              >
+                试听
+              </Button>
+            )}
+          </Line>
+        </ul>
+      )}
 
       {failure && <p className="modal__error">{failure}</p>}
       {state === null && <p className="muted">正在看这台机器有哪些声音…</p>}
@@ -617,11 +749,23 @@ function VoiceSettings({ busy }: { busy: boolean }) {
           {pack.voices.length > 0 && (
             <div className="pack__voices">
               {pack.voices.map((voice) => (
-                <span key={voice.id} className="pack__voice">
+                <button
+                  key={voice.id}
+                  type="button"
+                  // Installed packs only: choosing a voice out of a pack that
+                  // is not here would be accepted and then silently ignored at
+                  // synthesis time, which is the worst of both.
+                  disabled={!pack.installed || choosing}
+                  className={
+                    voice.id === state.voice ? 'pack__voice pack__voice--on' : 'pack__voice'
+                  }
+                  onClick={() => void choose(voice.id === state.voice ? '' : voice.id)}
+                >
                   {voice.name}
                   {voice.gender === 'female' && ' 女'}
                   {voice.gender === 'male' && ' 男'}
-                </span>
+                  {voice.id === state.voice && ' · 在用'}
+                </button>
               ))}
             </div>
           )}

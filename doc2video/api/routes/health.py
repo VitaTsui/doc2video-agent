@@ -7,16 +7,26 @@ are available, and an operator should not have to read logs to find out.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from hashlib import sha1
+
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
+from ...core import inventory, prefs
 from ...core.config import dependency_report, filter_report, get_settings
+from ...core.errors import Doc2VideoError
 from ...tools.llm import llm_status
 from ...tools.llm.models import catalogue_payload
 from ...tools.renderer import renderer_status
 from ...tools.tts import TTSTool
 from ...tools.tts import packs as voice_packs
 from ...tools.tts.install import install_into_runtime
+
+
+class VoiceChoiceIn(BaseModel):
+    """The voice to use from now on. Empty hands the choice back to the machine."""
+
+    voice: str = ""
 
 
 class VoicePackIn(BaseModel):
@@ -40,6 +50,74 @@ def voices() -> dict:
     a fixed property of a build: a pack can be added later, from here.
     """
     return voice_packs.payload(get_settings())
+
+
+@router.put("/health/voices/current")
+def choose_voice(body: VoiceChoiceIn) -> dict:
+    """Pick the voice new videos start with.
+
+    Written to the preferences file rather than to settings: settings are the
+    environment the process was started with and are frozen for its life, so a
+    voice kept there could only be changed by restarting the backend. Picking a
+    voice should not restart anything.
+
+    It applies to videos made after this, not to ones already made — a project
+    carries the voice it was created with, so re-rendering an old video does
+    not quietly change how it sounds.
+    """
+    settings = get_settings()
+    chosen = body.voice.strip()
+    if chosen:
+        known = {
+            voice["id"]
+            for pack in voice_packs.catalogue(settings)
+            if pack.installed
+            for voice in pack.voices
+        }
+        if chosen not in known:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "unknown_voice", "message": f"这台机器上没有这个音色：{chosen}"},
+            )
+    prefs.save(prefs.Preferences(voice=chosen), settings)
+    return voice_packs.payload(settings)
+
+
+# One sentence of the kind these videos are made of: a page being introduced.
+# Long enough to hear a voice's pace and where it breathes, short enough that
+# waiting for it does not feel like a request.
+SAMPLE = "这一页讲的是系统架构，我们从最上面一层看起。"
+
+
+@router.post("/health/voices/preview")
+def preview_voice(body: VoiceChoiceIn) -> Response:
+    """Say one sentence in this voice, so it can be heard before it is chosen.
+
+    Synthesised by the engine that owns the voice, directly — not through the
+    path a render takes. A render that cannot reach the network falls back to a
+    local voice and says so, which is right for a video and wrong here: the
+    whole question being asked is 「这个音色是什么样」, and answering it in a
+    different voice is answering a different question.
+
+    Cached on disk by voice: the second press should be instant, and eight
+    voices auditioned in a row should not be eight network round trips.
+    """
+    settings = get_settings()
+    tool = TTSTool(settings)
+    voice = body.voice.strip() or tool.voice
+    engine = tool._engine_for(voice)  # noqa: SLF001 - the same lookup a render does
+
+    target = settings.storage_dir / "previews" / f"{sha1(voice.encode()).hexdigest()}.wav"
+    if not target.exists():
+        try:
+            engine.synthesize(SAMPLE, target, voice=voice, rate=engine.natural_rate)
+        except Doc2VideoError as exc:
+            target.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "preview_failed", "message": f"{engine.name} 试听失败：{exc}"},
+            ) from exc
+    return Response(target.read_bytes(), media_type="audio/wav")
 
 
 @router.post("/health/voices/install")
@@ -74,6 +152,17 @@ def install_voice(body: VoicePackIn) -> dict:
             detail={"code": "install_failed", "message": "装完了但仍然不可用"},
         )
     return {"installed": True, "voices": fresh.voices}
+
+
+@router.get("/health/plugins")
+def plugins() -> dict:
+    """What this build can do, step by step, and what works on this machine.
+
+    The window needs both halves and can derive neither: what a step is for is
+    written next to the code that does it, and whether its tools are usable
+    here is something only this process can answer.
+    """
+    return inventory.report(get_settings())
 
 
 @router.get("/health/capabilities")

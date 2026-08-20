@@ -175,3 +175,50 @@ def test_a_scope_reaches_the_calls_made_inside_it(tmp_path: Path):
 
     calls = [e for e in ledger.read(path) if e.kind is EntryKind.CALL]
     assert [c.covers for c in calls] == [["scene:scn_01"]] * 3 + [[]]
+
+
+def test_a_voice_call_is_named_after_the_engine_that_speaks(tmp_path, settings):
+    """The engine is chosen from the voice, and the record has to say which.
+
+    It used to read whichever engine happened to be loaded, which is not the
+    one that speaks: the deck's first call came out as `tts:macos_say` on a
+    deck spoken entirely by Edge.
+    """
+    from doc2video.tools.tts import TTSTool
+
+    tool = TTSTool(settings)
+    spoken: list[str] = []
+
+    class _Fake:
+        name = "edge"
+        natural_rate = 1.0
+        chars_per_second = 4.6
+        default_voice = "zh-CN-YunyangNeural"
+
+        def voices(self):
+            return ["zh-CN-YunyangNeural"]
+
+        def available(self):
+            return True
+
+        def synthesize(self, text, out_path, *, voice="", rate=1.0):
+            spoken.append(text)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(b"")
+            return 1.0
+
+    tool._provider = _Fake()
+    path = tmp_path / "ledger.jsonl"
+    with ledger.recording(path), ledger.current().stage("配音"):
+        with contextlib.suppress(Exception):
+            tool._speak(
+                ["一句话。"],
+                tmp_path / "out.wav",
+                emphasis=[False],
+                pronunciation=None,
+                voice="zh-CN-YunyangNeural",
+                rate=1.0,
+            )
+
+    calls = [e for e in ledger.read(path) if e.kind is EntryKind.CALL]
+    assert calls and all(call.name == "tts:edge" for call in calls)

@@ -91,7 +91,8 @@ function Step({
   calls: LedgerEntry[]
 }) {
   const [open, setOpen] = useState(false)
-  const { claimed, loose } = pairUp(entry, calls)
+  const grouped = groupCalls(calls)
+  const { claimed, loose } = pairUp(entry, grouped)
   const mark = KIND_MARK[entry.kind] ?? entry.kind
   const failed = entry.status === 'failed'
   const openable = entry.artifacts.length > 0 || calls.length > 0
@@ -146,7 +147,7 @@ function Step({
         <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
           {calls.length > 0 && (
             <div className="ledger__calls">
-              {calls.map((one) => (
+              {grouped.map((one) => (
                 <CallRow
                   key={one.seq}
                   projectId={projectId}
@@ -165,6 +166,45 @@ function Step({
       )}
     </div>
   )
+}
+
+/**
+ * Fold a page's repeated calls into the one thing they produced.
+ *
+ * A page is spoken in several speech units, each its own call to the same
+ * engine, and the clip only exists once they have all been written and
+ * joined. Listed one per call, one row carries the audio and the rest carry
+ * nothing — which reads as "these ones failed to produce anything", when what
+ * actually happened is that six calls made one clip between them.
+ *
+ * Only consecutive calls of the same tool working on the same thing are
+ * folded, so a step that genuinely called the same tool about two different
+ * scenes still shows two rows.
+ */
+function groupCalls(calls: LedgerEntry[]): LedgerEntry[] {
+  const grouped: LedgerEntry[] = []
+  let parts = 0
+  for (const call of calls) {
+    const last = grouped[grouped.length - 1]
+    const same =
+      last &&
+      last.name === call.name &&
+      call.covers?.length > 0 &&
+      String(last.covers) === String(call.covers)
+    if (!same) {
+      grouped.push({ ...call })
+      parts = 1
+      continue
+    }
+    parts += 1
+    // The row now stands for all of them: their time added up, and a failure
+    // anywhere in the run is the run's failure.
+    last.duration_s += call.duration_s
+    last.detail = `${parts} 段`
+    last.artifacts = [...last.artifacts, ...call.artifacts]
+    if (call.status === 'failed') last.status = 'failed'
+  }
+  return grouped
 }
 
 /**
