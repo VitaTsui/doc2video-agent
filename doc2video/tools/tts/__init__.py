@@ -7,7 +7,15 @@ from pathlib import Path
 from ...core import ledger
 from ...core.config import Settings, get_settings
 from ...core.logging import get_logger
-from .base import Segment, TTSProvider, TTSResult, allocate_segments, estimate_duration
+from . import align
+from .base import (
+    Segment,
+    TTSProvider,
+    TTSResult,
+    allocate_segments,
+    estimate_duration,
+    weight_of,
+)
 from .providers import resolve_provider
 
 log = get_logger(__name__)
@@ -83,14 +91,53 @@ class TTSTool:
                 voice=voice or self._settings.tts_voice,
                 rate=rate or self._settings.tts_speech_rate,
             )
-        segments = allocate_segments(sentences or [text], duration)
+        lines = sentences or [text]
+        segments, source = self._time(text, out_path, lines, duration)
         return TTSResult(
             path=out_path,
             duration=duration,
             provider=self._provider.name,
-            voice=self._settings.tts_voice,
+            voice=voice or self._settings.tts_voice,
             segments=segments,
+            timing_source=source,
         )
+
+    def _time(
+        self, text: str, audio: Path, sentences: list[str], duration: float
+    ) -> tuple[list[Segment], str]:
+        """When each sentence starts, by the best means available.
+
+        Three rungs, best first. The camera points at the moment a sentence
+        begins, so the difference between them is the difference between the
+        box appearing on the right phrase and appearing a second after it:
+
+        1. the engine's own timings, when it reports any;
+        2. the pauses measured in the clip that was just written;
+        3. the clip's duration split in proportion to sentence length.
+
+        The third is where this project started and it stays as the floor —
+        a clip with no detectable pauses still has to be cut up somehow — but
+        it is an estimate, and a run that falls back to it records that it did.
+        """
+        if reported := self._provider.timings(text, audio, duration):
+            return reported, "provider"
+
+        weights = [weight_of(line) for line in sentences]
+        if measured := align.boundaries(audio, sentences, duration, weights):
+            starts = [0.0, *measured]
+            ends = [*measured, duration]
+            return (
+                [
+                    Segment(text=line, start=round(start, 3), end=round(end, 3))
+                    for line, start, end in zip(sentences, starts, ends, strict=True)
+                ],
+                "silence",
+            )
+
+        # Not a degradation worth a record per scene — it is the normal path on
+        # a clip with no pauses (one short sentence), and thirty of them would
+        # bury the records that matter. The source travels with the result.
+        return allocate_segments(sentences, duration), "estimate"
 
 
 __all__ = [

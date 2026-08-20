@@ -37,6 +37,12 @@ class TTSResult:
     provider: str
     voice: str = ""
     segments: list[Segment] = field(default_factory=list)
+    # Where the segment times came from: "provider" if the engine reported
+    # them, "silence" if they were measured off the clip, "estimate" if they
+    # were inferred from how long the sentences are. Carried because the three
+    # are not equally trustworthy and the director acts on all of them the
+    # same way — so the difference has to be visible somewhere.
+    timing_source: str = "estimate"
 
 
 class TTSProvider:
@@ -48,6 +54,16 @@ class TTSProvider:
     def synthesize(self, text: str, out_path: Path, *, voice: str = "", rate: float = 1.0) -> float:
         """Write audio for ``text`` to ``out_path`` and return its duration."""
         raise NotImplementedError
+
+    def timings(self, text: str, out_path: Path, duration: float) -> list[Segment] | None:
+        """Real sentence timings, when the engine reported them.
+
+        None means "I don't know", which is the honest answer for every engine
+        this project ships with today — `say` and Piper both hand back audio
+        and nothing else. A provider that does know should say so here, and be
+        believed over anything measured or estimated afterwards.
+        """
+        return None
 
     def voices(self) -> list[str]:
         """The voices this provider can actually speak Chinese with, here.
