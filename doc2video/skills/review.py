@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from ..schemas import PageType, ReviewFinding
 from ..schemas.telemetry import QualityDimension, QualityReport
 from ..tools.renderer.base import SUBTITLE_BOTTOM_MARGIN
-from . import render_review
+from . import render_review, speech_review
 from .base import Skill
 
 DURATION_TOLERANCE = 0.25
@@ -98,6 +98,15 @@ class ReviewSkill(Skill):
         )
         # And whether anything was actually drawn. Only once there are clips to
         # look at: before a render there is no picture to have an opinion about.
+        # And how it sounds, which neither of the others can hear.
+        findings.extend(
+            speech_review.check_speech(
+                self.project,
+                self.ctx.asset_path,
+                lead=self.ctx.settings.scene_lead_seconds,
+                tail=self.ctx.settings.scene_tail_seconds,
+            )
+        )
         if self.project.render.scene_clips:
             findings.extend(render_review.check_frames(self.project, self.ctx.asset_path))
             findings.extend(render_review.check_actions(self.project, self.ctx.asset_path))
@@ -167,7 +176,11 @@ class ReviewSkill(Skill):
                 name="pacing",
                 score=self._pacing_score(by_kind),
                 weight=0.15,
-                detail=f"时长偏差与节奏问题 {by_kind.get('pacing', 0)} 条",
+                detail=(
+                    f"时长偏差与节奏问题 {by_kind.get('pacing', 0)} 条，"
+                    f"语速 {by_kind.get('speech_rate', 0)} 条，"
+                    f"平铺直叙 {by_kind.get('monotone', 0)} 条"
+                ),
             ),
             QualityDimension(
                 name="originality",
@@ -224,6 +237,11 @@ class ReviewSkill(Skill):
             # Missing the requested length is the one the user asked for.
             score -= 40.0
         score -= 10.0 * by_kind.get("pacing", 0)
+        # How it is delivered is part of the pace: a page read at 380
+        # characters a minute is a page nobody follows, whatever the script
+        # says. Weighed lighter than a structural pacing problem — it is a
+        # blemish, not a scene that cannot be watched.
+        score -= 6.0 * (by_kind.get("speech_rate", 0) + by_kind.get("monotone", 0))
         return max(0.0, score)
 
     def _direction_score(self, dangling: int) -> float:

@@ -66,6 +66,10 @@ class VideoIntent(BaseModel):
     # the machine is configured with".
     voice: str = ""
     speech_rate: float = 0.0
+    # How to say a term this deck uses, when the engine gets it wrong and the
+    # built-in list does not know about it. Keyed by the term as written; the
+    # caption keeps the written form either way.
+    pronunciation: dict[str, str] = Field(default_factory=dict)
 
 
 class RenderState(BaseModel):

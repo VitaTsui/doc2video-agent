@@ -1320,6 +1320,13 @@
           "default": 0.0,
           "title": "Speech Rate",
           "type": "number"
+        },
+        "pronunciation": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Pronunciation",
+          "type": "object"
         }
       },
       "title": "VideoIntent",

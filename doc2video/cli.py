@@ -58,6 +58,17 @@ def main(argv: list[str] | None = None) -> int:
     metrics.add_argument("--limit", type=int, default=500, help="参与统计的最近运行条数")
     metrics.set_defaults(func=cmd_metrics)
 
+    upgrade = sub.add_parser("voice-upgrade", help="装一个更好的声音")
+    upgrade.add_argument(
+        "pack",
+        nargs="?",
+        default="edge",
+        choices=["edge", "kokoro"],
+        help="edge=播音腔（约 1MB，需联网）｜kokoro=本地神经语音（约 400MB）",
+    )
+    upgrade.add_argument("--yes", action="store_true", help="不询问直接安装")
+    upgrade.set_defaults(func=cmd_voice_upgrade)
+
     voices = sub.add_parser("voices", help="下载 Piper 语音模型（Windows / Linux 的声音来源）")
     voices.add_argument(
         "name", nargs="?", default="", help="音色名，默认 zh_CN-huayan-medium（约 61MB）"
@@ -113,6 +124,108 @@ def cmd_voices(args) -> int:
     else:
         print(f"仍不可用：{provider.unavailable_reason()}")
     return 0
+
+
+def cmd_voice_upgrade(args) -> int:
+    """Install the better voice into whichever interpreter is running this.
+
+    The engine adapter has been there since the measurement that justified it;
+    what was missing is the one step a person cannot reasonably do themselves
+    inside a packaged app — putting the package into the runtime that app
+    downloaded. That is all this does.
+
+    Its own command, and not something a render triggers: this fetches several
+    hundred megabytes, and a download that starts in the middle of making a
+    video is indistinguishable from a hang.
+    """
+    import subprocess
+    import sys
+
+    from .tools.tts.edge import EdgeProvider
+    from .tools.tts.kokoro import KokoroProvider
+
+    packs = {
+        "edge": (
+            EdgeProvider,
+            ["edge-tts"],
+            "微软的播音音色 zh-CN-YunyangNeural——官方标签 Professional / Reliable，"
+            "是这批中文音色里唯一那个性格。",
+            "约 1MB。合成走微软的在线端点，**要联网**；断了会自动改用本机的声音。",
+            "edge",
+        ),
+        "kokoro": (
+            KokoroProvider,
+            ["kokoro", "misaki[zh]"],
+            "一个 82M 参数的本地中文语音模型。系统自带的声音每次停顿几乎一样长"
+            "（离散度 0.13），它是 0.66，会连着讲四秒再换气。",
+            f"连同 torch 约 400MB，装到 {sys.prefix}。全程本地，不联网。",
+            "auto（装上后自动排在 say 之后、Piper 之前）",
+        ),
+    }
+    provider_cls, packages, why, cost, how = packs[args.pack]
+
+    provider = provider_cls()
+    if provider.available():
+        print("已经装好了。可用音色：" + "、".join(provider.voices()))
+        print(f"启用方式：D2V_TTS_PROVIDER={how}")
+        return 0
+
+    print(f"要装的是：{why}")
+    print(f"代价：{cost}")
+    if not args.yes:
+        answer = input("现在装吗？[y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("没有安装。想好了再跑一次这个命令。")
+            return 0
+
+    if (failure := _install_into_runtime(packages)) is not None:
+        print(failure, file=sys.stderr)
+        return 1
+
+    # Import in a fresh interpreter: this one imported `kokoro` already and
+    # cached the failure, so asking it again would say no whatever happened.
+    module = "edge_tts" if args.pack == "edge" else "kokoro"
+    check = subprocess.run(
+        [sys.executable, "-c", f"import {module}; print('ok')"], capture_output=True, text=True
+    )
+    if check.returncode != 0:
+        print(f"装完了但导入不了：{check.stderr.strip()[:200]}", file=sys.stderr)
+        return 1
+    print(f"装好了。启用方式：D2V_TTS_PROVIDER={how}")
+    return 0
+
+
+def _install_into_runtime(packages: list[str]) -> str | None:
+    """Put `packages` into the interpreter running this. None on success.
+
+    Three ways, because the interpreter this ends up in may have none of them.
+    A uv-made environment ships no `pip` at all — and the packaged runtime is
+    built with `uv pip install --target`, so it does not have one either. The
+    first version of this command called `python -m pip` and failed on the
+    developer's own checkout, which is where it was going to fail for everyone.
+    """
+    import subprocess
+    import sys
+
+    from .core import programs
+
+    attempts: list[list[str]] = [[sys.executable, "-m", "pip", "install", *packages]]
+    if (uv := programs.find("uv")) is not None:
+        attempts.append([uv, "pip", "install", "--python", sys.executable, *packages])
+    # Last resort: put pip there, then use it.
+    attempts.append([sys.executable, "-m", "ensurepip", "--upgrade"])
+
+    errors: list[str] = []
+    for index, command in enumerate(attempts):
+        print("$ " + " ".join(command))
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            if command[-1] == "--upgrade":  # ensurepip: now retry the install
+                return _install_into_runtime(packages)
+            return None
+        errors.append(f"[{index + 1}] {(result.stderr or result.stdout).strip()[-300:]}")
+
+    return "安装失败，试过的三种方式都不行：\n" + "\n".join(errors)
 
 
 def cmd_doctor(args) -> int:

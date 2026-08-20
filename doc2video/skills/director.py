@@ -35,6 +35,23 @@ MAX_ZOOM_COVERAGE = 0.35
 # precise target. Dwelling on something calls for a highlight or a zoom instead.
 MAX_POINTER_COVERAGE = 0.10
 MAX_POINTER_SPAN = 2.6
+# A zoom says "look closely at this". Past this much text there is nothing to
+# look closely at — a paragraph enlarged is still a paragraph, the narrator is
+# not reading it, and the viewer gets a slow push into a wall of words. Found
+# in a finished video: eleven of twenty-six zooms landed on blocks over forty
+# characters, the largest of them 342. Those become outlines instead, which
+# say "this block" without promising it is worth enlarging.
+MAX_ZOOM_CHARS = 40
+# The renderer will not push past this, so a target's size after zooming is
+# known before the zoom is chosen. Kept in step with `MAX_SCALE` in
+# `renderer/src/components/useCameraTransform.ts`; a test asserts they agree.
+RENDER_MAX_SCALE = 3.0
+# How much of the frame a target has to fill once the camera has done all it
+# can. Below this the push buys nothing: the label is still too small to read
+# and the page around it — which is what told the viewer where the label was —
+# has been cropped away. Measured on a real deck: eight of twenty-six zooms
+# landed on things that stayed under five percent of the frame at full scale.
+MIN_ZOOM_RESULT = 0.05
 POINTER_DURATION = 1.4
 # Let the viewer hear the sentence start before the camera moves.
 AUDIO_LEAD = 0.3
@@ -99,7 +116,7 @@ class DirectorSkill(Skill):
             if target_id is None:
                 continue
             element = page.element(target_id)
-            if element is None or not _worth_pointing_at(element):
+            if element is None or not _worth_pointing_at(element) or _is_banner(element, page):
                 continue
             score = element.importance + (0.5 if segment.emphasis else 0.0)
             # A node in a declared flow is worth more than a box that happens
@@ -143,7 +160,12 @@ class DirectorSkill(Skill):
         name-checks came out looking like the same emphasis as a key figure.
         """
         if segment.emphasis or element.kind in ZOOM_KINDS:
-            return ActionType.ZOOM
+            # Unless it is a wall of text: a picture or a number rewards being
+            # enlarged, a paragraph does not.
+            wordy = element.kind not in ZOOM_KINDS and len(element.text or "") > MAX_ZOOM_CHARS
+            if not wordy and _zoom_pays_off(element, page):
+                return ActionType.ZOOM
+            return ActionType.HIGHLIGHT
         span = max(segment.end - segment.start, 0.0)
         if span and span <= MAX_POINTER_SPAN and _coverage(element, page) <= MAX_POINTER_COVERAGE:
             return ActionType.POINTER
@@ -152,7 +174,9 @@ class DirectorSkill(Skill):
     def _resolve_target(self, segment: NarrationSegment, page: DocumentPage) -> str | None:
         for ref in segment.element_refs:
             element = page.element(ref)
-            if element is not None and _worth_pointing_at(element):
+            if element is None or not _worth_pointing_at(element):
+                continue
+            if not _is_banner(element, page):
                 return ref
         # Nothing bound: fall back to the most distinctive element whose text the
         # sentence actually mentions, so we never point at an unrelated box.
@@ -250,6 +274,38 @@ class DirectorSkill(Skill):
 
         actions.sort(key=lambda a: a.at)
         return actions
+
+
+def _zoom_pays_off(element, page: DocumentPage) -> bool:
+    """Whether pushing in on this actually shows the viewer anything.
+
+    A zoom trades context for size: the page around the target is what said
+    where the target was, and the camera crops it away. That trade is only
+    worth making if the target ends up big enough to be worth looking at, and
+    for a small label it never does — at the renderer's largest push a box
+    covering two thousandths of the page still covers under two percent of the
+    frame. The viewer loses the page and gains nothing.
+    """
+    coverage = _coverage(element, page)
+    return coverage * RENDER_MAX_SCALE**2 >= MIN_ZOOM_RESULT
+
+
+def _is_banner(element, page: DocumentPage) -> bool:
+    """Whether this element is the page's own heading.
+
+    Pointing at it says nothing. The viewer is already on the page, and its
+    title is what the whole page is about — a box drawn around it reads as the
+    camera having nowhere better to go. Found in a finished video: three shots
+    aimed at the page title, two of them at text identical to it.
+
+    The fallback branch of `_resolve_target` had always skipped titles; the
+    branch that takes the model's own `element_refs` did not, so a heading the
+    model happened to bind to went straight through.
+    """
+    if element.kind is ElementKind.TITLE:
+        return True
+    text = (element.text or "").strip()
+    return bool(text) and text == (page.title or "").strip()
 
 
 def _worth_pointing_at(element) -> bool:

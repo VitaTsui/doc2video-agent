@@ -110,3 +110,86 @@ def test_each_batch_is_saved_as_it_is_written(settings: Settings, store: Project
     # ones before it had already written.
     assert seen == [0, 4, 8]
     assert len(store.load(skill.project.project_id).scenes) == 9
+
+
+def test_a_script_that_overran_is_cut_back_to_the_length_asked_for(settings, store):
+    """"做成八分钟" has to mean eight minutes.
+
+    The budget exists before a word is written and the model overruns it
+    anyway — on a real 30-page deck it wrote 38% past, and the video came out
+    160 seconds longer than the one that was ordered. Review reported that and
+    nothing acted on it.
+
+    Not fixed by speeding the voice up: that turns a long script into a rushed
+    one rather than a shorter one, and rushed is the thing people complain
+    about.
+    """
+    from doc2video.skills.narration import PageNarration
+
+    skill = _skill(settings, store, pages=6, duration=120.0)
+    pages = skill._pages()
+    budgets = skill._allocate_budget(pages)
+
+    # Every page written at three times its budget.
+    pace = skill._pace()
+    drafts = {
+        page.index: PageNarration(
+            index=page.index,
+            narration="".join(f"这是第{n}句话，长度大致相同。" for n in range(30)),
+            segments=[],
+        )
+        for page in pages
+    }
+    silence = skill._page_silence() * len(pages)
+    before = sum(len(d.narration) for d in drafts.values()) / pace + silence
+    assert before > 120.0 * 1.5
+
+    fitted = skill._fit_duration(pages, budgets, drafts)
+    after = sum(len(d.narration) for d in fitted.values()) / pace + silence
+
+    assert after < before
+    assert after <= 120.0 * 1.25
+    # Every page still says something: a page cut to nothing is not shorter,
+    # it is missing.
+    assert all(d.narration.strip() for d in fitted.values())
+
+
+def test_a_script_already_the_right_length_is_left_alone(settings, store):
+    from doc2video.skills.narration import PageNarration
+
+    skill = _skill(settings, store, pages=4, duration=120.0)
+    pages = skill._pages()
+    budgets = skill._allocate_budget(pages)
+    drafts = {
+        page.index: PageNarration(index=page.index, narration="很短的一句。", segments=[])
+        for page in pages
+    }
+    assert skill._fit_duration(pages, budgets, drafts) == drafts
+
+
+def test_trimming_stops_at_a_sentence_boundary():
+    """Cutting mid-sentence leaves the narrator stopping in the middle of a thought."""
+    from doc2video.skills.narration import _trim_to
+
+    text = "第一句话在这里。第二句话稍微长一点。第三句话是最后一句。"
+    trimmed = _trim_to(text, 20)
+
+    assert trimmed.endswith("。")
+    assert text.startswith(trimmed)
+    # Never down to nothing, however tight the limit.
+    assert _trim_to(text, 2) == "第一句话在这里。"
+
+
+def test_the_pace_follows_the_engine_that_will_speak_it(settings, store):
+    """A page budgeted at 4.6 characters a second and spoken at 4.15 runs long.
+
+    The figure used to be written twice — once in the estimator and once in the
+    budget — and they agreed until an engine arrived that spoke at a different
+    speed.
+    """
+    from doc2video.core.config import Settings
+
+    fast = _skill(Settings(**{**settings.model_dump(), "tts_provider": "macos_say"}), store,
+                  pages=4, duration=120.0)
+    assert fast._pace() > 0
+    assert fast._char_budget(10.0) == int(10.0 * fast._pace())

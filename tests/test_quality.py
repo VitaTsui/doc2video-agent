@@ -33,8 +33,20 @@ from doc2video.skills.base import SkillContext
 from doc2video.skills.review import ReviewSkill
 from doc2video.storage import ProjectStore
 
+# Long enough for the twenty seconds these scenes claim to run. A short line
+# against a long clip is a scene read at 35 characters a minute, which the
+# speech review is right to flag — the fixture was the unrealistic part.
+# Deliberately uneven in length, so the rhythm check has nothing to say either.
+DEFAULT_NARRATION = (
+    "这一页讲的是系统架构。"
+    "请求先进网关，再交给模型，最后落到检索这一层。"
+    "三层各管一件事，出了问题也好定位。"
+    "先看整体，再看细节。"
+    "下面从最底下那层说起，它决定了上面能做到什么。"
+)
 
-def _scene(index: int, *, actions: bool = True, narration: str = "这一页讲的是系统架构。") -> Scene:
+
+def _scene(index: int, *, actions: bool = True, narration: str = DEFAULT_NARRATION) -> Scene:
     return Scene(
         scene_id=f"scene_{index:02d}",
         source_page=index,

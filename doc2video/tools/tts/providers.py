@@ -16,6 +16,8 @@ from ...core.config import which
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
 from .base import TTSProvider, audio_duration, estimate_duration
+from .edge import EdgeProvider
+from .kokoro import KokoroProvider
 from .piper import PiperProvider
 
 log = get_logger(__name__)
@@ -27,6 +29,8 @@ class MacOSSayProvider(TTSProvider):
     """Uses the built-in macOS `say` binary, writing 16-bit PCM WAVE."""
 
     name = "macos_say"
+    # Measured over a 30-page deck with Tingting: 4.75 characters a second.
+    chars_per_second = 4.75
 
     def available(self) -> bool:
         return which("say") is not None
@@ -45,11 +49,16 @@ class MacOSSayProvider(TTSProvider):
         for line in listed.splitlines():
             if "zh_CN" not in line:
                 continue
-            # Two shapes in one listing: 「Flo (中文（中国大陆）) zh_CN …」 and
-            # 「Tingting            zh_CN …」. Cutting at the language code
-            # handles both; cutting at the parenthesis keeps the whole line
-            # for the ones that have none.
-            name = line.split("zh_CN")[0].split("(")[0].strip()
+            # The *whole* name, parentheses included. Most of these voices exist
+            # in several languages under one first name, and `say -v Flo` picks
+            # whichever Flo is the default — an English one, which writes a
+            # 0.02-second file for a page of Chinese. Silent output, exit code
+            # zero, and a scene with no narration in it. The listing's full
+            # name is the only one that selects the Mandarin voice:
+            #
+            #     say -v "Flo (中文（中国大陆）)"  → 3.89s
+            #     say -v Flo                      → 0.02s
+            name = line.split("zh_CN")[0].strip()
             if name and name not in names:
                 names.append(name)
         return names
@@ -105,13 +114,33 @@ class SilentProvider(TTSProvider):
 # needs no model on disk, and is the reason macOS never noticed this project had
 # no cross-platform voice. Piper is what every other platform gets — before it,
 # a run off macOS produced a correctly timed, correctly subtitled, silent video.
-AUTO_ORDER: tuple[type[TTSProvider], ...] = (MacOSSayProvider, PiperProvider, SilentProvider)
+# Best first — and "best" turned out to need an ear, not only numbers.
+#
+# Kokoro varies its pauses five times as much as `say` (0.66 against 0.13),
+# which is the measurable half of sounding like a person rather than a
+# punctuation table, and on that basis this list had it first. Listening
+# settled it the other way for Mandarin narration: it carries an accent, and
+# for explaining a deck an even, accentless delivery beats a livelier one that
+# sounds foreign. The metric was necessary and not sufficient — it cannot hear
+# an accent, and nothing here could have.
+#
+# So `say` leads where it exists. Kokoro sits ahead of Piper, which is where it
+# earns its place: on Windows and Linux there is no `say`, and the choice is
+# between a neural voice with an accent and the one shipped Piper model.
+AUTO_ORDER: tuple[type[TTSProvider], ...] = (
+    MacOSSayProvider,
+    KokoroProvider,
+    PiperProvider,
+    SilentProvider,
+)
 
 
 def resolve_provider(preference: str) -> TTSProvider:
     """Pick a provider by name, or the best available one for ``auto``."""
     registry: dict[str, type[TTSProvider]] = {
         MacOSSayProvider.name: MacOSSayProvider,
+        KokoroProvider.name: KokoroProvider,
+        EdgeProvider.name: EdgeProvider,
         PiperProvider.name: PiperProvider,
         SilentProvider.name: SilentProvider,
         "mock": SilentProvider,

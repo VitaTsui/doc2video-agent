@@ -32,6 +32,10 @@ from .base import Skill, load_prompt
 # Pages per model call. Small enough that a long deck cannot overrun the
 # output budget, large enough that each page can see its neighbours.
 BATCH_SIZE = 4
+# How far past the requested length a script may run before it is cut back.
+# Some slack on purpose: trimming a page costs it a sentence, and a video ten
+# percent long is not worth a sentence.
+DURATION_TOLERANCE = 0.10
 
 # Per-page-type weights for splitting the total duration budget.
 TYPE_WEIGHT = {
@@ -111,8 +115,80 @@ class NarrationSkill(Skill):
             lambda: self._placeholder(pages, budgets),
             what="讲稿",
         )
+        drafts = self._fit_duration(pages, budgets, drafts)
         self._build_scenes(pages, drafts)
         self.log.info("讲稿完成：%d 个场景", len(self.project.scenes))
+
+    # -- fitting --------------------------------------------------------
+    def _fit_duration(
+        self,
+        pages: list[DocumentPage],
+        budgets: dict[int, float],
+        drafts: dict[int, PageNarration],
+    ) -> dict[int, PageNarration]:
+        """Bring the script back to the length that was asked for.
+
+        The budget exists before a word is written and the model overruns it
+        anyway — on a real 30-page deck it wrote 38% past, which came out as a
+        video 160 seconds longer than the one that was ordered. Review reported
+        that and nothing acted on it, so "做成八分钟" quietly meant eleven.
+
+        Not by speeding the voice up: that is the thing a listener complains
+        about, and it makes a long script into a rushed one rather than a
+        shorter one. Pages are compressed instead, worst overrun first, and the
+        ones the user marked as important are compressed last.
+        """
+        target = float(self.project.intent.duration)
+        if target <= 0 or not drafts:
+            return drafts
+
+        silence = self._page_silence() * len(pages)
+        pace = self._pace()
+
+        def spoken(text: str) -> float:
+            return len(text) / pace
+
+        total = sum(spoken(d.narration) for d in drafts.values()) + silence
+        if total <= target * (1 + DURATION_TOLERANCE):
+            return drafts
+
+        # Whose fault it is, most-to-least: how far past its own budget a page
+        # ran, discounted by how much the user said it matters.
+        emphasis = set(self.project.intent.emphasis_pages)
+        over = []
+        for page in pages:
+            draft = drafts.get(page.index)
+            if draft is None:
+                continue
+            allowed = budgets.get(page.index, 0.0)
+            excess = spoken(draft.narration) - allowed
+            if excess <= 0:
+                continue
+            over.append((excess * (0.4 if page.index in emphasis else 1.0), page.index, allowed))
+        over.sort(reverse=True)
+
+        self.log.info(
+            "讲稿比目标长 %.0f 秒（%.0fs / 目标 %.0fs），压 %d 页",
+            total - target,
+            total,
+            target,
+            len(over),
+        )
+        telemetry.record_degradation(
+            "讲稿", f"超出目标时长 {total - target:.0f} 秒，压缩 {len(over)} 页"
+        )
+
+        trimmed = dict(drafts)
+        for _, index, allowed in over:
+            if total <= target * (1 + DURATION_TOLERANCE):
+                break
+            draft = trimmed[index]
+            shorter = _trim_to(draft.narration, int(allowed * pace))
+            if len(shorter) >= len(draft.narration):
+                continue
+            total -= spoken(draft.narration) - spoken(shorter)
+            trimmed[index] = PageNarration(index=index, narration=shorter, segments=[])
+        return trimmed
 
     def _placeholder(
         self, pages: list[DocumentPage], budgets: dict[int, float]
@@ -202,7 +278,9 @@ class NarrationSkill(Skill):
             return
         scene.narration = text
         scene.segments = self._split_into_segments(text, scene.scene_id)
-        scene.duration = estimate_duration(text, self.ctx.settings.tts_speech_rate)
+        scene.duration = estimate_duration(
+            text, self.ctx.settings.tts_speech_rate, self._pace()
+        )
 
     def revise_scene(self, scene: Scene, instruction: str, target_seconds: float = 0.0) -> None:
         """Rewrite one scene from an instruction rather than from new text.
@@ -290,16 +368,27 @@ class NarrationSkill(Skill):
             budgets[index] = max(MIN_SCENE_SECONDS, min(MAX_SCENE_SECONDS, seconds))
         return budgets
 
-    @staticmethod
-    def _char_budget(seconds: float) -> int:
-        # Mirrors the TTS estimator so the written script and the spoken clip agree.
-        return int(seconds * 4.6)
+    def _char_budget(self, seconds: float) -> int:
+        """How many characters fit in `seconds`, for the engine that will speak them.
+
+        The number used to be written here as well as in the estimator, and the
+        two were the same until they were not: a page budgeted against 4.6
+        characters a second and spoken at 4.15 runs eleven percent long before
+        the model has done anything wrong. One source now, and it follows the
+        voice — `say` says 4.75, Edge's broadcast voice 4.15.
+        """
+        return int(seconds * self._pace())
+
+    def _pace(self) -> float:
+        from ..tools.tts import TTSTool
+
+        return TTSTool(self.ctx.settings).chars_per_second
 
     # -- model path -----------------------------------------------------
     def _write_with_model(
         self, pages: list[DocumentPage], budgets: dict[int, float]
     ) -> dict[int, PageNarration]:
-        """Write the whole deck in batches, then keep only what fits.
+        """Write the whole deck in batches.
 
         Batched rather than per-page because a script's job is to connect: a
         page written without sight of its neighbours opens with a transition
@@ -477,7 +566,9 @@ class NarrationSkill(Skill):
                     title=page.title,
                     narration=narration,
                     segments=segments,
-                    duration=estimate_duration(narration, self.ctx.settings.tts_speech_rate),
+                    duration=estimate_duration(
+                        narration, self.ctx.settings.tts_speech_rate, self._pace()
+                    ),
                     visual=SceneVisual(
                         type=VisualType.SLIDE,
                         asset=page.image_path,
@@ -508,3 +599,24 @@ def _flow_of(page: DocumentPage) -> str:
     labels = {e.id: (e.text or e.label or e.id).strip() for e in page.elements}
     walked = [labels.get(node, node) for node in page.diagram.order()]
     return " → ".join(name for name in walked if name)
+
+
+def _trim_to(text: str, limit: int) -> str:
+    """Drop whole sentences from the end until the text fits.
+
+    Sentences rather than characters: cutting mid-sentence leaves the narrator
+    stopping in the middle of a thought, which is worse than the page being
+    long. The first sentence is always kept — a page that says nothing is not
+    a shorter page, it is a missing one.
+    """
+    if len(text) <= limit:
+        return text
+    parts = [part for part in re.split(r"(?<=[。！？])", text) if part.strip()]
+    if len(parts) <= 1:
+        return text
+    kept = [parts[0]]
+    for part in parts[1:]:
+        if len("".join(kept)) + len(part) > limit:
+            break
+        kept.append(part)
+    return "".join(kept)

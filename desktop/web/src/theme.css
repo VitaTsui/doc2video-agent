@@ -1157,6 +1157,56 @@ body {
   margin-top: 0;
 }
 
+/* One step of the account. Two lines by design: what it is, then what it
+   cost. Laid out as a single row it wrapped wherever the panel ran out —
+   splitting `presentation-understanding` across lines with the timings caught
+   in the middle. */
+.step {
+  border-top: 1px solid var(--line);
+  padding: 8px 0;
+}
+
+.step__head {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.step__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The code's name for this step: useful, and the first thing that should give
+   way when the panel is narrow. */
+.step__skill {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Kept out of the wrapping: how long a step took is the number people scan. */
+.step__time {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.step__meta {
+  font-size: 12.5px;
+}
+
 /* The calls one step made, listed under it. Monospaced numbers so a column of
    durations can be scanned rather than read one by one. */
 .ledger__calls {
@@ -1178,11 +1228,16 @@ body {
 /* While the model writes: the count and a bar in place of the button, taking
    the space the button would have had so the row does not jump when it
    finishes and the button appears. */
+/* Its own line under the deck's name, not squeezed onto the end of it: this
+   is the only thing happening, and a progress reading tucked to the right of
+   a row reads as a footnote to the row rather than as the state of the page.
+   `flex-basis: 100%` breaks the line inside the wrapping row. */
 .deckgate__writing {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-left: auto;
+  flex-basis: 100%;
+  margin-top: 2px;
 }
 
 .deckgate__writing .bar {
