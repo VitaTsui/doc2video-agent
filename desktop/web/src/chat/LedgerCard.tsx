@@ -96,39 +96,42 @@ function Step({
   const openable = entry.artifacts.length > 0 || calls.length > 0
 
   return (
-    <div style={{ borderTop: '1px solid var(--line)', padding: '8px 0' }}>
+    <div className="step">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         disabled={!openable}
-        style={{
-          display: 'flex',
-          width: '100%',
-          gap: 10,
-          alignItems: 'baseline',
-          border: 'none',
-          background: 'transparent',
-          font: 'inherit',
-          padding: 0,
-          textAlign: 'left',
-          cursor: openable ? 'pointer' : 'default',
-        }}
+        className="step__head"
+        style={{ cursor: openable ? 'pointer' : 'default' }}
       >
-        <span style={{ color: failed ? '#b0562f' : 'inherit' }}>
-          {mark && <span className="muted">[{mark}] </span>}
-          {entry.name}
+        {/* Two deliberate lines rather than one row left to wrap. In a panel
+            this narrow the single row broke wherever it ran out of space —
+            「presentation-」 on one line and 「understanding」 on the next, with
+            the timings folded in between. What the step is goes on top; what
+            it cost goes underneath. */}
+        <span className="step__title">
+          <span style={{ color: failed ? '#b0562f' : 'inherit' }}>
+            {mark && <span className="muted">[{mark}] </span>}
+            {entry.name}
+          </span>
           {/* The name in the code, next to the name in the window: 「生成讲稿」
               is what was attempted, `presentation-narration` is what ran. */}
-          {entry.skill && <span className="muted">{` ${entry.skill}`}</span>}
+          {entry.skill && <span className="step__skill muted">{entry.skill}</span>}
+          {entry.duration_s >= 0.05 && (
+            <span className="step__time muted">{`${entry.duration_s.toFixed(1)}s`}</span>
+          )}
         </span>
-        <span className="muted" style={{ marginLeft: 'auto' }}>
-          {calls.length > 0 && `${calls.length} 次调用 · `}
-          {/* What actually did the work. 「配音」 says what was attempted;
-              `tts:piper` says what it came out of, and two runs that differ
-              there sound different. */}
-          {entry.tools.length > 0 && `${entry.tools.join('、')} · `}
-          {entry.artifacts.length > 0 && `${entry.artifacts.length} 项 · `}
-          {entry.duration_s >= 0.05 ? `${entry.duration_s.toFixed(1)}s` : ''}
+        <span className="step__meta muted">
+          {[
+            calls.length > 0 ? `${calls.length} 次调用` : '',
+            // What actually did the work. 「配音」 says what was attempted;
+            // `tts:piper` says what it came out of, and two runs that differ
+            // there sound different.
+            entry.tools.length > 0 ? entry.tools.join('、') : '',
+            entry.artifacts.length > 0 ? `${entry.artifacts.length} 项` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </span>
       </button>
 

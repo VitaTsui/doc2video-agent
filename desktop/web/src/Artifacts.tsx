@@ -73,6 +73,15 @@ export function Artifacts({
     if (rendered) setTab('video')
   }, [rendered, project])
 
+  // When a run starts, the record is the thing to be looking at — it is the
+  // only view that grows while the work happens. Once, on the way in: written
+  // as a preference applied on every render it stopped being a default and
+  // became a lock, and 文档 and 逐页 could not be clicked at all for the
+  // minutes a render takes.
+  useEffect(() => {
+    if (running) setTab('ledger')
+  }, [running])
+
   if (!open || !set) return null
 
   const total = set.scenes.reduce((sum, scene) => sum + scene.duration, 0)
@@ -86,11 +95,8 @@ export function Artifacts({
   // the project it was chosen in: opening an older one from the sidebar left
   // the panel showing an empty「文档」, because that deck belonged to a parse
   // this project never had.
-  // While something is running, the record is what there is to watch — it is
-  // the only view that grows as the work happens.
-  const order: Tab[] = running ? ['ledger', 'deck', 'video', 'pages'] : ['deck', 'video', 'pages', 'ledger']
-  const preferred = running && has.ledger ? 'ledger' : tab
-  const shown: Tab = has[preferred] ? preferred : (order.find((t) => has[t]) ?? tab)
+  const order: Tab[] = ['deck', 'video', 'pages', 'ledger']
+  const shown: Tab = has[tab] ? tab : (order.find((t) => has[t]) ?? tab)
 
   return (
     <aside className="panel">
