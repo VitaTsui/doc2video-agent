@@ -131,3 +131,47 @@ def test_a_failed_call_is_kept_and_says_so(tmp_path):
     assert len(calls) == 1
     assert calls[0].status == "failed"
     assert "合成失败" in calls[0].detail
+
+
+def test_a_call_says_what_it_was_working_on(tmp_path: Path):
+    """Outputs are collected when the step ends; this is how they get back.
+
+    Without it a thirty-scene render reads as thirty sub-steps in one block
+    followed by thirty clips in another, and which clip came out of which call
+    is left to the reader to work out from the labels.
+    """
+    path = tmp_path / "ledger.jsonl"
+    with ledger.recording(path), ledger.current().stage("解析文档") as artifacts:
+        for page in (1, 2):
+            with ledger.call("parser:python-pptx", f"第 {page} 页", covers=[ledger.page_key(page)]):
+                pass
+        artifacts.extend(
+            ledger.file_artifact(
+                f"第 {page} 页", f"slides/{page}.png", ArtifactKind.IMAGE, page=page
+            )
+            for page in (1, 2)
+        )
+
+    calls = [e for e in ledger.read(path) if e.kind is EntryKind.CALL]
+    stage = next(e for e in ledger.read(path) if e.kind is EntryKind.STAGE)
+    assert [c.covers for c in calls] == [["page:1"], ["page:2"]]
+    # Every output can name the call it belongs to, and none is left over.
+    claimed = {a.page: c.covers for c in calls for a in stage.artifacts if a.page is not None}
+    assert set(claimed) == {1, 2}
+
+
+def test_a_scope_reaches_the_calls_made_inside_it(tmp_path: Path):
+    """A page is voiced in several units, each its own call, made inside the
+    TTS tool — which knows about text and nothing about scenes."""
+    path = tmp_path / "ledger.jsonl"
+    with ledger.recording(path), ledger.current().stage("配音"):
+        with ledger.scope(ledger.scene_key("scn_01")):
+            for _ in range(3):
+                with ledger.call("tts:edge", "40 字"):
+                    pass
+        # Outside the scope again: nothing sticks.
+        with ledger.call("tts:edge", "12 字"):
+            pass
+
+    calls = [e for e in ledger.read(path) if e.kind is EntryKind.CALL]
+    assert [c.covers for c in calls] == [["scene:scn_01"]] * 3 + [[]]

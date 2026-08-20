@@ -77,7 +77,11 @@ class RemotionAdapter(RendererAdapter):
         ]
         log.debug("remotion: %s", " ".join(cmd))
         try:
-            with ledger.call(f"renderer:{self.name}", plan.scene_id):
+            with ledger.call(
+                f"renderer:{self.name}",
+                plan.scene_id,
+                covers=[ledger.scene_key(plan.scene_id)],
+            ):
                 subprocess.run(
                     cmd,
                     cwd=self.renderer_dir,

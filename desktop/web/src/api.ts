@@ -74,6 +74,8 @@ export interface LedgerArtifact {
   path: string
   text: string
   scene_id: string
+  /** The page it came off, where there is one. */
+  page: number | null
 }
 
 export interface LedgerEntry {
@@ -90,6 +92,35 @@ export interface LedgerEntry {
   skill: string
   /** For a call, the `seq` of the stage it happened inside. */
   parent: number
+  /** For a call, what it was working on: `page:7`, `scene:scn_x`. Outputs are
+   *  collected at the end of the stage; this is how each one finds its call. */
+  covers: string[]
+}
+
+/** One engine, as something to choose and possibly install. */
+export interface VoicePack {
+  id: string
+  name: string
+  note: string
+  /** Roughly what installing costs, in bytes. Zero for what is already there. */
+  size: number
+  /** Needs the network to speak. Worth knowing before choosing it. */
+  online: boolean
+  installed: boolean
+  voices: { id: string; name: string; gender: string | null }[]
+}
+
+/** Every voice this machine can speak with, and what the rest would cost. */
+export async function voicePacks() {
+  return request<{ current: string; packs: VoicePack[] }>('/health/voices')
+}
+
+/** Put a pack into the runtime. Slow for the big one; it says its size first. */
+export async function installVoicePack(pack: string) {
+  return request<{ installed: boolean; voices: VoicePack['voices'] }>(
+    '/health/voices/install',
+    { method: 'POST', body: JSON.stringify({ pack }) },
+  )
 }
 
 /** How this project got made, step by step, with what each step produced. */
@@ -260,9 +291,15 @@ export async function prepare(uploadId: string, brief: string) {
 }
 
 /** Write a first script for a parsed deck. Returns a job: it takes a while,
- *  and each page is saved as it is written, so `pages` fills in as it goes. */
-export async function draftScript(projectId: string) {
-  const body = await request<{ job_id: string }>(`/projects/${projectId}/draft`, { method: 'POST' })
+ *  and each page is saved as it is written, so `pages` fills in as it goes.
+ *
+ *  `written` is what the user has already typed. Those pages come back
+ *  unchanged; the model writes the rest and has to join onto them. */
+export async function draftScript(projectId: string, written: Record<string, string> = {}) {
+  const body = await request<{ job_id: string }>(`/projects/${projectId}/draft`, {
+    method: 'POST',
+    body: JSON.stringify({ narrations: written }),
+  })
   return body.job_id
 }
 

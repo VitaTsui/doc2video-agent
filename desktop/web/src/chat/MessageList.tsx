@@ -25,6 +25,8 @@ export function MessageList({
     generated: boolean
     drafting: { done: number; total: number } | null
     onRender: () => void
+    /** Write the pages nobody has written, keeping the ones they have. */
+    onDraft: () => void
   }
 }) {
   const end = useRef<HTMLDivElement>(null)
@@ -95,17 +97,38 @@ export function MessageList({
                   ) : (
                     <>
                       <span className="muted">
+                        {/* Two buttons, two different waits. Writing takes as
+                            long as the model takes; rendering takes minutes
+                            and cannot be taken back. Rolling them into one
+                            「开始生成」 meant the words were written by the
+                            time anyone saw the boxes, so writing your own page
+                            was overwriting rather than filling in. */}
                         {/* Who wrote which page is not tracked, and now that
                             the model drafts them all up front, guessing gets
                             it wrong: 「你写了 9 页」 of nine pages nobody
                             touched is worse than saying nothing about
                             authorship at all. */}
-                        {deck.generated
-                          ? '讲稿在右侧，改完再点一次就重做'
-                          : message.hasModel
-                            ? '讲稿在右侧，改完点开始生成'
-                            : `已写 ${deck.written} / ${message.pages.length} 页，没写的会是占位文本`}
+                        {!message.hasModel
+                          ? `已写 ${deck.written} / ${message.pages.length} 页，没写的会是占位文本`
+                          : deck.written >= message.pages.length
+                            ? // Every page has words on it, whoever wrote them.
+                              '讲稿在右侧，改完点开始生成'
+                            : deck.written === 0
+                              ? '想自己写的页先写在右侧，剩下的点「生成讲稿」补齐'
+                              : `你写了 ${deck.written} / ${message.pages.length} 页，剩下的可以让模型补`}
                       </span>
+                      {message.hasModel && deck.written < message.pages.length && (
+                        <button
+                          type="button"
+                          className="deckgate__draft"
+                          disabled={deck.locked}
+                          onClick={deck.onDraft}
+                        >
+                          {deck.written === 0
+                            ? '生成讲稿'
+                            : `补齐剩下 ${message.pages.length - deck.written} 页`}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="deckgate__go"

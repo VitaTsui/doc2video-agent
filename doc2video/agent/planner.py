@@ -128,7 +128,7 @@ class Planner:
             intent=intent,
         )
 
-    def draft_plan(self) -> ExecutionPlan:
+    def draft_plan(self, written: dict[int, str] | None = None) -> ExecutionPlan:
         """Write a first script for a deck that has already been read.
 
         Its own step, after the parse rather than inside it, for two reasons.
@@ -138,7 +138,12 @@ class Planner:
         at the script: nothing is voiced or rendered from a draft nobody has
         looked at yet.
         """
-        return ExecutionPlan(summary="逐页起草讲稿", stages=[Stage.NARRATE])
+        return ExecutionPlan(
+            summary="逐页起草讲稿",
+            stages=[Stage.NARRATE],
+            adopts_script=False,
+            narrations=dict(written or {}),
+        )
 
     def render_plan(self, narrations: dict[int, str]) -> ExecutionPlan:
         """Everything downstream of a script: adopt it, then voice and render.

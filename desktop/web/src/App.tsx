@@ -411,22 +411,33 @@ export function App() {
    * is saved, and this reads them back into the boxes as they appear, so the
    * wait is spent watching the script get written rather than watching a
    * spinner.
+   *
+   * Asked for rather than automatic. The deck is on screen with empty boxes
+   * first, so anyone who already knows what page 4 should say can type it and
+   * have the rest written around it — the model gets those pages as context
+   * and leaves them alone. Starting to write the moment the parse landed took
+   * that away: by the time the boxes appeared they were already full, and
+   * writing your own page meant overwriting someone else's.
    */
   const draftScript = useCallback(
-    async (project: string, total: number) => {
+    async (project: string, total: number, written: Record<string, string>) => {
+      const already = Object.entries(written).filter(([, text]) => text.trim())
       // How many pages have words on them is the progress — measured, not
       // estimated. The job reports stages, and "writing" is one stage however
       // long the deck is; the page count is the thing that actually moves.
       const fill = (written: api.PageView[]) => {
         const filled = written.filter((page) => page.narration)
-        setDrafting({ done: filled.length, total })
+        // Never below what the user typed: their pages are written, whether or
+        // not the backend has saved them yet, and a count that drops to zero
+        // the moment they press the button reads as "mine were thrown away".
+        setDrafting({ done: Math.max(filled.length, already.length), total })
         if (filled.length === 0) return 0
         setDrafts(Object.fromEntries(filled.map((p) => [String(p.index), p.narration])))
         return filled.length
       }
 
-      setDrafting({ done: 0, total })
-      const jobId = await api.draftScript(project)
+      setDrafting({ done: already.length, total })
+      const jobId = await api.draftScript(project, Object.fromEntries(already))
       const poll = window.setInterval(() => {
         void api
           .pages(project)
@@ -439,8 +450,10 @@ export function App() {
       let done = 0
       try {
         await api.watchJob(jobId, () => {})
-        // The last batch may have landed between polls.
+        // The last batch may have landed between polls — and so may the step
+        // that closes the record, which is the one naming what was written.
         done = fill(await api.pages(project).catch(() => []))
+        void api.ledger(project).then(showRecord).catch(() => undefined)
       } finally {
         window.clearInterval(poll)
         setDrafting(null)
@@ -491,36 +504,43 @@ export function App() {
         // nothing had happened yet.
         void api.ledger(prepared.project_id).then(showRecord).catch(() => undefined)
 
-        // Now the words, against the deck that is already on screen. No turn
-        // of its own: the deck card is what fills in, and it shows how far the
-        // writing has got — a second line counting the same pages next to it
-        // would be the same fact twice.
-        if (hasModel) {
-          try {
-            const written = await draftScript(prepared.project_id, prepared.pages.length)
-            if (written === 0) {
-              say({
-                role: 'assistant',
-                kind: 'text',
-                text: '讲稿没写出来，可以自己写，或者留空让占位文本顶上。',
-              })
-            }
-          } catch (error) {
-            say({
-              role: 'assistant',
-              kind: 'text',
-              text: `写讲稿失败：${api.describeError(error)}`,
-            })
-          }
-        }
+        // The words are the next step, and it is the user's to take: the
+        // boxes are empty and open, and 「生成讲稿」 fills in whatever is
+        // still blank when they press it.
       } catch (error) {
         amend(thinking, { pending: false, kind: 'text', text: `解析失败：${api.describeError(error)}` })
       } finally {
         setBusy(false)
       }
     },
-    [amend, draftScript, hasModel, loadProjects, say, showRecord],
+    [amend, hasModel, loadProjects, say, showRecord],
   )
+
+  /**
+   * 「生成讲稿」: fill in the pages nobody has written.
+   *
+   * What is in the boxes goes with it and comes back untouched. The model
+   * writes only the gaps, and it is shown the written pages on either side —
+   * a page written blind to its neighbours opens by introducing something the
+   * page before it just finished explaining.
+   */
+  const fillInScript = useCallback(async () => {
+    const project = projectId
+    const deck = artifacts?.deck
+    if (!project || !deck || drafting) return
+    try {
+      const written = await draftScript(project, deck.pages.length, drafts)
+      if (written === 0) {
+        say({
+          role: 'assistant',
+          kind: 'text',
+          text: '讲稿没写出来，可以自己写，或者留空让占位文本顶上。',
+        })
+      }
+    } catch (error) {
+      say({ role: 'assistant', kind: 'text', text: `写讲稿失败：${api.describeError(error)}` })
+    }
+  }, [artifacts, draftScript, drafting, drafts, projectId, say])
 
   /**
    * A deck dropped onto the window.
@@ -719,6 +739,7 @@ export function App() {
               // boxes: the same fields, a different sentence.
               generated: (artifacts?.scenes.length ?? 0) > 0,
               onRender: () => void startRender(),
+              onDraft: () => void fillInScript(),
             }}
             onShow={(id) => {
               void loadArtifacts(id, true)

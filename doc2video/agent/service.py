@@ -178,7 +178,8 @@ class Doc2VideoAgent:
         promises will fall back to placeholder text.
         """
         if draft:
-            plan = self.planner.draft_plan()
+            # Whatever the caller has written stays; the model fills the rest.
+            plan = self.planner.draft_plan(narrations)
         elif narrations is not None:
             plan = self.planner.render_plan(narrations)
         elif editing:

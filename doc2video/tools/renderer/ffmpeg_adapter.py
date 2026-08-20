@@ -46,7 +46,9 @@ class FFmpegAdapter(RendererAdapter):
             raise ValueError(f"场景 {plan.scene_id} 缺少可渲染的画面资源")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         video_filter = ",".join(self._build_filters(plan))
-        with ledger.call(f"renderer:{self.name}", plan.scene_id):
+        with ledger.call(
+            f"renderer:{self.name}", plan.scene_id, covers=[ledger.scene_key(plan.scene_id)]
+        ):
             ffmpeg.encode_still(
                 Path(plan.image),
                 out_path,

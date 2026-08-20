@@ -137,7 +137,11 @@ class DocumentSkill(Skill):
             # pages fell back to heuristics for no reason of their own.
             where = f"第 {batch[0].index}-{batch[-1].index} 页"
             try:
-                with ledger.call(self.llm.source, where):
+                with ledger.call(
+                    self.llm.source,
+                    where,
+                    covers=[ledger.page_key(p.index) for p in batch],
+                ):
                     result = DeckUnderstanding.model_validate(
                         self.llm.complete_json(
                             self._prompt(batch),

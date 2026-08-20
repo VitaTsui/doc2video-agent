@@ -48,6 +48,12 @@ class Artifact(BaseModel):
     text: str = ""
     # For a scene-scoped artifact, so the UI can group by page.
     scene_id: str = ""
+    # The page this came off, where there is one. Together with `scene_id`
+    # this is how an output finds the call that made it: a stage lists what it
+    # produced, a call says what it was working on, and without a key in
+    # common the reader gets every sub-step in one block and every output in
+    # another, and has to guess which produced which.
+    page: int | None = None
 
 
 class EntryKind(StrEnum):
@@ -89,6 +95,11 @@ class LedgerEntry(BaseModel):
     # Which run this belongs to, so a project's history stays separable after
     # several edits — "the first render" and "after I shortened page 3".
     run_id: str = ""
+    # For a call: the pages and scenes it was working on, as `page:7` /
+    # `scene:scn_x`. Outputs are collected once, at the end of the stage that
+    # produced them — this is what puts each one back beside the call that
+    # made it.
+    covers: list[str] = Field(default_factory=list)
 
 
 class Ledger(BaseModel):

@@ -25,7 +25,7 @@ import * as api from './api'
 import { ChevronIcon } from './Icon'
 import type { Connection } from './api'
 
-type Tab = 'models' | 'general'
+type Tab = 'models' | 'voice' | 'general'
 
 export function Settings({
   open,
@@ -121,6 +121,13 @@ export function Settings({
             onClick={() => setTab('models')}
           >
             模型
+          </button>
+          <button
+            type="button"
+            className={tab === 'voice' ? 'modal__tab modal__tab--on' : 'modal__tab'}
+            onClick={() => setTab('voice')}
+          >
+            语音
           </button>
           <button
             type="button"
@@ -256,6 +263,8 @@ export function Settings({
               )}
             </>
           )}
+
+          {tab === 'voice' && <VoiceSettings busy={busy} />}
 
           {tab === 'general' && (
             <>
@@ -537,5 +546,87 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
         <span>{children}</span>
       </div>
     </li>
+  )
+}
+
+/**
+ * Which voice the videos are spoken in, and how to get a better one.
+ *
+ * The packs differ in kind — one is built into the system, one is a model that
+ * has to be downloaded, one runs on someone else's computer — and a person
+ * choosing a voice does not care about that. What they do care about is stated
+ * on every row: what it costs to install, and whether it needs the network. A
+ * product that works on a train is a different product, and that is theirs to
+ * decide rather than ours to decide quietly.
+ */
+function VoiceSettings({ busy }: { busy: boolean }) {
+  const [state, setState] = useState<Awaited<ReturnType<typeof api.voicePacks>> | null>(null)
+  const [installing, setInstalling] = useState('')
+  const [failure, setFailure] = useState('')
+
+  const load = () => {
+    void api
+      .voicePacks()
+      .then(setState)
+      .catch((error: Error) => setFailure(error.message))
+  }
+  useEffect(load, [])
+
+  const install = async (pack: api.VoicePack) => {
+    setFailure('')
+    setInstalling(pack.id)
+    try {
+      await api.installVoicePack(pack.id)
+      load()
+    } catch (error) {
+      setFailure(api.describeError(error))
+    } finally {
+      setInstalling('')
+    }
+  }
+
+  return (
+    <>
+      <h2 className="modal__title">语音</h2>
+      <p className="muted">
+        换声音说一句话就行：「用播音腔讲」「换个女声」「语速慢一点」。这里是这台机器上有什么。
+      </p>
+
+      {failure && <p className="modal__error">{failure}</p>}
+      {state === null && <p className="muted">正在看这台机器有哪些声音…</p>}
+
+      {state?.packs.map((pack) => (
+        <div key={pack.id} className="pack">
+          <div className="pack__head">
+            <span className="pack__name">{pack.name}</span>
+            {pack.online && <span className="pack__tag">需联网</span>}
+            {pack.installed ? (
+              <span className="pack__tag pack__tag--on">已装</span>
+            ) : (
+              <Button
+                size="small"
+                loading={installing === pack.id}
+                disabled={busy || Boolean(installing)}
+                onClick={() => void install(pack)}
+              >
+                {`安装 ${Math.max(1, Math.round(pack.size / 1024 / 1024))}MB`}
+              </Button>
+            )}
+          </div>
+          <div className="muted pack__note">{pack.note}</div>
+          {pack.voices.length > 0 && (
+            <div className="pack__voices">
+              {pack.voices.map((voice) => (
+                <span key={voice.id} className="pack__voice">
+                  {voice.name}
+                  {voice.gender === 'female' && ' 女'}
+                  {voice.gender === 'male' && ' 男'}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </>
   )
 }

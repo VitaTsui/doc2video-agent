@@ -46,6 +46,13 @@ _tools: ContextVar[list[str] | None] = ContextVar("doc2video_ledger_tools", defa
 # The stage a call belongs under, carried the same way and for the same reason.
 _stage_seq: ContextVar[int] = ContextVar("doc2video_ledger_stage", default=0)
 
+# What the code running right now is working on — a page, a scene. Carried
+# rather than passed because the call that ends up being recorded is usually
+# several frames below the loop that knows which scene it is: voicing a page
+# is one call per speech unit, made inside the TTS tool, which has never heard
+# of scenes. Without this the outputs cannot be put back beside the calls.
+_covers: ContextVar[tuple[str, ...]] = ContextVar("doc2video_ledger_covers", default=())
+
 
 class Recorder:
     """Writes one project's ledger. Safe to share across a run's threads."""
@@ -97,6 +104,7 @@ class Recorder:
         tools: list[str] | None = None,
         skill: str = "",
         parent: int = 0,
+        covers: list[str] | None = None,
     ) -> LedgerEntry:
         """Write an entry under a number that may have been claimed earlier.
 
@@ -114,6 +122,7 @@ class Recorder:
             tools=tools or [],
             skill=skill,
             parent=parent,
+            covers=covers or [],
             run_id=self._run_id,
         )
         self._append(entry)
@@ -229,8 +238,36 @@ def used(tool: str) -> None:
         tools.append(tool)
 
 
+def page_key(page: int) -> str:
+    """How a page is named when a call claims it."""
+    return f"page:{page}"
+
+
+def scene_key(scene_id: str) -> str:
+    return f"scene:{scene_id}"
+
+
 @contextmanager
-def call(tool: str, detail: str = "", artifacts: list[Artifact] | None = None) -> Iterator[list]:
+def scope(*keys: str) -> Iterator[None]:
+    """Say what the code in this block is working on.
+
+    Everything recorded inside claims these pages and scenes, however deep it
+    is. Nests: a scene's scope holds while each of its speech units is written.
+    """
+    token = _covers.set(tuple(dict.fromkeys((*_covers.get(), *(k for k in keys if k)))))
+    try:
+        yield
+    finally:
+        _covers.reset(token)
+
+
+@contextmanager
+def call(
+    tool: str,
+    detail: str = "",
+    artifacts: list[Artifact] | None = None,
+    covers: list[str] | None = None,
+) -> Iterator[list]:
     """Record one call — a model request, a page rasterised, a scene voiced.
 
     The stage entry answers "was it voiced"; this answers "which scene took
@@ -267,6 +304,7 @@ def call(tool: str, detail: str = "", artifacts: list[Artifact] | None = None) -
             duration_s=time.monotonic() - started,
             artifacts=made,
             parent=_stage_seq.get(),
+            covers=list(dict.fromkeys((*_covers.get(), *(covers or [])))),
         )
 
 
@@ -295,9 +333,15 @@ def read(path: Path, limit: int = MAX_ENTRIES) -> list[LedgerEntry]:
 
 
 # -- helpers for the steps that produce things -----------------------------
-def file_artifact(label: str, path: str, kind: ArtifactKind, scene_id: str = "") -> Artifact:
-    return Artifact(label=label, kind=kind, path=path, scene_id=scene_id)
+def file_artifact(
+    label: str, path: str, kind: ArtifactKind, scene_id: str = "", page: int | None = None
+) -> Artifact:
+    return Artifact(label=label, kind=kind, path=path, scene_id=scene_id, page=page)
 
 
-def text_artifact(label: str, text: str, scene_id: str = "") -> Artifact:
-    return Artifact(label=label, kind=ArtifactKind.TEXT, text=text, scene_id=scene_id)
+def text_artifact(
+    label: str, text: str, scene_id: str = "", page: int | None = None
+) -> Artifact:
+    return Artifact(
+        label=label, kind=ArtifactKind.TEXT, text=text, scene_id=scene_id, page=page
+    )
