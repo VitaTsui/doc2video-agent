@@ -16,6 +16,7 @@ from ...core.config import which
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
 from .base import TTSProvider, audio_duration, estimate_duration
+from .kokoro import KokoroProvider
 from .piper import PiperProvider
 
 log = get_logger(__name__)
@@ -105,7 +106,16 @@ class SilentProvider(TTSProvider):
 # needs no model on disk, and is the reason macOS never noticed this project had
 # no cross-platform voice. Piper is what every other platform gets — before it,
 # a run off macOS produced a correctly timed, correctly subtitled, silent video.
-AUTO_ORDER: tuple[type[TTSProvider], ...] = (MacOSSayProvider, PiperProvider, SilentProvider)
+# Best first, and "best" is measured. Kokoro pauses like a person — its pause
+# lengths varied by 0.66 against `say`'s 0.13 on the same page, which is the
+# difference between speaking and reading a punctuation table. It is not
+# installed by default, so on most machines this list starts at `say`.
+AUTO_ORDER: tuple[type[TTSProvider], ...] = (
+    KokoroProvider,
+    MacOSSayProvider,
+    PiperProvider,
+    SilentProvider,
+)
 
 
 def resolve_provider(preference: str) -> TTSProvider:

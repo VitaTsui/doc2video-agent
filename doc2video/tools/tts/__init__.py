@@ -29,6 +29,15 @@ log = get_logger(__name__)
 # for 「女声」 is how people ask — so the mapping is stated once, here, for the
 # voices that ship with the system in Chinese.
 VOICE_GENDER = {
+    # Kokoro names its voices by language and gender: zf_* female, zm_* male.
+    "zf_xiaobei": "female",
+    "zf_xiaoni": "female",
+    "zf_xiaoxiao": "female",
+    "zf_xiaoyi": "female",
+    "zm_yunjian": "male",
+    "zm_yunxi": "male",
+    "zm_yunxia": "male",
+    "zm_yunyang": "male",
     "Tingting": "female",
     "Sinji": "female",
     "Meijia": "female",

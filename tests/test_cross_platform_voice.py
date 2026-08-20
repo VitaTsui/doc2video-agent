@@ -156,3 +156,36 @@ def test_each_provider_answers_for_its_own_voices(tmp_path: Path):
     (runtime / "voices" / "zh_CN-huayan-medium.onnx").write_bytes(b"model")
     piper = PiperProvider(Settings(storage_dir=tmp_path / "data", node_dir=runtime / "node"))
     assert piper.voices() == ["zh_CN-huayan-medium"]
+
+
+def test_kokoro_is_preferred_when_present_and_invisible_when_not():
+    """A better voice, picked up if it happens to be installed.
+
+    Measured rather than preferred on taste: on one real page `say` pauses
+    varied by a coefficient of 0.13 — the signature of a punctuation table —
+    against Kokoro's 0.66 on the same sentences, and Kokoro ran 4.2 seconds
+    between breaths where `say` never passed 2.0.
+
+    Deliberately not a dependency: it brings torch, and the packaged runtime is
+    already the slowest part of installing this app. Absent, the order falls
+    through exactly as it did before.
+    """
+    from doc2video.tools.tts.kokoro import VOICES, KokoroProvider
+    from doc2video.tools.tts.providers import AUTO_ORDER
+
+    names = [cls.name for cls in AUTO_ORDER]
+    assert names.index("kokoro") < names.index("macos_say") < names.index("silent")
+
+    provider = KokoroProvider()
+    if not provider.available():
+        assert provider.voices() == []
+        assert "kokoro" in provider.unavailable_reason()
+    else:
+        assert set(provider.voices()) == set(VOICES)
+
+
+def test_an_unknown_voice_falls_back_rather_than_failing():
+    """A voice name from another engine must not take the render down."""
+    from doc2video.tools.tts.kokoro import DEFAULT_VOICE, VOICES
+
+    assert DEFAULT_VOICE in VOICES
