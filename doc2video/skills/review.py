@@ -100,6 +100,7 @@ class ReviewSkill(Skill):
         # look at: before a render there is no picture to have an opinion about.
         if self.project.render.scene_clips:
             findings.extend(render_review.check_frames(self.project, self.ctx.asset_path))
+            findings.extend(render_review.check_actions(self.project, self.ctx.asset_path))
         self.project.review = findings
         self.project.quality = self._score(findings)
 
@@ -143,9 +144,15 @@ class ReviewSkill(Skill):
                 # A scene that came out empty is not a lesser video, it is a
                 # missing one — and unlike everything else here, nothing in the
                 # project can tell you it happened.
-                score=_ratio_score(by_kind.get("blank_frame", 0), max(len(scenes), 1)),
+                score=_ratio_score(
+                    by_kind.get("blank_frame", 0) + by_kind.get("action_not_visible", 0),
+                    max(len(scenes), 1),
+                ),
                 weight=0.20,  # with completeness, half the score is "is there a video"
-                detail=f"{by_kind.get('blank_frame', 0)} 个场景画面是空的",
+                detail=(
+                    f"{by_kind.get('blank_frame', 0)} 个场景画面是空的，"
+                    f"{by_kind.get('action_not_visible', 0)} 个动作没画出来"
+                ),
             ),
             QualityDimension(
                 name="completeness",

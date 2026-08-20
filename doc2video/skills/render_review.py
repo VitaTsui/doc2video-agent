@@ -304,3 +304,154 @@ def _brightest_moment(clip: Path) -> float | None:
             best = spread if best is None else max(best, spread)
             low = None
     return best
+
+
+# A patch of untouched slide changes by this much or less when the camera is
+# holding still — which, on a rendered slide, means not at all.
+STILL_ENOUGH = 6.0
+# Below this the target did not change: nothing was drawn on it.
+ACTION_MIN_CHANGE = 8.0
+
+
+def check_actions(project: VideoProject, clip_path) -> list[ReviewFinding]:
+    """Highlights and pointers the renderer was told to draw but did not.
+
+    The model review can say the action points at an element that exists. It
+    cannot say the renderer drew anything: an opacity that resolved to zero, a
+    component that threw, a box positioned off screen all leave a project where
+    every action is valid and a video where nothing is pointed at.
+
+    Only under a still camera. While the frame is zooming or fading every pixel
+    differs, and a highlight is a thin outline — measured against a drifting
+    frame the outline changes *less* than the background does, and the check
+    reports the opposite of the truth. Verified against a crop of the real
+    frame: the outline was plainly there, and the naive difference called it
+    missing.
+    """
+    findings: list[ReviewFinding] = []
+    starts = {clip.scene_id: clip.start for clip in project.timeline.video}
+    checked = skipped = 0
+
+    for action in project.timeline.actions:
+        if action.type not in (ActionType.HIGHLIGHT, ActionType.POINTER) or action.area is None:
+            continue
+        clip = project.render.scene_clips.get(action.scene_id)
+        if not clip:
+            continue
+        path = clip_path(clip)
+        if path is None or not Path(path).exists():
+            continue
+
+        offset = starts.get(action.scene_id, 0.0)
+        before = action.start - offset - 0.3
+        during = action.start - offset + min(action.end - action.start, 2.0) * 0.6
+        if before < 0:
+            continue
+        # Whether the camera is holding still is measured, not inferred. A
+        # zoom keeps easing after its window closes, so an action that the
+        # timeline says is clear of one can still sit on a drifting frame —
+        # and on a drifting frame every patch changes more than a thin
+        # outline does, which is how the first version came to report the
+        # opposite of what a crop of the same frame plainly showed.
+        noise = _changed(Path(path), _elsewhere(action.area), before, during)
+        if noise is None or noise > STILL_ENOUGH:
+            skipped += 1
+            continue
+        drawn = _changed(Path(path), action.area, before, during)
+        if drawn is None:
+            continue
+        checked += 1
+        if drawn < ACTION_MIN_CHANGE:
+            findings.append(
+                ReviewFinding(
+                    severity="warning",
+                    kind="action_not_visible",
+                    scene_id=action.scene_id,
+                    message=(
+                        f"{action.type.value} 指向 {action.target or '画面'}，"
+                        f"但画面静止时那一块没有任何变化（{drawn:.0f}）——没画出来"
+                    ),
+                )
+            )
+    # Said out loud because the coverage is partial and the reason is not
+    # obvious: most actions sit on a frame that is still easing out of a zoom,
+    # and those cannot be judged this way at all.
+    log.info("动作可见性：验证 %d 个，因画面在动跳过 %d 个", checked, skipped)
+    return findings
+
+
+def _elsewhere(area: BBox) -> BBox:
+    """A patch the same size, somewhere the action is not — the noise floor."""
+    x = 0.05 if area.x > 0.4 else 0.95 - area.w
+    y = 0.05 if area.y > 0.4 else 0.95 - area.h
+    return BBox(x=max(x, 0.0), y=max(y, 0.0), w=area.w, h=area.h)
+
+
+def _changed(clip: Path, area: BBox, before: float, during: float) -> float | None:
+    """Peak brightness change inside `area` between two moments of one clip.
+
+    Peak rather than average: an outline is a few pixels wide, and averaged
+    over its box it disappears into the unchanged middle.
+    """
+    frames = [_crop(clip, area, at) for at in (before, during)]
+    if any(frame is None for frame in frames):
+        return None
+    cmd = [
+        ffmpeg.binary_path(),
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-i",
+        str(frames[0]),
+        "-i",
+        str(frames[1]),
+        "-filter_complex",
+        "[0][1]blend=all_mode=difference,signalstats,metadata=print:file=-",
+        "-frames:v",
+        "1",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    finally:
+        for frame in frames:
+            if frame is not None:
+                frame.unlink(missing_ok=True)
+    peak = re.search(r"\.YMAX=([0-9.]+)", result.stdout)
+    return float(peak.group(1)) if peak else None
+
+
+def _crop(clip: Path, area: BBox, at: float) -> Path | None:
+    """One frame of `clip` at `at`, cut down to `area`. Caller deletes it."""
+    import tempfile
+
+    handle = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    handle.close()
+    out = Path(handle.name)
+    crop = (
+        f"crop=iw*{area.w:.6f}:ih*{area.h:.6f}:iw*{area.x:.6f}:ih*{area.y:.6f}"
+    )
+    cmd = [
+        ffmpeg.binary_path(),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(clip),
+        "-vf",
+        f"select='gte(t,{max(at, 0.0):.3f})',{crop}",
+        "-frames:v",
+        "1",
+        str(out),
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=120, check=True)
+    except (subprocess.SubprocessError, OSError):
+        out.unlink(missing_ok=True)
+        return None
+    return out if out.exists() and out.stat().st_size > 0 else None

@@ -175,3 +175,49 @@ def test_a_missing_clip_is_not_reported_as_blank(tmp_path):
     project = _project(_element(y=200))
     project.render.scene_clips = {"scene_01": "gone.mp4"}
     assert render_review.check_frames(project, lambda rel: tmp_path / rel) == []
+
+
+def _clip_with_box(path, *, draw: bool) -> None:
+    """A still white clip where a black box does — or does not — appear at 2s."""
+    import subprocess
+
+    from doc2video.tools.media_binaries import ffmpeg
+
+    chain = "drawbox=x=40:y=40:w=80:h=40:color=black@1:t=fill:enable='gte(t,2)'" if draw else "null"
+    subprocess.run(
+        [ffmpeg().path, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+         "-i", "color=c=white:s=320x180:d=4:r=10", "-vf", chain, "-pix_fmt", "yuv420p", str(path)],
+        check=True,
+    )
+
+
+def _with_action(tmp_path, *, draw: bool) -> VideoProject:
+    from doc2video.schemas import VideoClip
+
+    clip = tmp_path / ("drawn.mp4" if draw else "missing.mp4")
+    _clip_with_box(clip, draw=draw)
+
+    project = _project(_element(y=200))
+    project.scenes = [Scene(scene_id="scene_01", source_page=1, narration="一", duration=4)]
+    project.render.scene_clips = {"scene_01": clip.name}
+    project.timeline.video = [VideoClip(start=0.0, end=4.0, scene_id="scene_01", asset="")]
+    project.timeline.actions = [
+        ActionCue(
+            start=2.0, end=4.0, type=ActionType.HIGHLIGHT, scene_id="scene_01",
+            target="e1", area=BBox(x=0.10, y=0.20, w=0.30, h=0.25),
+        )
+    ]
+    return project
+
+
+def test_an_action_the_renderer_never_drew_is_caught(tmp_path):
+    """The model review can only say the action was valid, never that it happened."""
+    project = _with_action(tmp_path, draw=False)
+    findings = render_review.check_actions(project, lambda rel: tmp_path / rel)
+
+    assert [f.kind for f in findings] == ["action_not_visible"]
+
+
+def test_an_action_that_was_drawn_is_left_alone(tmp_path):
+    project = _with_action(tmp_path, draw=True)
+    assert render_review.check_actions(project, lambda rel: tmp_path / rel) == []
