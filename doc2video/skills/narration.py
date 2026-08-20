@@ -98,26 +98,51 @@ class NarrationSkill(Skill):
     name = "presentation-narration"
     description = "生成适合目标受众和时长的讲稿"
 
-    def run(self) -> None:
+    def run(self, written: dict[int, str] | None = None) -> None:
         """Write the script ourselves — the path taken when nobody supplied one.
 
         With a model configured this is a real script. Without one it is
         placeholder text: renderable, correctly timed, and meaningless — which
         is why it is recorded as a degradation rather than passed off as a
         result. The caller-written path (``apply``) remains the primary one.
+
+        ``written`` is the half-written case, which is the common one: someone
+        has typed the pages they care about and wants the rest filled in. Those
+        pages are not rewritten, not trimmed, and not shown to the model as
+        something to improve — they are shown as context, because a page whose
+        neighbours are already written has to continue from them rather than
+        open on its own.
         """
         pages = self._pages()
         if not pages:
             return
         budgets = self._allocate_budget(pages)
-        drafts = self.try_llm(
-            lambda: self._write_with_model(pages, budgets),
-            lambda: self._placeholder(pages, budgets),
-            what="讲稿",
-        )
-        drafts = self._fit_duration(pages, budgets, drafts)
+        kept = self._kept(pages, written)
+        if len(kept) == len(pages):
+            # Nothing to write. Still worth running: the text has to be split
+            # into segments and timed before anything downstream can use it.
+            drafts = {index: _as_draft(index, text) for index, text in kept.items()}
+        else:
+            drafts = self.try_llm(
+                lambda: self._write_with_model(pages, budgets, kept),
+                lambda: self._placeholder(pages, budgets, kept),
+                what="讲稿",
+            )
+        drafts = self._fit_duration(pages, budgets, drafts, frozen=set(kept))
         self._build_scenes(pages, drafts)
-        self.log.info("讲稿完成：%d 个场景", len(self.project.scenes))
+        self.log.info(
+            "讲稿完成：%d 个场景（其中 %d 页是人写的）", len(self.project.scenes), len(kept)
+        )
+
+    @staticmethod
+    def _kept(pages: list[DocumentPage], written: dict[int, str] | None) -> dict[int, str]:
+        """The pages someone has actually written, in page order."""
+        indexes = {page.index for page in pages}
+        return {
+            index: text.strip()
+            for index, text in sorted((written or {}).items())
+            if index in indexes and text and text.strip()
+        }
 
     # -- fitting --------------------------------------------------------
     def _fit_duration(
@@ -125,6 +150,7 @@ class NarrationSkill(Skill):
         pages: list[DocumentPage],
         budgets: dict[int, float],
         drafts: dict[int, PageNarration],
+        frozen: set[int] | None = None,
     ) -> dict[int, PageNarration]:
         """Bring the script back to the length that was asked for.
 
@@ -137,6 +163,10 @@ class NarrationSkill(Skill):
         about, and it makes a long script into a rushed one rather than a
         shorter one. Pages are compressed instead, worst overrun first, and the
         ones the user marked as important are compressed last.
+
+        ``frozen`` pages are never cut. Someone wrote those words on purpose,
+        and silently deleting a sentence out of them would be the worst thing
+        this function could do — the overrun is the model's to pay for.
         """
         target = float(self.project.intent.duration)
         if target <= 0 or not drafts:
@@ -155,10 +185,11 @@ class NarrationSkill(Skill):
         # Whose fault it is, most-to-least: how far past its own budget a page
         # ran, discounted by how much the user said it matters.
         emphasis = set(self.project.intent.emphasis_pages)
+        frozen = frozen or set()
         over = []
         for page in pages:
             draft = drafts.get(page.index)
-            if draft is None:
+            if draft is None or page.index in frozen:
                 continue
             allowed = budgets.get(page.index, 0.0)
             excess = spoken(draft.narration) - allowed
@@ -191,13 +222,20 @@ class NarrationSkill(Skill):
         return trimmed
 
     def _placeholder(
-        self, pages: list[DocumentPage], budgets: dict[int, float]
+        self,
+        pages: list[DocumentPage],
+        budgets: dict[int, float],
+        kept: dict[int, str] | None = None,
     ) -> dict[int, PageNarration]:
         # No degradation recorded here: try_llm already logged one, with the
         # reason attached. A second record for the same event would double the
         # count that cross-run metrics compare.
-        self.log.warning("使用占位讲稿（成片可渲染但内容无意义）：%d 页", len(pages))
-        return self._write_heuristically(pages, budgets)
+        kept = kept or {}
+        blanks = [page for page in pages if page.index not in kept]
+        self.log.warning("使用占位讲稿（成片可渲染但内容无意义）：%d 页", len(blanks))
+        drafts = {index: _as_draft(index, text) for index, text in kept.items()}
+        drafts.update(self._write_heuristically(blanks, budgets))
+        return drafts
 
     def apply(self, narrations: dict[int, str]) -> list[int]:
         """Adopt caller-written narration, keyed by page index.
@@ -299,7 +337,11 @@ class NarrationSkill(Skill):
             self.log.warning("没有模型，无法按「%s」改写场景 %s", instruction, scene.scene_id)
 
         def rewrite() -> None:
-            with ledger.call(self.llm.source, f"改写 {scene.scene_id}"):
+            with ledger.call(
+                self.llm.source,
+                f"改写 {scene.scene_id}",
+                covers=[ledger.scene_key(scene.scene_id)],
+            ):
                 result = self.llm.complete_json(
                     self._revise_prompt(scene, page, instruction, budget),
                     schema=model_schema(PageNarration),
@@ -386,7 +428,10 @@ class NarrationSkill(Skill):
 
     # -- model path -----------------------------------------------------
     def _write_with_model(
-        self, pages: list[DocumentPage], budgets: dict[int, float]
+        self,
+        pages: list[DocumentPage],
+        budgets: dict[int, float],
+        kept: dict[int, str] | None = None,
     ) -> dict[int, PageNarration]:
         """Write the whole deck in batches.
 
@@ -395,21 +440,38 @@ class NarrationSkill(Skill):
         from nothing. Batched rather than all-at-once because a long deck
         overruns the output budget, and a truncated reply loses whole pages.
 
+        Pages in ``kept`` are already written. They stay in their batch — that
+        is how the model sees what the page before and after actually says —
+        but they are asked for back. A batch where every page is written is
+        skipped entirely, which is what makes "fill in the three I left blank"
+        cost three pages of writing rather than thirty.
+
         Whatever the model does not return is filled in heuristically. A model
         that skips page 7 must not cost page 7 its narration.
         """
-        drafts: dict[int, PageNarration] = {}
+        kept = kept or {}
+        drafts: dict[int, PageNarration] = {
+            index: _as_draft(index, text) for index, text in kept.items()
+        }
         for start in range(0, len(pages), BATCH_SIZE):
             batch = pages[start : start + BATCH_SIZE]
-            with ledger.call(self.llm.source, f"第 {batch[0].index}-{batch[-1].index} 页"):
+            if all(page.index in kept for page in batch):
+                continue
+            with ledger.call(
+                self.llm.source,
+                f"第 {batch[0].index}-{batch[-1].index} 页",
+                covers=[ledger.page_key(page.index) for page in batch if page.index not in kept],
+            ):
                 result = self.llm.complete_json(
-                    self._prompt(batch, budgets, position=start),
+                    self._prompt(batch, budgets, position=start, kept=kept, pages=pages),
                     schema=model_schema(NarrationResult),
                     system=load_prompt("narration"),
                     max_tokens=self.ctx.settings.llm_max_tokens,
                 )
             for page in NarrationResult.model_validate(result).pages:
-                if page.narration.strip():
+                # A model that rewrites a page it was told to leave alone gets
+                # ignored rather than obeyed.
+                if page.narration.strip() and page.index not in kept:
                     drafts[page.index] = page
             # Save what has been written so far. A deck takes several calls to
             # write and each one is a wait; a reader watching the pages fill in
@@ -429,7 +491,13 @@ class NarrationSkill(Skill):
         return {index: drafts[index] for index in sorted(wanted)}
 
     def _prompt(
-        self, batch: list[DocumentPage], budgets: dict[int, float], *, position: int
+        self,
+        batch: list[DocumentPage],
+        budgets: dict[int, float],
+        *,
+        position: int,
+        kept: dict[int, str] | None = None,
+        pages: list[DocumentPage] | None = None,
     ) -> str:
         document = self.project.document
         intent = self.project.intent
@@ -443,12 +511,31 @@ class NarrationSkill(Skill):
             f"语气：{intent.tone}\n"
             f"额外要求：{intent.instructions or '（无）'}",
             "",
-            f"# 需要写讲稿的页面（全文第 {position + 1} 页起，共 {len(budgets)} 页）",
         ]
+        kept = kept or {}
+        if kept:
+            lines += [
+                "# 这次的任务：补齐没写的页面",
+                "下面标了「已写好」的页面是人自己写的。原样保留，不要改写、不要润色，"
+                "也不要在结果里输出它们。你要写的是标了「待补写」的页面，"
+                "并且要跟前后已写好的内容接得上：不重复它们讲过的话，"
+                "承接它们的说法和称呼，转场自然。",
+                "",
+            ]
+            if before := self._nearest_written(pages, kept, batch[0].index, back=True):
+                lines += [f"# 上文（第 {before[0]} 页，已写好，结尾）", _tail(before[1], 200), ""]
+            if after := self._nearest_written(pages, kept, batch[-1].index, back=False):
+                lines += [f"# 下文（第 {after[0]} 页，已写好，开头）", _truncate(after[1], 200), ""]
+        lines.append(f"# 页面（全文第 {position + 1} 页起，共 {len(budgets)} 页）")
         for page in batch:
+            mark = "已写好" if page.index in kept else ("待补写" if kept else "")
             lines.append(
                 f"\n## 第 {page.index} 页｜{page.page_type.value}｜{page.title or '无标题'}"
+                + (f"｜{mark}" if mark else "")
             )
+            if text := kept.get(page.index):
+                lines.append(f"已写好的讲稿：{text}")
+                continue
             if flow := _flow_of(page):
                 # The order the arrows go, which is the order the page has to
                 # be explained in. Given to the writer rather than used to
@@ -471,6 +558,28 @@ class NarrationSkill(Skill):
                     f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 120)}" for e in elements
                 )
         return "\n".join(lines)
+
+    @staticmethod
+    def _nearest_written(
+        pages: list[DocumentPage] | None,
+        kept: dict[int, str],
+        edge: int,
+        *,
+        back: bool,
+    ) -> tuple[int, str] | None:
+        """The written page just outside this batch, on one side.
+
+        The batch itself carries most of the continuity. This carries the rest:
+        the page before the batch and the page after it are what the first and
+        last pages of the batch have to join onto, and they are usually in a
+        different call.
+        """
+        order = [page.index for page in (pages or [])]
+        candidates = [i for i in order if (i < edge if back else i > edge) and i in kept]
+        if not candidates:
+            return None
+        index = max(candidates) if back else min(candidates)
+        return index, kept[index]
 
     # -- heuristic path -------------------------------------------------
     def _write_heuristically(
@@ -585,6 +694,17 @@ class NarrationSkill(Skill):
             NarrationSegment(id=f"{prefix}_s{i:02d}", text=part)
             for i, part in enumerate(parts, start=1)
         ]
+
+
+def _as_draft(index: int, text: str) -> PageNarration:
+    """Hand-written text as a draft. Segments are cut later, by the same
+    splitter the model's own text goes through — there is no reason for a page
+    someone typed to be segmented differently from one that was generated."""
+    return PageNarration(index=index, narration=text, segments=[])
+
+
+def _tail(text: str, limit: int) -> str:
+    return text if len(text) <= limit else "…" + text[-limit:]
 
 
 def _truncate(text: str, limit: int) -> str:

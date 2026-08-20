@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 
+from ..core import ledger
 from ..core.logging import get_logger
 from ..schemas import Scene
 from ..tools.tts import TTSTool
@@ -47,17 +48,21 @@ class VoiceSkill(Skill):
                 continue
 
             out_path = audio_dir / f"{scene.scene_id}.wav"
-            result = self.tts.synthesize(
-                scene.narration,
-                out_path,
-                sentences=[s.text for s in scene.segments] or [scene.narration],
-                # The writer's own mark on the sentence that matters: it is
-                # what decides where the beats go.
-                emphasis=[s.emphasis for s in scene.segments],
-                pronunciation=self.project.intent.pronunciation,
-                voice=self.project.intent.voice,
-                rate=self.project.intent.speech_rate,
-            )
+            # A page is spoken in several units, each its own call, made inside
+            # the TTS tool — which knows about text and nothing about scenes.
+            # This is where the scene is known, so this is where it is said.
+            with ledger.scope(ledger.scene_key(scene.scene_id)):
+                result = self.tts.synthesize(
+                    scene.narration,
+                    out_path,
+                    sentences=[s.text for s in scene.segments] or [scene.narration],
+                    # The writer's own mark on the sentence that matters: it is
+                    # what decides where the beats go.
+                    emphasis=[s.emphasis for s in scene.segments],
+                    pronunciation=self.project.intent.pronunciation,
+                    voice=self.project.intent.voice,
+                    rate=self.project.intent.speech_rate,
+                )
 
             # Silence at both ends: the page arrives and settles before the
             # narrator starts, and the last word lands before the next slide.

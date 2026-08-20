@@ -172,7 +172,9 @@ class Executor:
         project = self.project
         if stage is Stage.PARSE:
             return [
-                ledger.file_artifact(f"第 {page.index} 页", page.image_path, ArtifactKind.IMAGE)
+                ledger.file_artifact(
+                    f"第 {page.index} 页", page.image_path, ArtifactKind.IMAGE, page=page.index
+                )
                 for page in project.document.ordered_pages()
                 if page.image_path
             ]
@@ -181,13 +183,17 @@ class Executor:
                 ledger.text_artifact(
                     f"第 {page.index} 页｜{page.page_type.value}",
                     page.summary or "（无摘要）",
+                    page=page.index,
                 )
                 for page in project.document.ordered_pages()
             ]
         if stage is Stage.NARRATE:
             return [
                 ledger.text_artifact(
-                    f"第 {scene.source_page} 页讲稿", scene.narration, scene.scene_id
+                    f"第 {scene.source_page} 页讲稿",
+                    scene.narration,
+                    scene.scene_id,
+                    page=scene.source_page,
                 )
                 for scene in project.scenes
             ]
@@ -198,6 +204,7 @@ class Executor:
                     scene.audio.path,
                     ArtifactKind.AUDIO,
                     scene.scene_id,
+                    page=scene.source_page,
                 )
                 for scene in project.scenes
                 if scene.audio.path
@@ -212,6 +219,7 @@ class Executor:
                     )
                     or "（这一页没有镜头动作）",
                     scene.scene_id,
+                    page=scene.source_page,
                 )
                 for scene in project.scenes
             ]
@@ -227,7 +235,11 @@ class Executor:
         if stage is Stage.RENDER:
             artifacts = [
                 ledger.file_artifact(
-                    f"第 {scene.source_page} 页片段", clip, ArtifactKind.VIDEO, scene.scene_id
+                    f"第 {scene.source_page} 页片段",
+                    clip,
+                    ArtifactKind.VIDEO,
+                    scene.scene_id,
+                    page=scene.source_page,
                 )
                 for scene in project.scenes
                 if (clip := project.render.scene_clips.get(scene.scene_id))
@@ -306,10 +318,13 @@ class Executor:
                         scene, instruction, plan.scene_durations.get(scene_id, 0.0)
                     )
             return
-        if plan.narrations:
+        if plan.adopts_script:
+            # Rendering someone's finished script: take it as it is.
             skill.apply(plan.narrations)
         else:
-            skill.run()
+            # Drafting. Whatever came with the plan is what the user already
+            # typed — kept as written, and used as context for the rest.
+            skill.run(plan.narrations)
 
     def _stage_voice(self, plan: ExecutionPlan) -> None:
         VoiceSkill(self.ctx).run(force=plan.force_voice, progress=self._progress)

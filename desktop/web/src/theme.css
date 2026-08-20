@@ -1286,13 +1286,35 @@ body {
   padding-left: 10px;
 }
 
+/* A sub-step now opens onto its own output, so the row is a button. It keeps
+   looking like a line of a list: a whole row of buttons down the panel would
+   read as a toolbar, and only one of them is ever worth pressing. */
 .ledger__call {
   display: flex;
+  width: 100%;
   gap: 8px;
   align-items: baseline;
   padding: 3px 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+.ledger__call:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.ledger__made {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 8px 12px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
 }
 
 /* While the model writes: the count and a bar in place of the button, taking
@@ -1318,6 +1340,39 @@ body {
    32px square laid out as a grid to centre one glyph; widening it and adding
    padding left the label sitting off to one side, because the grid area it
    was being centred in was still the width of the text. */
+/* Second, and quieter than 「开始生成」: writing the script is a step you can
+   take twice, rendering is the one that costs minutes. An outline against the
+   filled accent next to it says which is which without a word. */
+.deckgate__draft {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  border: 1px solid var(--line-strong, var(--line));
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  border-radius: 999px;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+
+.deckgate__draft:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.deckgate__draft:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* With the draft button present it is no longer the one pushed to the right —
+   they travel together, at the end of the row. */
+.deckgate__draft + .deckgate__go {
+  margin-left: 8px;
+}
+
 .deckgate__go {
   display: inline-flex;
   align-items: center;

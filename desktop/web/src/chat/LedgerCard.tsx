@@ -91,6 +91,7 @@ function Step({
   calls: LedgerEntry[]
 }) {
   const [open, setOpen] = useState(false)
+  const { claimed, loose } = pairUp(entry, calls)
   const mark = KIND_MARK[entry.kind] ?? entry.kind
   const failed = entry.status === 'failed'
   const openable = entry.artifacts.length > 0 || calls.length > 0
@@ -146,19 +147,101 @@ function Step({
           {calls.length > 0 && (
             <div className="ledger__calls">
               {calls.map((one) => (
-                <div key={one.seq} className="ledger__call">
-                  <span style={{ color: one.status === 'failed' ? '#b0562f' : 'inherit' }}>
-                    {one.name}
-                  </span>
-                  {one.detail && <span className="muted">{one.detail}</span>}
-                  <span className="muted" style={{ marginLeft: 'auto' }}>
-                    {one.duration_s >= 0.05 ? `${one.duration_s.toFixed(1)}s` : ''}
-                  </span>
-                </div>
+                <CallRow
+                  key={one.seq}
+                  projectId={projectId}
+                  call={one}
+                  made={claimed.get(one.seq) ?? []}
+                />
               ))}
             </div>
           )}
-          {entry.artifacts.map((artifact, index) => (
+          {/* Whatever no call claimed: the step made it itself, or made it
+              without a call worth recording. */}
+          {loose.map((artifact, index) => (
+            <ArtifactView key={index} projectId={projectId} artifact={artifact} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Put each output back beside the call that made it.
+ *
+ * Outputs are collected once, when the step ends, by reading the project — so
+ * a thirty-scene render arrives as thirty sub-steps in one block followed by
+ * thirty clips in another, and which clip came out of which call is left for
+ * the reader to work out from the labels. Every call says what it was working
+ * on (`page:7`, `scene:scn_x`) and every output says where it came from; this
+ * is the join.
+ *
+ * Anything unclaimed stays at the step — the 成片, the timeline, the review.
+ * Nothing is dropped and nothing is shown twice.
+ */
+function pairUp(entry: LedgerEntry, calls: LedgerEntry[]) {
+  const claimed = new Map<number, LedgerEntry['artifacts']>()
+  const taken = new Set<number>()
+
+  for (const call of calls) {
+    const mine = call.artifacts.slice()
+    if (call.covers?.length) {
+      const wanted = new Set(call.covers)
+      entry.artifacts.forEach((artifact, index) => {
+        if (taken.has(index)) return
+        const keys = [
+          artifact.scene_id ? `scene:${artifact.scene_id}` : '',
+          artifact.page != null ? `page:${artifact.page}` : '',
+        ].filter(Boolean)
+        if (keys.some((key) => wanted.has(key))) {
+          taken.add(index)
+          mine.push(artifact)
+        }
+      })
+    }
+    if (mine.length > 0) claimed.set(call.seq, mine)
+  }
+
+  return { claimed, loose: entry.artifacts.filter((_, index) => !taken.has(index)) }
+}
+
+/** One sub-step, with what it produced folded underneath it. */
+function CallRow({
+  projectId,
+  call,
+  made,
+}: {
+  projectId: string
+  call: LedgerEntry
+  made: LedgerEntry['artifacts']
+}) {
+  const [open, setOpen] = useState(false)
+  const failed = call.status === 'failed'
+
+  return (
+    <div className="ledger__callbox">
+      <button
+        type="button"
+        className="ledger__call"
+        disabled={made.length === 0}
+        style={{ cursor: made.length > 0 ? 'pointer' : 'default' }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span style={{ color: failed ? '#b0562f' : 'inherit' }}>{call.name}</span>
+        {call.detail && <span className="muted">{call.detail}</span>}
+        <span className="muted" style={{ marginLeft: 'auto' }}>
+          {[
+            made.length > 0 ? (open ? '收起' : `${made.length} 项`) : '',
+            call.duration_s >= 0.05 ? `${call.duration_s.toFixed(1)}s` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </span>
+      </button>
+      {open && (
+        <div className="ledger__made">
+          {made.map((artifact, index) => (
             <ArtifactView key={index} projectId={projectId} artifact={artifact} />
           ))}
         </div>
