@@ -42,6 +42,16 @@ MAX_POINTER_SPAN = 2.6
 # characters, the largest of them 342. Those become outlines instead, which
 # say "this block" without promising it is worth enlarging.
 MAX_ZOOM_CHARS = 40
+# The renderer will not push past this, so a target's size after zooming is
+# known before the zoom is chosen. Kept in step with `MAX_SCALE` in
+# `renderer/src/components/useCameraTransform.ts`; a test asserts they agree.
+RENDER_MAX_SCALE = 3.0
+# How much of the frame a target has to fill once the camera has done all it
+# can. Below this the push buys nothing: the label is still too small to read
+# and the page around it — which is what told the viewer where the label was —
+# has been cropped away. Measured on a real deck: eight of twenty-six zooms
+# landed on things that stayed under five percent of the frame at full scale.
+MIN_ZOOM_RESULT = 0.05
 POINTER_DURATION = 1.4
 # Let the viewer hear the sentence start before the camera moves.
 AUDIO_LEAD = 0.3
@@ -152,7 +162,8 @@ class DirectorSkill(Skill):
         if segment.emphasis or element.kind in ZOOM_KINDS:
             # Unless it is a wall of text: a picture or a number rewards being
             # enlarged, a paragraph does not.
-            if element.kind in ZOOM_KINDS or len(element.text or "") <= MAX_ZOOM_CHARS:
+            wordy = element.kind not in ZOOM_KINDS and len(element.text or "") > MAX_ZOOM_CHARS
+            if not wordy and _zoom_pays_off(element, page):
                 return ActionType.ZOOM
             return ActionType.HIGHLIGHT
         span = max(segment.end - segment.start, 0.0)
@@ -263,6 +274,20 @@ class DirectorSkill(Skill):
 
         actions.sort(key=lambda a: a.at)
         return actions
+
+
+def _zoom_pays_off(element, page: DocumentPage) -> bool:
+    """Whether pushing in on this actually shows the viewer anything.
+
+    A zoom trades context for size: the page around the target is what said
+    where the target was, and the camera crops it away. That trade is only
+    worth making if the target ends up big enough to be worth looking at, and
+    for a small label it never does — at the renderer's largest push a box
+    covering two thousandths of the page still covers under two percent of the
+    frame. The viewer loses the page and gains nothing.
+    """
+    coverage = _coverage(element, page)
+    return coverage * RENDER_MAX_SCALE**2 >= MIN_ZOOM_RESULT
 
 
 def _is_banner(element, page: DocumentPage) -> bool:

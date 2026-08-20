@@ -266,3 +266,47 @@ def test_a_wall_of_text_is_outlined_rather_than_zoomed_into():
     assert DirectorSkill._pick_action(stressed, element("", ElementKind.CHART), page) is (
         ActionType.ZOOM
     )
+
+
+def test_a_target_too_small_to_be_worth_the_crop_is_not_zoomed():
+    """A zoom trades the page for the target, and sometimes gets nothing back.
+
+    The page around a label is what tells the viewer where the label is. Push
+    in and that goes away — worth it only if the target ends up big enough to
+    look at. For a small one it never does: at the renderer's largest push, a
+    box covering two thousandths of the page still covers under two percent of
+    the frame. Measured on a real deck, eight of twenty-six zooms were that.
+    """
+    from doc2video.schemas import BBox, DocumentPage, NarrationSegment, SlideElement
+    from doc2video.skills.director import DirectorSkill, _zoom_pays_off
+
+    page = DocumentPage(index=1, width=1920, height=1080)
+
+    def element(w: float, h: float) -> SlideElement:
+        return SlideElement(
+            id="e1", text="专报", bbox=BBox(x=100, y=100, w=w, h=h), label="专报"
+        )
+
+    tiny = element(60, 40)  # 0.12% of the page
+    fair = element(600, 300)  # 8.7%
+
+    assert not _zoom_pays_off(tiny, page)
+    assert _zoom_pays_off(fair, page)
+
+    stressed = NarrationSegment(id="s1", text="这里是重点。", emphasis=True, start=0, end=3)
+    assert DirectorSkill._pick_action(stressed, tiny, page) is not ActionType.ZOOM
+    assert DirectorSkill._pick_action(stressed, fair, page) is ActionType.ZOOM
+
+
+def test_the_largest_push_matches_what_the_renderer_will_do():
+    """The decision is made against a number the renderer owns.
+
+    Choosing a zoom because the target *would* be big enough at 3× and then
+    having the camera stop at 1.6× is deciding against a video nobody sees.
+    """
+    from pathlib import Path
+
+    from doc2video.skills.director import RENDER_MAX_SCALE
+
+    source = Path("renderer/src/components/useCameraTransform.ts").read_text(encoding="utf-8")
+    assert f"const MAX_SCALE = {int(RENDER_MAX_SCALE)}" in source
