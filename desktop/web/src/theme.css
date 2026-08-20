@@ -1178,11 +1178,16 @@ body {
 /* While the model writes: the count and a bar in place of the button, taking
    the space the button would have had so the row does not jump when it
    finishes and the button appears. */
+/* Its own line under the deck's name, not squeezed onto the end of it: this
+   is the only thing happening, and a progress reading tucked to the right of
+   a row reads as a footnote to the row rather than as the state of the page.
+   `flex-basis: 100%` breaks the line inside the wrapping row. */
 .deckgate__writing {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-left: auto;
+  flex-basis: 100%;
+  margin-top: 2px;
 }
 
 .deckgate__writing .bar {

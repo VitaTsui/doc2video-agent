@@ -77,6 +77,7 @@ export function MessageList({
                        shown disabled: there is nothing to start yet, and a
                        greyed 「开始生成」 invites the click it will refuse. */
                     <span className="deckgate__writing">
+                      <span className="spinner" />
                       <span className="muted">
                         {`正在写讲稿 ${deck.drafting.done} / ${deck.drafting.total} 页`}
                       </span>
