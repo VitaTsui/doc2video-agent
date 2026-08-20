@@ -1,0 +1,124 @@
+"""The voices this machine can speak with, as something to choose from.
+
+Three engines with nothing in common: one built into macOS, one a neural model
+that has to be downloaded, one a service on someone else's computer. A person
+choosing a voice does not care which of those it is — they care what it sounds
+like, whether it is installed, and what installing costs. So the difference is
+described here rather than shown.
+
+Two things are said plainly because they change what someone would pick: the
+size of the download, and whether the voice needs the network. A product that
+works on a train is not the same product as one that does not, and that is the
+user's call to make, not ours to make quietly.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from ...core.config import Settings, get_settings
+
+
+@dataclass
+class VoicePack:
+    """One engine, as a thing to be chosen and possibly installed."""
+
+    id: str
+    name: str
+    note: str
+    # Roughly what installing costs, in bytes. Zero for what is already there.
+    size: int
+    online: bool
+    installed: bool
+    voices: list[dict] = field(default_factory=list)
+    # What to install, when it is not installed. Empty when nothing can be.
+    packages: list[str] = field(default_factory=list)
+
+
+def catalogue(settings: Settings | None = None) -> list[VoicePack]:
+    """Every pack, installed or not, best first."""
+    from .. import tts
+    from .edge import DEFAULT_VOICE as EDGE_DEFAULT
+    from .edge import EdgeProvider
+    from .kokoro import KokoroProvider
+    from .piper import PiperProvider
+    from .providers import MacOSSayProvider
+
+    settings = settings or get_settings()
+
+    def described(provider, gendered: bool = True) -> list[dict]:
+        return [
+            {
+                "id": voice,
+                "name": voice.split("(")[0].strip(),
+                "gender": tts.gender_of(voice) if gendered else None,
+            }
+            for voice in provider.voices()
+        ]
+
+    edge, kokoro = EdgeProvider(), KokoroProvider()
+    system, piper = MacOSSayProvider(), PiperProvider(settings)
+
+    packs = [
+        VoicePack(
+            id="edge",
+            name="播音腔",
+            note=f"新闻播报的声音，默认 {EDGE_DEFAULT.split('-')[-1]}。合成时需要联网。",
+            size=1_000_000,
+            online=True,
+            installed=edge.available(),
+            voices=described(edge),
+            packages=["edge-tts"],
+        ),
+        VoicePack(
+            id="kokoro",
+            name="本地神经语音",
+            note="全程离线，停顿比系统声音自然，但带一点口音。",
+            size=400_000_000,
+            online=False,
+            installed=kokoro.available(),
+            voices=described(kokoro),
+            packages=["kokoro", "misaki[zh]"],
+        ),
+        VoicePack(
+            id="system",
+            name="系统自带",
+            note="装完就有，不联网，语速平稳。",
+            size=0,
+            online=False,
+            installed=system.available(),
+            voices=described(system),
+        ),
+        VoicePack(
+            id="piper",
+            name="Piper",
+            note="Windows / Linux 的兜底声音，随运行时一起装好。",
+            size=0,
+            online=False,
+            installed=piper.available(),
+            voices=described(piper, gendered=False),
+        ),
+    ]
+    # A pack with no voices on this machine is not a choice; it is a line of
+    # text explaining something the reader cannot act on.
+    return [pack for pack in packs if pack.installed or pack.packages]
+
+
+def payload(settings: Settings | None = None) -> dict:
+    settings = settings or get_settings()
+    packs = catalogue(settings)
+    return {
+        "current": settings.tts_voice,
+        "packs": [
+            {
+                "id": pack.id,
+                "name": pack.name,
+                "note": pack.note,
+                "size": pack.size,
+                "online": pack.online,
+                "installed": pack.installed,
+                "voices": pack.voices,
+            }
+            for pack in packs
+        ],
+    }

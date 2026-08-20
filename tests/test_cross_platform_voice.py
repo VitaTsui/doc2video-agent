@@ -259,5 +259,9 @@ def test_the_upgrade_is_a_command_and_not_something_a_render_does():
     # shelled out to `python -m pip`, which a uv-made environment does not have
     # — it failed on the developer's own checkout, which is where it was going
     # to fail for everyone.
-    installer = inspect.getsource(cli._install_into_runtime)
+    from doc2video.tools.tts.install import install_into_runtime
+
+    # Shared with the window, which offers the same thing: two copies would
+    # have drifted, and the second one would have had its own bugs.
+    installer = inspect.getsource(install_into_runtime)
     assert "uv" in installer and "ensurepip" in installer

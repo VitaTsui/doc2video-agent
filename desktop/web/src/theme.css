@@ -1157,6 +1157,76 @@ body {
   margin-top: 0;
 }
 
+/* Something went wrong in a settings pane, said where it happened rather than
+   in a toast that has already gone by the time anyone looks. */
+.modal__error {
+  color: #b0562f;
+  background: rgba(176, 86, 47, 0.08);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 8px;
+}
+
+/* One voice pack: what it is, what it costs, and what it can say. Laid out as
+   a block rather than a row because the three facts are of different kinds and
+   a row would make the reader scan across for each one. */
+.pack {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 10px;
+}
+
+.pack__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pack__name {
+  font-weight: 500;
+}
+
+/* The two facts worth seeing before choosing: whether it is here already, and
+   whether it needs the network. */
+.pack__tag {
+  font-size: 12px;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.pack__tag--on {
+  color: var(--accent);
+  border-color: var(--accent);
+  margin-left: auto;
+}
+
+.pack__head .ant-btn {
+  margin-left: auto;
+}
+
+.pack__note {
+  margin-top: 4px;
+  font-size: 12.5px;
+}
+
+.pack__voices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.pack__voice {
+  font-size: 12px;
+  color: var(--ink-soft);
+  background: var(--user-bg);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
 /* One step of the account. Two lines by design: what it is, then what it
    cost. Laid out as a single row it wrapped wherever the panel ran out —
    splitting `presentation-understanding` across lines with the timings caught

@@ -92,6 +92,32 @@ export interface LedgerEntry {
   parent: number
 }
 
+/** One engine, as something to choose and possibly install. */
+export interface VoicePack {
+  id: string
+  name: string
+  note: string
+  /** Roughly what installing costs, in bytes. Zero for what is already there. */
+  size: number
+  /** Needs the network to speak. Worth knowing before choosing it. */
+  online: boolean
+  installed: boolean
+  voices: { id: string; name: string; gender: string | null }[]
+}
+
+/** Every voice this machine can speak with, and what the rest would cost. */
+export async function voicePacks() {
+  return request<{ current: string; packs: VoicePack[] }>('/health/voices')
+}
+
+/** Put a pack into the runtime. Slow for the big one; it says its size first. */
+export async function installVoicePack(pack: string) {
+  return request<{ installed: boolean; voices: VoicePack['voices'] }>(
+    '/health/voices/install',
+    { method: 'POST', body: JSON.stringify({ pack }) },
+  )
+}
+
 /** How this project got made, step by step, with what each step produced. */
 export async function ledger(projectId: string) {
   const body = await request<{ items: LedgerEntry[] }>(`/projects/${projectId}/ledger`)

@@ -21,6 +21,7 @@ from .storage.run_log import RunLog, summarize
 from .tools.llm import llm_status
 from .tools.renderer import renderer_status
 from .tools.tts import TTSTool, voices_available
+from .tools.tts.install import install_into_runtime
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -178,7 +179,7 @@ def cmd_voice_upgrade(args) -> int:
             print("没有安装。想好了再跑一次这个命令。")
             return 0
 
-    if (failure := _install_into_runtime(packages)) is not None:
+    if (failure := install_into_runtime(packages)) is not None:
         print(failure, file=sys.stderr)
         return 1
 
@@ -193,39 +194,6 @@ def cmd_voice_upgrade(args) -> int:
         return 1
     print(f"装好了。启用方式：D2V_TTS_PROVIDER={how}")
     return 0
-
-
-def _install_into_runtime(packages: list[str]) -> str | None:
-    """Put `packages` into the interpreter running this. None on success.
-
-    Three ways, because the interpreter this ends up in may have none of them.
-    A uv-made environment ships no `pip` at all — and the packaged runtime is
-    built with `uv pip install --target`, so it does not have one either. The
-    first version of this command called `python -m pip` and failed on the
-    developer's own checkout, which is where it was going to fail for everyone.
-    """
-    import subprocess
-    import sys
-
-    from .core import programs
-
-    attempts: list[list[str]] = [[sys.executable, "-m", "pip", "install", *packages]]
-    if (uv := programs.find("uv")) is not None:
-        attempts.append([uv, "pip", "install", "--python", sys.executable, *packages])
-    # Last resort: put pip there, then use it.
-    attempts.append([sys.executable, "-m", "ensurepip", "--upgrade"])
-
-    errors: list[str] = []
-    for index, command in enumerate(attempts):
-        print("$ " + " ".join(command))
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-        if result.returncode == 0:
-            if command[-1] == "--upgrade":  # ensurepip: now retry the install
-                return _install_into_runtime(packages)
-            return None
-        errors.append(f"[{index + 1}] {(result.stderr or result.stdout).strip()[-300:]}")
-
-    return "安装失败，试过的三种方式都不行：\n" + "\n".join(errors)
 
 
 def cmd_doctor(args) -> int:

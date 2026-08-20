@@ -7,13 +7,21 @@ are available, and an operator should not have to read logs to find out.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ...core.config import dependency_report, filter_report, get_settings
 from ...tools.llm import llm_status
 from ...tools.llm.models import catalogue_payload
 from ...tools.renderer import renderer_status
 from ...tools.tts import TTSTool
+from ...tools.tts import packs as voice_packs
+from ...tools.tts.install import install_into_runtime
+
+
+class VoicePackIn(BaseModel):
+    pack: str
+
 
 router = APIRouter(tags=["health"])
 
@@ -21,6 +29,51 @@ router = APIRouter(tags=["health"])
 @router.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@router.get("/health/voices")
+def voices() -> dict:
+    """Which voices this machine can speak with, and what the rest would cost.
+
+    Part of the API because the window has to offer a choice and cannot work
+    out on its own which engines are installed — and because "installed" is not
+    a fixed property of a build: a pack can be added later, from here.
+    """
+    return voice_packs.payload(get_settings())
+
+
+@router.post("/health/voices/install")
+def install_voice(body: VoicePackIn) -> dict:
+    """Put a voice pack into the runtime this backend is running in.
+
+    Synchronous: the pack a person is most likely to choose is a megabyte, and
+    a request that returns before the download finishes leaves the window
+    saying "installed" about something that is not. The heavy one says its
+    size on the button, so the wait is not a surprise.
+    """
+    packs = {pack.id: pack for pack in voice_packs.catalogue(get_settings())}
+    pack = packs.get(body.pack)
+    if pack is None or not pack.packages:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "unknown_pack", "message": f"没有可安装的语音包：{body.pack}"},
+        )
+    if pack.installed:
+        return {"installed": True, "voices": pack.voices}
+
+    if (failure := install_into_runtime(pack.packages)) is not None:
+        raise HTTPException(
+            status_code=500, detail={"code": "install_failed", "message": failure[:400]}
+        )
+    # Ask again rather than assume: the install can succeed and the import
+    # still fail, and this route's whole job is to report which of those it is.
+    fresh = {item.id: item for item in voice_packs.catalogue(get_settings())}[body.pack]
+    if not fresh.installed:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "install_failed", "message": "装完了但仍然不可用"},
+        )
+    return {"installed": True, "voices": fresh.voices}
 
 
 @router.get("/health/capabilities")
