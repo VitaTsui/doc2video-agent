@@ -99,6 +99,10 @@ export interface LedgerEntry {
 
 /** One engine, as something to choose and possibly install. */
 export interface VoicePack {
+  /** How to add a voice of your own to this pack — different for each. */
+  how: string
+  /** The folder to put voice files in, for the one pack that takes files. */
+  folder: string
   id: string
   name: string
   note: string

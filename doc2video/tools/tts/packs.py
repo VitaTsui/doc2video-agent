@@ -33,6 +33,14 @@ class VoicePack:
     voices: list[dict] = field(default_factory=list)
     # What to install, when it is not installed. Empty when nothing can be.
     packages: list[str] = field(default_factory=list)
+    # How to add a voice of your own to this pack, in one line. The four packs
+    # have four different answers and none of them is "the same format": one
+    # is a service with no local model, one downloads its own weights, one is
+    # the operating system's, and one — Piper — is the only one that is a file
+    # you can put in a folder.
+    how: str = ""
+    # That folder, when there is one. Empty for the rest.
+    folder: str = ""
 
 
 def catalogue(settings: Settings | None = None) -> list[VoicePack]:
@@ -69,6 +77,7 @@ def catalogue(settings: Settings | None = None) -> list[VoicePack]:
             installed=edge.available(),
             voices=described(edge),
             packages=["edge-tts"],
+            how="云端音色，没有可下载的模型文件，也加不了自己的。",
         ),
         VoicePack(
             id="kokoro",
@@ -79,6 +88,7 @@ def catalogue(settings: Settings | None = None) -> list[VoicePack]:
             installed=kokoro.available(),
             voices=described(kokoro),
             packages=["kokoro", "misaki[zh]"],
+            how="音色是模型自带的这八个，装上就有，不单独加。",
         ),
         VoicePack(
             id="system",
@@ -88,6 +98,7 @@ def catalogue(settings: Settings | None = None) -> list[VoicePack]:
             online=False,
             installed=system.available(),
             voices=described(system),
+            how="想要更多：系统设置 → 辅助功能 → 朗读内容 → 系统声音，下载完这里自动出现。",
         ),
         VoicePack(
             id="piper",
@@ -97,6 +108,14 @@ def catalogue(settings: Settings | None = None) -> list[VoicePack]:
             online=False,
             installed=piper.available(),
             voices=described(piper, gendered=False),
+            # The one pack that is a file format. Voices are ONNX models —
+            # rhasspy/piper-voices on HuggingFace has a few hundred — and the
+            # provider already picks up whatever is in this directory. That
+            # has been true and undiscoverable: nothing in the window said the
+            # folder existed.
+            how="把 .onnx 和同名 .onnx.json 放进下面这个文件夹，重开设置就在了。"
+            "音色可以从 HuggingFace 的 rhasspy/piper-voices 下载。",
+            folder=str(settings.storage_dir / "voices"),
         ),
     ]
     # A pack with no voices on this machine is not a choice; it is a line of
@@ -164,6 +183,8 @@ def payload(settings: Settings | None = None) -> dict:
                 "online": pack.online,
                 "installed": pack.installed,
                 "voices": pack.voices,
+                "how": pack.how,
+                "folder": pack.folder,
             }
             for pack in packs
         ],

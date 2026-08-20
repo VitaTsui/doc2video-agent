@@ -1243,6 +1243,26 @@ body {
   border-color: var(--accent);
 }
 
+/* A path, so it reads as one and can be copied without a stray space. */
+.pack__folder {
+  margin-top: 4px;
+  padding: 4px 8px;
+  background: var(--user-bg);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.page-row__redo {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+
 /* 「看提示词」 sits at the end of the step's own line, quiet: it is worth
    opening once and not worth pressing every time. */
 .pack__open {

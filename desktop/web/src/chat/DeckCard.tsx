@@ -26,6 +26,8 @@ export function DeckCard({
   projectId,
   drafts,
   onDrafts,
+  onRedo,
+  redoing,
 }: {
   pages: PageView[]
   guide: GuideRow[]
@@ -38,6 +40,11 @@ export function DeckCard({
       where the person is looking; this panel is where the pages are read. */
   drafts: Record<string, string>
   onDrafts: (next: Record<string, string>) => void
+  /** Redo one page, once there is a video for the rest of them to stay in.
+   *  Absent before the first render, when the only thing to press is 开始生成. */
+  onRedo?: (page: number) => void
+  /** The page being redone right now, if any. */
+  redoing?: number | null
 }) {
   const [open, setOpen] = useState<number | null>(hasModel ? null : pages[0]?.index)
   const [preview, setPreview] = useState<number | null>(null)
@@ -123,6 +130,25 @@ export function DeckCard({
                   {over && (
                     <div className="muted" style={{ color: '#b0562f' }}>
                       比预算长不少，成片会超时长；音频生成后就改不动了。
+                    </div>
+                  )}
+                  {/* One page, redone where it was edited. The whole film is
+                      the alternative and it costs minutes: on a 30-page deck
+                      the first render took 263 seconds and redoing one page
+                      took 18 — every other page keeps the clip it already
+                      has. Without this button that saving had no way to be
+                      asked for from the window. */}
+                  {onRedo && (
+                    <div className="page-row__redo">
+                      <button
+                        type="button"
+                        className="deckgate__draft"
+                        disabled={locked || redoing !== null || !draft.trim()}
+                        onClick={() => onRedo(page.index)}
+                      >
+                        {redoing === page.index ? '正在重做…' : '重新生成这一页'}
+                      </button>
+                      <span className="muted">改完点它，只重做这一页，其余片段不动</span>
                     </div>
                   )}
                 </div>

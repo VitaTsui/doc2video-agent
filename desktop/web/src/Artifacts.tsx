@@ -55,6 +55,8 @@ export function Artifacts({
   onClose,
   drafts,
   onDrafts,
+  onRedo,
+  redoing,
 }: {
   set: ArtifactSet | null
   /** A run is in flight, so the record is the thing to be looking at. */
@@ -63,6 +65,9 @@ export function Artifacts({
   onClose: () => void
   drafts: Record<string, string>
   onDrafts: (next: Record<string, string>) => void
+  /** Redo one page. Offered only once a video exists for it to fit back into. */
+  onRedo: (page: number) => void
+  redoing: number | null
 }) {
   const [tab, setTab] = useState<Tab>('deck')
   // A finished video is what the run was for, so land on it — both when one
@@ -121,6 +126,8 @@ export function Artifacts({
             projectId={set.projectId}
             drafts={drafts}
             onDrafts={onDrafts}
+            onRedo={set.scenes.length > 0 ? onRedo : undefined}
+            redoing={redoing}
           />
         )}
 

@@ -265,3 +265,33 @@ def test_the_upgrade_is_a_command_and_not_something_a_render_does():
     # have drifted, and the second one would have had its own bugs.
     installer = inspect.getsource(install_into_runtime)
     assert "uv" in installer and "ensurepip" in installer
+
+
+def test_the_same_project_fingerprints_the_same_before_and_after_speaking(settings, store):
+    """A clip is reused when its fingerprint matches. It has to be one value.
+
+    `provider_name` is whichever engine is loaded at this instant, and that
+    changes the moment something is synthesised — a fresh tool reports
+    `macos_say` and the same tool one clip later reports `edge`. Taken from
+    it, a project's fingerprints disagreed with themselves between runs: one
+    page was re-voiced and re-rendered on every unrelated edit. Measured on a
+    real project — redoing page 5 brought page 2 back with it, 12.6 seconds of
+    encoding for a page nobody had touched.
+    """
+    from doc2video.schemas import Scene, Source, SourceType, VideoProject
+    from doc2video.skills.base import SkillContext
+    from doc2video.skills.voice import VoiceSkill
+
+    project = VideoProject(
+        project_id="proj_fp",
+        source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
+    )
+    project.intent.voice = "zh-CN-YunyangNeural"  # Edge's, whatever is loaded
+    project.scenes = [Scene(scene_id="scn_01", source_page=1, narration="一句话。")]
+
+    skill = VoiceSkill(SkillContext.build(project, store=store, settings=settings))
+    before = skill._fingerprint(project.scenes[0])
+
+    # What speaking does to the tool: the engine that owns the voice is loaded.
+    skill.tts._provider = skill.tts._engine_for(project.intent.voice)
+    assert skill._fingerprint(project.scenes[0]) == before

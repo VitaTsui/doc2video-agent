@@ -780,6 +780,11 @@ function VoiceSettings({ busy }: { busy: boolean }) {
             )}
           </div>
           <div className="muted pack__note">{pack.note}</div>
+          {/* Where more voices come from, which is a different answer for each
+              of these: one is a service, one brings its own eight, one is the
+              operating system's, and one is a file you drop in a folder. */}
+          {pack.how && <div className="muted pack__note">{pack.how}</div>}
+          {pack.folder && <div className="pack__folder">{pack.folder}</div>}
           {pack.voices.length > 0 && (
             <div className="pack__voices">
               {pack.voices.map((voice) => (
