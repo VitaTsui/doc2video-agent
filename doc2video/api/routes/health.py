@@ -89,8 +89,8 @@ def choose_voice(body: VoiceChoiceIn) -> dict:
 SAMPLE = "这一页讲的是系统架构，我们从最上面一层看起。"
 
 
-@router.post("/health/voices/preview")
-def preview_voice(body: VoiceChoiceIn) -> Response:
+@router.get("/health/voices/preview")
+def preview_voice(voice: str = "") -> Response:
     """Say one sentence in this voice, so it can be heard before it is chosen.
 
     Synthesised by the engine that owns the voice, directly — not through the
@@ -101,10 +101,17 @@ def preview_voice(body: VoiceChoiceIn) -> Response:
 
     Cached on disk by voice: the second press should be instant, and eight
     voices auditioned in a row should not be eight network round trips.
+
+    A GET that an `<audio src>` can point straight at, rather than bytes fetched
+    and wrapped in a blob URL: the app's own CSP allows media from the backend
+    and not from `blob:`, so the blob played in a browser and failed inside the
+    window it was built for — 「Failed to load because no supported source was
+    found」. The token rides in the query for the same reason it does for the
+    finished video: a media element cannot send a header.
     """
     settings = get_settings()
     tool = TTSTool(settings)
-    voice = body.voice.strip() or tool.voice
+    voice = voice.strip() or tool.voice
     engine = tool._engine_for(voice)  # noqa: SLF001 - the same lookup a render does
 
     target = settings.storage_dir / "previews" / f"{sha1(voice.encode()).hexdigest()}.wav"

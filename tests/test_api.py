@@ -169,6 +169,11 @@ def test_media_may_authenticate_by_query_but_nothing_else_can(monkeypatch):
     assert guarded.get("/projects/proj_1/video?token=wrong").status_code == 401
     assert guarded.get("/projects/proj_1/video").status_code == 401
 
+    # The voice preview is one too: it is played by an `<audio src>`, which
+    # cannot send a header either. 200 because the machine can always speak.
+    assert guarded.get("/health/voices/preview?token=s3cret").status_code in (200, 502)
+    assert guarded.get("/health/voices/preview?token=wrong").status_code == 401
+
     # Everything else still needs the header, however the URL is dressed up.
     assert guarded.get("/projects/proj_1?token=s3cret").status_code == 401
     assert guarded.get("/jobs/job_1/events?token=s3cret").status_code == 401
