@@ -122,6 +122,7 @@ class Doc2VideoAgent:
         narrations: dict[int, str] | None = None,
         scene_narrations: dict[str, str] | None = None,
         draft: bool = False,
+        revoice: bool = False,
     ) -> AgentRunResult:
         if project_id:
             project = self.store.load(project_id)
@@ -147,6 +148,7 @@ class Doc2VideoAgent:
                         scene_narrations=scene_narrations,
                         editing=bool(project_id),
                         draft=draft,
+                        revoice=revoice,
                     )
                 ctx = SkillContext.build(
                     project, store=self.store, settings=self.settings
@@ -170,6 +172,7 @@ class Doc2VideoAgent:
         scene_narrations: dict[str, str] | None,
         editing: bool,
         draft: bool = False,
+        revoice: bool = False,
     ) -> ExecutionPlan:
         """Which plan this call is asking for.
 
@@ -182,7 +185,12 @@ class Doc2VideoAgent:
         app's 开始生成 was pressed with nothing typed, a case its own copy
         promises will fall back to placeholder text.
         """
-        if draft:
+        if revoice:
+            # Same words, different voice. Named by the caller rather than
+            # guessed from the message: the words are what someone approved,
+            # and a request about the sound must never reach the script.
+            plan = self.planner.revoice_plan()
+        elif draft:
             # Whatever the caller has written stays; the model fills the rest.
             plan = self.planner.draft_plan(narrations)
         elif narrations is not None:
@@ -230,12 +238,31 @@ class Doc2VideoAgent:
             self.run(message=message, project_id=project_id,
                      scene_narrations={scene_id: narration}, progress=progress)
 
+        def revoice(voice: str, speech_rate: float) -> None:
+            """Say the same words differently: re-voice, re-time, re-render.
+
+            The words are not touched, so this does not go near the script —
+            but the picture is timed to the audio, so it does have to be made
+            again: captions are drawn into the frames and the camera moves are
+            timed to sentence boundaries, and a different voice puts both at
+            different seconds. Pages whose timing happens not to move keep
+            their clips, which the render decides for itself.
+            """
+            current = self.store.load(project_id)
+            if voice:
+                current.intent.voice = voice
+            if speech_rate:
+                current.intent.speech_rate = speech_rate
+            self.store.save(current)
+            self.run(message=message, project_id=project_id, revoice=True, progress=progress)
+
         loop = AgentLoop(
             project,
             llm,
             sessions,
             render_all=render_all,
             render_scene=render_scene,
+            revoice=revoice,
             reload=lambda: self.store.load(project_id),
         )
         # Opened here rather than inside `run`, so the decisions land in the

@@ -128,6 +128,21 @@ class Planner:
             intent=intent,
         )
 
+    def revoice_plan(self) -> ExecutionPlan:
+        """Say the same words differently.
+
+        Not a rewrite and not a redirect: the script and the shots are what
+        someone already approved. The picture still has to be made again —
+        captions are drawn into the frames and the camera moves are timed to
+        sentence boundaries, so a different voice puts both at different
+        seconds — but pages whose timing does not move keep their clips.
+        """
+        return ExecutionPlan(
+            summary="换个声音重新配音",
+            stages=[Stage.VOICE, Stage.MOTION, Stage.RENDER, Stage.REVIEW],
+            force_voice=True,
+        )
+
     def draft_plan(self, written: dict[int, str] | None = None) -> ExecutionPlan:
         """Write a first script for a deck that has already been read.
 
