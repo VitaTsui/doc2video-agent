@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 from ...core import ledger
@@ -14,9 +15,11 @@ from .base import (
     TTSResult,
     allocate_segments,
     estimate_duration,
+    join_units,
     weight_of,
 )
 from .providers import resolve_provider
+from .units import plan_units
 
 log = get_logger(__name__)
 
@@ -75,24 +78,25 @@ class TTSTool:
         out_path: Path,
         *,
         sentences: list[str] | None = None,
+        emphasis: list[bool] | None = None,
         voice: str = "",
         rate: float = 0.0,
     ) -> TTSResult:
-        """Synthesize ``text`` and time-align its sentences within the clip.
+        """Speak ``text``, and say when each of its sentences happens.
 
         `voice` and `rate` override what the machine is configured with — a
         project chooses its own, and the machine's values are the default it
-        starts from.
+        starts from. `emphasis` is the writer's mark on the sentences that
+        matter, and it decides where the beats go.
         """
-        with ledger.call(f"tts:{self._provider.name}", f"{len(text)} 字"):
-            duration = self._provider.synthesize(
-                text,
-                out_path,
-                voice=voice or self._settings.tts_voice,
-                rate=rate or self._settings.tts_speech_rate,
-            )
         lines = sentences or [text]
-        segments, source = self._time(text, out_path, lines, duration)
+        segments, duration, source = self._speak(
+            lines,
+            out_path,
+            emphasis=emphasis,
+            voice=voice or self._settings.tts_voice,
+            rate=rate or self._settings.tts_speech_rate,
+        )
         return TTSResult(
             path=out_path,
             duration=duration,
@@ -101,6 +105,64 @@ class TTSTool:
             segments=segments,
             timing_source=source,
         )
+
+    def _speak(
+        self,
+        sentences: list[str],
+        out_path: Path,
+        *,
+        emphasis: list[bool] | None,
+        voice: str,
+        rate: float,
+    ) -> tuple[list[Segment], float, str]:
+        """Write the clip, in units, and report exactly when each unit lands.
+
+        A page spoken in one go comes back in one voice — the engine settles on
+        an average pace and holds it, pausing the same length at every mark.
+        Spoken in units the beats between them are ours: longer before the
+        sentence the writer marked, longer where the script turns.
+
+        The timing follows for free. Each unit is measured as it is written, so
+        every unit boundary is exact; only the sentences *inside* a unit still
+        need the ladder.
+        """
+        units = plan_units(sentences, emphasis=emphasis)
+        if len(units) <= 1:
+            text = "".join(sentences)
+            with ledger.call(f"tts:{self._provider.name}", f"{len(text)} 字"):
+                duration = self._provider.synthesize(text, out_path, voice=voice, rate=rate)
+            segments, source = self._time(text, out_path, sentences, duration)
+            return segments, duration, source
+
+        work = out_path.parent / f".{out_path.stem}.units"
+        work.mkdir(parents=True, exist_ok=True)
+        clips: list[Path] = []
+        try:
+            for index, unit in enumerate(units):
+                clip = work / f"{index:02d}.wav"
+                with ledger.call(f"tts:{self._provider.name}", f"{len(unit.text)} 字"):
+                    self._provider.synthesize(unit.text, clip, voice=voice, rate=rate)
+                clips.append(clip)
+
+            windows = join_units(clips, [unit.pause_before for unit in units], out_path)
+            segments: list[Segment] = []
+            for unit, clip, (start, end) in zip(units, clips, windows, strict=True):
+                inner, _ = self._time(unit.text, clip, unit.texts, end - start)
+                segments.extend(
+                    Segment(
+                        text=part.text,
+                        start=round(start + part.start, 3),
+                        end=round(start + part.end, 3),
+                    )
+                    for part in inner
+                )
+            duration = windows[-1][1] if windows else 0.0
+            return segments, duration, "units"
+        finally:
+            for clip in clips:
+                clip.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                work.rmdir()
 
     def _time(
         self, text: str, audio: Path, sentences: list[str], duration: float

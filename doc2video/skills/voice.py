@@ -51,6 +51,9 @@ class VoiceSkill(Skill):
                 scene.narration,
                 out_path,
                 sentences=[s.text for s in scene.segments] or [scene.narration],
+                # The writer's own mark on the sentence that matters: it is
+                # what decides where the beats go.
+                emphasis=[s.emphasis for s in scene.segments],
                 voice=self.project.intent.voice,
                 rate=self.project.intent.speech_rate,
             )

@@ -180,3 +180,40 @@ def audio_duration(path: Path) -> float | None:
     from ..media_binaries import probe_duration
 
     return probe_duration(path)
+
+
+def join_units(clips: list[Path], pauses: list[float], out_path: Path) -> list[tuple[float, float]]:
+    """Write `clips` end to end with `pauses[i]` of silence before clip i.
+
+    Returns each clip's window in the joined file. The windows are exact — the
+    silence is written here, frame by frame, so where one unit stops and the
+    next begins is arithmetic on sample counts rather than something to be
+    measured or guessed at afterwards.
+
+    Standard library only, like `pad_silence`: joining speech should not cost
+    an external binary, and re-encoding to join would lose the sample-exact
+    boundaries that are the point.
+    """
+    if not clips:
+        return []
+
+    windows: list[tuple[float, float]] = []
+    frames = bytearray()
+    params = None
+    for clip, pause in zip(clips, pauses, strict=True):
+        with wave.open(str(clip), "rb") as handle:
+            if params is None:
+                params = handle.getparams()
+            body = handle.readframes(handle.getnframes())
+        gap = max(0, int(max(pause, 0.0) * params.framerate))
+        frames += b"\x00" * (gap * params.sampwidth * params.nchannels)
+        start = len(frames) / (params.framerate * params.sampwidth * params.nchannels)
+        frames += body
+        end = len(frames) / (params.framerate * params.sampwidth * params.nchannels)
+        windows.append((round(start, 4), round(end, 4)))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out_path), "wb") as handle:
+        handle.setparams(params)
+        handle.writeframes(bytes(frames))
+    return windows
