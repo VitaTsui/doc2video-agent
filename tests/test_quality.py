@@ -215,3 +215,64 @@ def test_a_page_the_deck_ends_with_may_be_left_out_without_penalty(score):
 
     assert not [f for f in project.review if f.kind == "uncovered_page"]
     assert report.score > 90
+
+
+def test_the_ai_tics_a_script_gets_marked_down_for():
+    """"AI 腔" has to be a measurement before it can be a complaint.
+
+    The prompt asks the model not to write these shapes; asking makes it rarer,
+    never absent, and the only way anyone finds out is by reading two thousand
+    characters looking for them. The patterns are the ones the writing-style
+    rules name, so the prompt and the gate say the same thing.
+    """
+    import re
+
+    from doc2video.skills.review import AI_TICS
+
+    hits = {}
+    for label, pattern, _ in AI_TICS:
+        for text in (
+            "揭榜要的不是方案书，是能落地的创新联合体。",
+            "它的起点不是分析，而是把分散的数据变成对象。",
+            "十六个以上数据源，按需组合，这是可用性的关键。",
+            "是快，快在把链路缩到了一步。",
+            "值得一提的是，这套流程已经跑通。",
+        ):
+            if re.search(pattern, text):
+                hits.setdefault(label, []).append(text)
+
+    assert set(hits) == {"否定断言", "评价尾巴", "顶针重锤", "举牌词"}
+    assert len(hits["否定断言"]) == 2
+
+    # And ordinary negation is left alone: it is normal Chinese, not a tic.
+    for _, pattern, _ in AI_TICS:
+        assert not re.search(pattern, "这个指标没达标，资料里也没有这一项。")
+
+
+def test_a_flat_rhythm_is_reported_and_a_varied_one_is_not():
+    """Speech puts emphasis by breaking rhythm; a flat one has nowhere to put it.
+
+    Accuracy is not the problem being measured here — every sentence can be
+    right and the page still sound like a machine reporting, because they are
+    all the same length.
+    """
+    from doc2video.skills.review import _length_spread
+
+    # Four sentences, all about eighteen characters — the shape the model
+    # falls into when nothing asks it not to.
+    flat = (
+        "先看最底下的一层，也是最费功夫的一层。"
+        "数据沿着四条链分维度铺开，不靠堆量。"
+        "每条链上再分四类，各自负责一件事情。"
+        "十六个以上的数据来源，按需组合起来。"
+    )
+    varied = (
+        "先看最底下这层。"
+        "数据沿四条链铺开，每条链再分四类：预训练打底，微调练出能力，偏好数据做对齐。"
+        "十六个来源，按需组合。够用了。"
+    )
+
+    assert _length_spread(flat) is not None
+    assert _length_spread(varied) is None
+    # Too few sentences to say anything about rhythm.
+    assert _length_spread("只有一句话。") is None

@@ -168,3 +168,36 @@ def test_actions_never_target_unknown_elements(settings: Settings, store: Projec
 
     known = {"e_real"}
     assert all(a.target in known for a in result.actions if a.target)
+
+
+def test_a_signpost_page_gets_no_box_drawn_on_it():
+    """A cover, a table of contents, a section divider — nothing to point at.
+
+    Every one of them says the same thing: here is where we are. A deck went
+    out with a highlight around the word 「CONTENTS」 and around the numeral on
+    a divider, and both read as the camera pointing at furniture. The page
+    change is the whole gesture.
+    """
+    from doc2video.schemas import PageType
+    from doc2video.skills.director import SIGNPOST_PAGES
+
+    assert {PageType.COVER, PageType.AGENDA, PageType.SECTION} == SIGNPOST_PAGES
+
+
+def test_page_furniture_is_never_a_target():
+    """A bullet, a page number, a stock heading: text with nothing in it."""
+    from doc2video.schemas import BBox, ElementKind, SlideElement
+    from doc2video.skills.director import _worth_pointing_at
+
+    def element(text: str, kind: ElementKind = ElementKind.PARAGRAPH) -> SlideElement:
+        return SlideElement(
+            id="e1", kind=kind, text=text, bbox=BBox(x=0, y=0, w=100, h=30), label=text
+        )
+
+    assert not _worth_pointing_at(element("1"))
+    assert not _worth_pointing_at(element("·"))
+    assert not _worth_pointing_at(element("CONTENTS"))
+    assert not _worth_pointing_at(element("目录"))
+    assert _worth_pointing_at(element("16+ 数据来源"))
+    # A picture is the point of the page even with no text on it at all.
+    assert _worth_pointing_at(element("", ElementKind.CHART))
