@@ -123,6 +123,7 @@ class Doc2VideoAgent:
         scene_narrations: dict[str, str] | None = None,
         draft: bool = False,
         revoice: bool = False,
+        write: bool = False,
     ) -> AgentRunResult:
         if project_id:
             project = self.store.load(project_id)
@@ -149,6 +150,7 @@ class Doc2VideoAgent:
                         editing=bool(project_id),
                         draft=draft,
                         revoice=revoice,
+                        write=write,
                     )
                 ctx = SkillContext.build(
                     project, store=self.store, settings=self.settings
@@ -173,6 +175,7 @@ class Doc2VideoAgent:
         editing: bool,
         draft: bool = False,
         revoice: bool = False,
+        write: bool = False,
     ) -> ExecutionPlan:
         """Which plan this call is asking for.
 
@@ -185,7 +188,11 @@ class Doc2VideoAgent:
         app's 开始生成 was pressed with nothing typed, a case its own copy
         promises will fall back to placeholder text.
         """
-        if revoice:
+        if write:
+            # Write it here and make the video: the words come from the
+            # narration skill, page by page against its budget.
+            plan = self.planner.write_plan(narrations)
+        elif revoice:
             # Same words, different voice. Named by the caller rather than
             # guessed from the message: the words are what someone approved,
             # and a request about the sound must never reach the script.
@@ -238,6 +245,10 @@ class Doc2VideoAgent:
             self.run(message=message, project_id=project_id,
                      scene_narrations={scene_id: narration}, progress=progress)
 
+        def write_all() -> None:
+            """Write the script here, then make the video from it."""
+            self.run(message=message, project_id=project_id, write=True, progress=progress)
+
         def revoice(voice: str, speech_rate: float) -> None:
             """Say the same words differently: re-voice, re-time, re-render.
 
@@ -261,6 +272,7 @@ class Doc2VideoAgent:
             llm,
             sessions,
             render_all=render_all,
+            write_all=write_all,
             render_scene=render_scene,
             revoice=revoice,
             reload=lambda: self.store.load(project_id),

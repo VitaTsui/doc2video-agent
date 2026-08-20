@@ -97,11 +97,14 @@ class AgentLoop:
         render_scene,
         revoice,
         reload,
+        write_all=None,
     ) -> None:
         self.project = project
         self.llm = llm
         self.store = store
         self._render_all = render_all
+        # Writing the deck is the narration skill's job, not this loop's.
+        self._write_all = write_all or (lambda: render_all({}))
         self._render_scene = render_scene
         self._revoice = revoice
         self._reload = reload
@@ -191,11 +194,20 @@ class AgentLoop:
     def _execute(self, decision: Decision, session: Session) -> None:
         if decision.action == "write_script":
             pages = self._pages_of(decision.narrations)
-            self._render_all(pages)
+            # Nothing supplied means "write it": the narration skill does that
+            # page by page, against each page's character budget and under the
+            # writing prompt. Measured on the same 30-page deck, that is 2135–
+            # 2483 characters against the 1800 a model writes when asked for
+            # thirty pages in one answer — and without the AI tics the writing
+            # prompt exists to keep out.
+            if pages:
+                self._render_all(pages)
+            else:
+                self._write_all()
             self._say(
                 session,
                 Speaker.TOOL,
-                f"按讲稿生成了 {len(pages)} 页",
+                f"按讲稿生成了 {len(pages)} 页" if pages else "逐页写了讲稿并生成了视频",
                 action="write_script",
             )
         elif decision.action == "revise":
@@ -301,8 +313,10 @@ _ACTION_LABEL = {
 
 _SYSTEM = """你在把一份演示文档做成讲解视频。你能做的只有五件事：
 
-- write_script：为所有页写讲稿，然后配音、设计镜头、渲染、质检。第一次必须走这一步。
-  narrations 用页码做键（"4"），也可以用场景号（"scn_04"）。
+- write_script：写讲稿，然后配音、设计镜头、渲染、质检。第一次必须走这一步。
+  第一次把 narrations 留空——讲稿会逐页写，每页对着自己的字数预算，用的是专门的
+  写作提示，比你在这里一次性写三十页要好。只有当你要替换某几页时才填 narrations，
+  键用页码（"4"）或场景号（"scn_04"）。
 - revise：只重做一页。改动只影响这一页，其余片段直接复用。
 - retune：只换声音或语速，一个字都不改。用户说「换成某某音色」「语速慢点」时用它，
   不要用 write_script——那会把他认可的讲稿重写一遍。voice 填音色名，speech_rate 填
