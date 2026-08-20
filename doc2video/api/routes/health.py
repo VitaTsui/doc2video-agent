@@ -12,7 +12,7 @@ from hashlib import sha1
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
-from ...core import inventory, prefs
+from ...core import inventory, prefs, tuning
 from ...core.config import dependency_report, filter_report, get_settings
 from ...core.errors import Doc2VideoError
 from ...tools.llm import llm_status
@@ -27,6 +27,13 @@ class VoiceChoiceIn(BaseModel):
     """The voice to use from now on. Empty hands the choice back to the machine."""
 
     voice: str = ""
+
+
+class RuleIn(BaseModel):
+    """One knob, and what to set it to. `null` puts the default back."""
+
+    id: str
+    value: float | None = None
 
 
 class PiperVoiceIn(BaseModel):
@@ -205,6 +212,35 @@ def plugins() -> dict:
     here is something only this process can answer.
     """
     return inventory.report(get_settings())
+
+
+@router.put("/health/plugins/rules")
+def set_rule(body: RuleIn) -> dict:
+    """Change one of the numbers, or put it back.
+
+    Kept in the preferences file for the same reason the voice is: settings
+    are the environment this process started in and are frozen for its life,
+    and a number you can only change by restarting the backend is a number
+    nobody changes. Sending no value restores the measured default.
+
+    Out-of-range values are clamped rather than refused — a zoom of 40× is not
+    a preference, it is a broken video.
+    """
+    settings = get_settings()
+    knob = tuning.knobs().get(body.id)
+    if knob is None:
+        raise HTTPException(
+            status_code=400, detail={"code": "unknown_rule", "message": f"没有这条规则：{body.id}"}
+        )
+
+    current = prefs.load(settings)
+    rules = dict(current.rules)
+    if body.value is None:
+        rules.pop(body.id, None)
+    else:
+        rules[body.id] = max(knob.low, min(knob.high, float(body.value)))
+    prefs.save(current.model_copy(update={"rules": rules}), settings)
+    return inventory.report(settings)
 
 
 @router.get("/health/capabilities")

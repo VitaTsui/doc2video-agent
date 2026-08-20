@@ -35,6 +35,9 @@ const DIMENSION: Record<string, string> = {
   originality: '原创度',
   direction: '镜头',
   subtitles: '字幕',
+  // Added when the frame checks were: the panel showed 「render」 among five
+  // Chinese words for as long as that dimension has existed.
+  render: '画面',
 }
 
 export interface ArtifactSet {

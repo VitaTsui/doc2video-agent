@@ -577,74 +577,168 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
  * because that is the order in which a missing piece shows up in the video.
  */
 function Plugins() {
-  const [steps, setSteps] = useState<api.PipelineStep[] | null>(null)
+  const [all, setAll] = useState<api.Plugin[] | null>(null)
+  const [query, setQuery] = useState('')
   const [open, setOpen] = useState('')
   const [failure, setFailure] = useState('')
 
   useEffect(() => {
     void api
       .plugins()
-      .then(setSteps)
+      .then(setAll)
       .catch((error: Error) => setFailure(api.describeError(error)))
   }, [])
+
+  const setRule = async (id: string, value: number | null) => {
+    setFailure('')
+    try {
+      setAll(await api.setRule(id, value))
+    } catch (error) {
+      setFailure(api.describeError(error))
+    }
+  }
+
+  // Matched against everything on the card, so 「配音」, `tts`, `ffmpeg` and
+  // 「渲染」 all find what someone means by them.
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  const shown = (all ?? []).filter((plugin) =>
+    words.every((word) =>
+      [plugin.id, plugin.name, plugin.kind, plugin.kind_name, plugin.stage, plugin.what]
+        .join(' ')
+        .toLowerCase()
+        .includes(word),
+    ),
+  )
 
   return (
     <>
       <h2 className="modal__title">插件</h2>
       <p className="muted">
-        一条流水线，从上到下跑完就是一支视频。每一步用什么、这台机器上能不能用，都在下面；
-        写着「看提示词」的，点开就是原文——不是转述，转述这件事没法拿来对照结果。
+        这一版装了什么，以及这台机器上哪些真的能用。点开一条看细节：技能给的是它对模型说的
+        原话，不是转述；不写提示词的给的是决定输出的那些数，可以改，改完下一支视频就按新的来。
       </p>
 
       {failure && <p className="modal__error">{failure}</p>}
-      {steps === null && !failure && <p className="muted">正在看这台机器装了什么…</p>}
+      {all === null && !failure && <p className="muted">正在看这台机器装了什么…</p>}
 
-      {steps?.map((step) => (
-        <div key={step.id} className="pack">
-          <div className="pack__head">
-            <span className="pack__name">{step.name}</span>
-            {/* The name in the window next to the name in the code: 「配音」 is
-                what it is called here, `presentation-voice` is what runs. */}
-            {step.skill && <span className="step__skill muted">{step.skill}</span>}
-            {(step.prompt || step.rules.length > 0) && (
-              <button
-                type="button"
-                className="pack__open"
-                onClick={() => setOpen(open === step.id ? '' : step.id)}
-              >
-                {open === step.id ? '收起' : step.prompt ? '看提示词' : '看规则'}
-              </button>
-            )}
+      {all !== null && (
+        <>
+          <input
+            className="browse__search"
+            value={query}
+            placeholder="搜插件：配音、ffmpeg、解析器、prompt…"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <div className="muted browse__count">{`${shown.length} / ${all.length} 个插件`}</div>
+        </>
+      )}
+
+      {shown.map((plugin) => (
+        <div key={plugin.id} className="pack">
+          <button
+            type="button"
+            className="plugin__head"
+            onClick={() => setOpen(open === plugin.id ? '' : plugin.id)}
+          >
+            <span className={plugin.available ? 'part__dot part__dot--on' : 'part__dot'} />
+            <span className="pack__name">{plugin.name}</span>
+            <span className="pack__tag">{plugin.kind_name}</span>
+            <span className="muted plugin__stage">{plugin.stage}</span>
+            <span className="muted plugin__more">{open === plugin.id ? '收起' : '详情'}</span>
+          </button>
+          <div className="muted pack__note">
+            {plugin.what}
+            {!plugin.available && plugin.reason && `（${plugin.reason}）`}
           </div>
-          <div className="muted pack__note">{step.what}</div>
 
-          {open === step.id && step.rules.length > 0 && (
-            <div className="rules">
-              {step.rules.map((rule) => (
-                <div key={rule.name} className="rule">
-                  <span className="rule__name">{rule.name}</span>
-                  <span className="rule__value">{rule.value}</span>
-                  <span className="muted rule__what">{rule.what}</span>
+          {open === plugin.id && (
+            <>
+              <div className="rules">
+                <div className="rule">
+                  <span className="rule__name">标识</span>
+                  <span className="rule__value plugin__id">{plugin.id}</span>
                 </div>
-              ))}
-            </div>
+                {Object.entries(plugin.detail).map(([label, text]) => (
+                  <div key={label} className="rule">
+                    <span className="rule__name">{label}</span>
+                    <span className="muted rule__what">{text}</span>
+                  </div>
+                ))}
+              </div>
+              {plugin.rules.length > 0 && (
+                <div className="rules">
+                  {plugin.rules.map((rule) => (
+                    <div key={rule.name} className="rule">
+                      <span className="rule__name">{rule.name}</span>
+                      {rule.id ? (
+                        <RuleField rule={rule} onSet={setRule} />
+                      ) : (
+                        <span className="rule__value">{rule.value}</span>
+                      )}
+                      <span className="muted rule__what">{rule.what}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* The instructions as they are sent, not a summary of them: a
+                  paraphrase is the thing you cannot check the output against. */}
+              {plugin.prompt && <pre className="prompt">{plugin.prompt}</pre>}
+            </>
           )}
-          {/* The instructions as they are sent, not a summary of them: a
-              paraphrase is the thing you cannot check the output against. */}
-          {open === step.id && step.prompt && <pre className="prompt">{step.prompt}</pre>}
-          {step.parts.map((part) => (
-            <div key={part.id} className="part">
-              <span className={part.available ? 'part__dot part__dot--on' : 'part__dot'} />
-              <span className="part__name">{part.name}</span>
-              <span className="muted part__what">
-                {part.what}
-                {!part.available && part.reason && `（${part.reason}）`}
-              </span>
-            </div>
-          ))}
         </div>
       ))}
     </>
+  )
+}
+
+/**
+ * One number, as something to change.
+ *
+ * Committed on blur or Enter rather than per keystroke: half a number is a
+ * number, and 0.5 typed one character at a time passes through 0 and 5.
+ *
+ * Its default travels with it. Every one of these was measured — the pause
+ * before an emphasised sentence is 0.55 because 0.42 was indistinguishable
+ * from the engine's own — and someone who has moved one should be able to see
+ * how far, and to put it back without remembering what it was.
+ */
+function RuleField({
+  rule,
+  onSet,
+}: {
+  rule: api.Plugin['rules'][number]
+  onSet: (id: string, value: number | null) => void
+}) {
+  const [text, setText] = useState(String(rule.number))
+  useEffect(() => setText(String(rule.number)), [rule.number])
+
+  const commit = () => {
+    const next = Number(text)
+    if (!Number.isFinite(next) || next === rule.number) {
+      setText(String(rule.number))
+      return
+    }
+    onSet(rule.id, rule.integer ? Math.round(next) : next)
+  }
+
+  const moved = rule.number !== rule.default
+  return (
+    <span className="rule__edit">
+      <input
+        className="rule__input"
+        value={text}
+        inputMode="decimal"
+        onChange={(event) => setText(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => event.key === 'Enter' && event.currentTarget.blur()}
+      />
+      {rule.unit && <span className="muted rule__unit">{rule.unit}</span>}
+      {moved && (
+        <button type="button" className="rule__reset" onClick={() => onSet(rule.id, null)}>
+          {`复原 ${rule.default}`}
+        </button>
+      )}
+    </span>
   )
 }
 

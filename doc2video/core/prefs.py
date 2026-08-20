@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .config import Settings, get_settings
 from .logging import get_logger
@@ -33,6 +33,10 @@ class Preferences(BaseModel):
     # The voice new videos start with. A video can still be told otherwise
     # (「用播音腔讲」), and that belongs to the video rather than to the machine.
     voice: str = ""
+    # Overrides for the numbers in `core.tuning`, by knob id. Only what someone
+    # actually changed: an absent key means "whatever the code says", which is
+    # what makes the defaults still improvable without rewriting saved files.
+    rules: dict[str, float] = Field(default_factory=dict)
 
 
 def path(settings: Settings | None = None) -> Path:

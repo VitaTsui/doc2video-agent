@@ -176,6 +176,21 @@ export function App() {
       ])
       const set = await loadArtifacts(summary.project_id, Boolean(summary.output))
       if (deckPages.length > 0) {
+        // The deck card, back in the conversation it was said in. Only the
+        // panel was being restored, so a reopened project had its pages but
+        // no gate — nothing to press to write the script or start the render,
+        // and a visibly shorter conversation than the one that made it.
+        const seconds = Math.round(guide.reduce((sum, row) => sum + row.page_seconds, 0))
+        say({
+          role: 'assistant',
+          kind: 'deck',
+          text: `《${summary.title || summary.source}》共 ${deckPages.length} 页，`
+            + `按这个要求算下来大约 ${seconds} 秒。`,
+          projectId: summary.project_id,
+          pages: deckPages,
+          guide,
+          hasModel,
+        })
         setArtifacts((current) =>
           current?.projectId === summary.project_id
             ? { ...current, deck: { pages: deckPages, guide, hasModel, locked: false } }

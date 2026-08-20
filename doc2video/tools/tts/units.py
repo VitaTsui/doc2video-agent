@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ...core import tuning
+
 # Long enough that the voice settles into a phrase, short enough that it has
 # not flattened out. Measured in the text's own estimated seconds, because
 # nothing has been spoken yet when the grouping happens.
@@ -85,6 +87,12 @@ def plan_units(
     flags = list(emphasis or [])
     flags += [False] * (len(sentences) - len(flags))
 
+    # Read once per page rather than per sentence: these are the numbers as
+    # they are set right now, and someone may have set them.
+    target = tuning.value("voice.unit_seconds")
+    longest = max(MAX_UNIT_SECONDS, target * MAX_UNIT_SECONDS / TARGET_UNIT_SECONDS)
+    sentence_pause = tuning.value("voice.pause_sentence")
+
     units: list[Unit] = []
     current = Unit()
     spent = 0.0
@@ -94,12 +102,12 @@ def plan_units(
         # Break when the unit is long enough, or when this sentence wants to
         # start one — an emphasised line spoken mid-breath is not emphasised.
         if current.texts and (
-            spent + length > MAX_UNIT_SECONDS
-            or (spent >= TARGET_UNIT_SECONDS)
-            or (starts_here and spent >= TARGET_UNIT_SECONDS / 2)
+            spent + length > longest
+            or (spent >= target)
+            or (starts_here and spent >= target / 2)
         ):
             units.append(current)
-            current = Unit(pause_before=starts_here or PAUSE_SENTENCE)
+            current = Unit(pause_before=starts_here or sentence_pause)
             spent = 0.0
         current.texts.append(sentence)
         spent += length
@@ -116,8 +124,8 @@ def plan_units(
 def _breaks_before(sentence: str, emphasised: bool) -> float:
     """The beat this sentence deserves in front of it, or 0 for none."""
     if emphasised:
-        return PAUSE_EMPHASIS
+        return tuning.value("voice.pause_emphasis")
     head = sentence.lstrip("　 \t")[:4]
     if any(head.startswith(turn) for turn in TURNS):
-        return PAUSE_TURN
+        return tuning.value("voice.pause_turn")
     return 0.0

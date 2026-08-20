@@ -390,14 +390,62 @@ def test_the_plugins_page_carries_the_prompts_themselves(client):
     from doc2video.skills.base import load_prompt
     from doc2video.skills.speech_review import TOO_FAST
 
-    steps = {step["id"]: step for step in client.get("/health/plugins").json()["steps"]}
+    found = {p["id"]: p for p in client.get("/health/plugins").json()["plugins"]}
 
-    assert steps["narrate"]["prompt"] == load_prompt("narration")
-    assert steps["understand"]["prompt"] == load_prompt("document_understanding")
+    assert found["presentation-narration"]["prompt"] == load_prompt("narration")
+    assert found["presentation-understanding"]["prompt"] == load_prompt("document_understanding")
     # The agent's own instructions are a prompt too, and the most consequential.
-    assert "write_script" in steps["agent"]["prompt"]
+    assert "write_script" in found["agent:loop"]["prompt"]
 
-    # A deterministic step has no prompt and says so by having none.
-    assert steps["review"]["prompt"] == ""
-    rates = [r["value"] for r in steps["review"]["rules"] if r["name"] == "语速上限"]
+    # A deterministic skill has no prompt and says so by having none.
+    assert found["presentation-review"]["prompt"] == ""
+    rates = [r["value"] for r in found["presentation-review"]["rules"] if r["name"] == "语速上限"]
     assert rates == [f"{TOO_FAST:.0f} 字/分"]
+
+
+def test_every_quality_dimension_has_a_chinese_name_in_the_window():
+    """The panel translates the dimensions; a missing one shows up in English.
+
+    That is exactly how 「render」 sat among five Chinese words — the check
+    that produced it was added and the map next to it was not.
+    """
+    import re
+    from pathlib import Path
+
+    from doc2video.skills import review
+
+    emitted = set(re.findall(r'name="([a-z_]+)"', Path(review.__file__).read_text("utf-8")))
+    panel = Path("desktop/web/src/Artifacts.tsx").read_text("utf-8")
+    mapped = set(
+        re.findall(r"(\w+): '", panel.split("const DIMENSION")[1].split("}")[0])
+    )
+    assert emitted <= mapped, f"没有中文名的维度：{sorted(emitted - mapped)}"
+
+
+def test_a_rule_can_be_changed_and_put_back(client, tmp_path, monkeypatch):
+    """These numbers were measured, which makes them defaults and not laws.
+
+    What matters is that changing one reaches the code that uses it — a form
+    that saves a number nothing reads is worse than no form.
+    """
+    from doc2video.core import prefs, tuning
+    from doc2video.core.config import get_settings
+    from doc2video.tools.tts.units import _breaks_before
+
+    monkeypatch.setattr(get_settings(), "storage_dir", tmp_path)
+    prefs.save(prefs.Preferences())
+
+    assert _breaks_before("这一句是重点。", True) == tuning.value("voice.pause_emphasis")
+
+    client.put("/health/plugins/rules", json={"id": "voice.pause_emphasis", "value": 0.9})
+    assert _breaks_before("这一句是重点。", True) == 0.9
+
+    # Out of range is clamped rather than refused: a stored file is not a form.
+    client.put("/health/plugins/rules", json={"id": "shot.max_scale", "value": 99})
+    assert tuning.value("shot.max_scale") == tuning.knobs()["shot.max_scale"].high
+
+    # And no value at all puts the measured default back.
+    client.put("/health/plugins/rules", json={"id": "voice.pause_emphasis"})
+    from doc2video.tools.tts import units
+
+    assert _breaks_before("这一句是重点。", True) == units.PAUSE_EMPHASIS
