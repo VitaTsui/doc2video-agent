@@ -43,6 +43,9 @@ _current: ContextVar[Recorder | None] = ContextVar("doc2video_ledger", default=N
 # every one of them to carry a label is not worth it.
 _tools: ContextVar[list[str] | None] = ContextVar("doc2video_ledger_tools", default=None)
 
+# The stage a call belongs under, carried the same way and for the same reason.
+_stage_seq: ContextVar[int] = ContextVar("doc2video_ledger_stage", default=0)
+
 
 class Recorder:
     """Writes one project's ledger. Safe to share across a run's threads."""
@@ -72,8 +75,18 @@ class Recorder:
         finally:
             self._run_id = previous
 
-    def record(
+    def _claim(self) -> int:
+        """Take the next sequence number without writing anything yet."""
+        with self._lock:
+            self._seq += 1
+            return self._seq
+
+    def record(self, kind: EntryKind, name: str, **fields) -> LedgerEntry:
+        return self.record_at(self._claim(), kind, name, **fields)
+
+    def record_at(
         self,
+        seq: int,
         kind: EntryKind,
         name: str,
         *,
@@ -82,25 +95,32 @@ class Recorder:
         duration_s: float = 0.0,
         artifacts: list[Artifact] | None = None,
         tools: list[str] | None = None,
+        skill: str = "",
+        parent: int = 0,
     ) -> LedgerEntry:
-        with self._lock:
-            self._seq += 1
-            entry = LedgerEntry(
-                seq=self._seq,
-                kind=kind,
-                name=name,
-                detail=detail,
-                status=status,
-                duration_s=duration_s,
-                artifacts=artifacts or [],
-                tools=tools or [],
-                run_id=self._run_id,
-            )
-            self._append(entry)
+        """Write an entry under a number that may have been claimed earlier.
+
+        A stage claims its number before its body runs, so the calls it makes
+        can name it while it is still going; it is written when it ends.
+        """
+        entry = LedgerEntry(
+            seq=seq,
+            kind=kind,
+            name=name,
+            detail=detail,
+            status=status,
+            duration_s=duration_s,
+            artifacts=artifacts or [],
+            tools=tools or [],
+            skill=skill,
+            parent=parent,
+            run_id=self._run_id,
+        )
+        self._append(entry)
         return entry
 
     @contextmanager
-    def stage(self, name: str, detail: str = "") -> Iterator[list[Artifact]]:
+    def stage(self, name: str, detail: str = "", skill: str = "") -> Iterator[list[Artifact]]:
         """Time one step and record whatever it appends to the yielded list.
 
         The list is the step's way of saying what it made: it appends as it
@@ -111,6 +131,11 @@ class Recorder:
         started = time.monotonic()
         status = "ok"
         token = _tools.set([])
+        # The number this stage will be written under. Claimed now rather than
+        # at the end, because the calls inside it are written as they happen
+        # and each one has to name the step it belongs to — a stage that only
+        # gets its number after its body has run cannot be pointed at.
+        seq_token = _stage_seq.set(self._claim())
         try:
             yield artifacts
         except Exception as exc:
@@ -119,8 +144,11 @@ class Recorder:
             raise
         finally:
             used = _tools.get() or []
+            seq = _stage_seq.get()
             _tools.reset(token)
-            self.record(
+            _stage_seq.reset(seq_token)
+            self.record_at(
+                seq,
                 EntryKind.STAGE,
                 name,
                 detail=detail,
@@ -128,6 +156,7 @@ class Recorder:
                 duration_s=time.monotonic() - started,
                 artifacts=artifacts,
                 tools=used,
+                skill=skill,
             )
 
     def _append(self, entry: LedgerEntry) -> None:
@@ -198,6 +227,47 @@ def used(tool: str) -> None:
     tools = _tools.get()
     if tools is not None and tool and tool not in tools:
         tools.append(tool)
+
+
+@contextmanager
+def call(tool: str, detail: str = "", artifacts: list[Artifact] | None = None) -> Iterator[list]:
+    """Record one call — a model request, a page rasterised, a scene voiced.
+
+    The stage entry answers "was it voiced"; this answers "which scene took
+    eight seconds of it, and did that one fail". Both are wanted: a stage-only
+    account of a thirty-scene render is one line for four minutes of work.
+
+    Also names the tool on the enclosing stage, so `used` does not have to be
+    called separately by anything that goes through here.
+
+    Safe outside a run, like everything else in this module: a tool should not
+    have to know whether anyone is watching.
+    """
+    used(tool)
+    made: list[Artifact] = list(artifacts or [])
+    recorder = _current.get()
+    if recorder is None:
+        yield made
+        return
+
+    started = time.monotonic()
+    status = "ok"
+    try:
+        yield made
+    except Exception as exc:
+        status = "failed"
+        detail = f"{detail}｜{str(exc)[:160]}" if detail else str(exc)[:200]
+        raise
+    finally:
+        recorder.record(
+            EntryKind.CALL,
+            tool,
+            detail=detail,
+            status=status,
+            duration_s=time.monotonic() - started,
+            artifacts=made,
+            parent=_stage_seq.get(),
+        )
 
 
 def degradation(name: str, detail: str) -> None:

@@ -31,13 +31,13 @@ class TTSTool:
         self, text: str, out_path: Path, *, sentences: list[str] | None = None
     ) -> TTSResult:
         """Synthesize ``text`` and time-align its sentences within the clip."""
-        ledger.used(f"tts:{self._provider.name}")
-        duration = self._provider.synthesize(
-            text,
-            out_path,
-            voice=self._settings.tts_voice,
-            rate=self._settings.tts_speech_rate,
-        )
+        with ledger.call(f"tts:{self._provider.name}", f"{len(text)} 字"):
+            duration = self._provider.synthesize(
+                text,
+                out_path,
+                voice=self._settings.tts_voice,
+                rate=self._settings.tts_speech_rate,
+            )
         segments = allocate_segments(sentences or [text], duration)
         return TTSResult(
             path=out_path,

@@ -135,18 +135,19 @@ class DocumentSkill(Skill):
             # exception left the loop, and a single page whose title contained
             # a quotation mark took the remaining batches with it — those
             # pages fell back to heuristics for no reason of their own.
+            where = f"第 {batch[0].index}-{batch[-1].index} 页"
             try:
-                result = DeckUnderstanding.model_validate(
-                    self.llm.complete_json(
-                        self._prompt(batch),
-                        schema=model_schema(DeckUnderstanding),
-                        system=load_prompt("document_understanding"),
-                        images=self._images_for(batch),
+                with ledger.call(self.llm.source, where):
+                    result = DeckUnderstanding.model_validate(
+                        self.llm.complete_json(
+                            self._prompt(batch),
+                            schema=model_schema(DeckUnderstanding),
+                            system=load_prompt("document_understanding"),
+                            images=self._images_for(batch),
+                        )
                     )
-                )
             except Exception as exc:  # noqa: BLE001 - one batch, not the deck
                 failures += 1
-                where = f"第 {batch[0].index}-{batch[-1].index} 页"
                 detail = f"{exc}"
                 self.log.warning("%s的理解失败，这几页改用启发式规则：%s", where, detail)
                 telemetry.record_degradation("文档理解", f"{where}：{detail}"[:300])

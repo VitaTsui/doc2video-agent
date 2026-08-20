@@ -18,6 +18,7 @@ import type { LedgerEntry } from '../api'
 
 const KIND_MARK: Record<string, string> = {
   stage: '',
+  call: '',
   decision: '决定',
   degradation: '降级',
   note: '',
@@ -34,7 +35,19 @@ export function LedgerCard({
   startOpen?: boolean
 }) {
   const [open, setOpen] = useState(startOpen)
-  const total = entries.reduce((sum, e) => sum + e.duration_s, 0)
+  // Calls belong under the step that made them. Flat, a thirty-scene render is
+  // thirty peers of 「解析文档」 and the shape of the run disappears.
+  const steps = entries.filter((entry) => entry.kind !== 'call')
+  const calls = new Map<number, LedgerEntry[]>()
+  for (const entry of entries) {
+    if (entry.kind !== 'call') continue
+    const under = calls.get(entry.parent) ?? []
+    under.push(entry)
+    calls.set(entry.parent, under)
+  }
+  // Only the steps' own time: a stage already contains its calls, and adding
+  // both counts the same seconds twice.
+  const total = steps.reduce((sum, e) => sum + e.duration_s, 0)
 
   if (entries.length === 0) return null
 
@@ -46,13 +59,20 @@ export function LedgerCard({
         style={{ padding: 0, fontSize: 13 }}
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? '收起' : `看看每一步做了什么（${entries.length} 步 · ${Math.round(total)}s）`}
+        {open
+          ? '收起'
+          : `看看每一步做了什么（${steps.length} 步 · ${entries.length - steps.length} 次调用 · ${Math.round(total)}s）`}
       </button>
 
       {open && (
         <div style={{ marginTop: 10 }}>
-          {entries.map((entry) => (
-            <Step key={entry.seq} projectId={projectId} entry={entry} />
+          {steps.map((entry) => (
+            <Step
+              key={entry.seq}
+              projectId={projectId}
+              entry={entry}
+              calls={calls.get(entry.seq) ?? []}
+            />
           ))}
         </div>
       )}
@@ -60,17 +80,27 @@ export function LedgerCard({
   )
 }
 
-function Step({ projectId, entry }: { projectId: string; entry: LedgerEntry }) {
+function Step({
+  projectId,
+  entry,
+  calls,
+}: {
+  projectId: string
+  entry: LedgerEntry
+  /** Every call this step made, in the order it made them. */
+  calls: LedgerEntry[]
+}) {
   const [open, setOpen] = useState(false)
   const mark = KIND_MARK[entry.kind] ?? entry.kind
   const failed = entry.status === 'failed'
+  const openable = entry.artifacts.length > 0 || calls.length > 0
 
   return (
     <div style={{ borderTop: '1px solid var(--line)', padding: '8px 0' }}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        disabled={entry.artifacts.length === 0}
+        disabled={!openable}
         style={{
           display: 'flex',
           width: '100%',
@@ -81,14 +111,18 @@ function Step({ projectId, entry }: { projectId: string; entry: LedgerEntry }) {
           font: 'inherit',
           padding: 0,
           textAlign: 'left',
-          cursor: entry.artifacts.length ? 'pointer' : 'default',
+          cursor: openable ? 'pointer' : 'default',
         }}
       >
         <span style={{ color: failed ? '#b0562f' : 'inherit' }}>
           {mark && <span className="muted">[{mark}] </span>}
           {entry.name}
+          {/* The name in the code, next to the name in the window: 「生成讲稿」
+              is what was attempted, `presentation-narration` is what ran. */}
+          {entry.skill && <span className="muted">{` ${entry.skill}`}</span>}
         </span>
         <span className="muted" style={{ marginLeft: 'auto' }}>
+          {calls.length > 0 && `${calls.length} 次调用 · `}
           {/* What actually did the work. 「配音」 says what was attempted;
               `tts:piper` says what it came out of, and two runs that differ
               there sound different. */}
@@ -106,6 +140,21 @@ function Step({ projectId, entry }: { projectId: string; entry: LedgerEntry }) {
 
       {open && (
         <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {calls.length > 0 && (
+            <div className="ledger__calls">
+              {calls.map((one) => (
+                <div key={one.seq} className="ledger__call">
+                  <span style={{ color: one.status === 'failed' ? '#b0562f' : 'inherit' }}>
+                    {one.name}
+                  </span>
+                  {one.detail && <span className="muted">{one.detail}</span>}
+                  <span className="muted" style={{ marginLeft: 'auto' }}>
+                    {one.duration_s >= 0.05 ? `${one.duration_s.toFixed(1)}s` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
           {entry.artifacts.map((artifact, index) => (
             <ArtifactView key={index} projectId={projectId} artifact={artifact} />
           ))}

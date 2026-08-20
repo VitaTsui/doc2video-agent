@@ -86,6 +86,12 @@ class ExecutionPlan(BaseModel):
     # Caller-written script: page index -> text for a full run, scene id -> text
     # for a targeted edit. Empty means "no script supplied" (placeholder path).
     narrations: dict[int, str] = Field(default_factory=dict)
+    # Set when the script came from the caller rather than being written here.
+    # Not the same question as "is `narrations` empty": a caller can submit an
+    # empty script, and that is still a caller's script — every page falls back
+    # to placeholder text. What it decides is only what the step is called, and
+    # 「生成讲稿」 for a step that writes nothing is the wrong name.
+    adopts_script: bool = False
     scene_narrations: dict[str, str] = Field(default_factory=dict)
     # Seconds a scene was asked to become. Informational: nothing here writes to
     # a length any more, but the caller needs the number to rewrite against it.
@@ -146,6 +152,7 @@ class Planner:
             summary="按调用方讲稿生成视频",
             stages=list(POST_SCRIPT_STAGES),
             narrations=dict(narrations),
+            adopts_script=True,
         )
 
     def initial_plan(self, message: str, project: VideoProject) -> ExecutionPlan:

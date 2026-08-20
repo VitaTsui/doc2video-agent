@@ -22,7 +22,7 @@ import re
 
 from pydantic import BaseModel
 
-from ..core import telemetry
+from ..core import ledger, telemetry
 from ..core.ids import scene_id
 from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisual, VisualType
 from ..tools.llm import model_schema
@@ -209,11 +209,12 @@ class NarrationSkill(Skill):
             self.log.warning("没有模型，无法按「%s」改写场景 %s", instruction, scene.scene_id)
 
         def rewrite() -> None:
-            result = self.llm.complete_json(
-                self._revise_prompt(scene, page, instruction, budget),
-                schema=model_schema(PageNarration),
-                system=load_prompt("narration"),
-            )
+            with ledger.call(self.llm.source, f"改写 {scene.scene_id}"):
+                result = self.llm.complete_json(
+                    self._revise_prompt(scene, page, instruction, budget),
+                    schema=model_schema(PageNarration),
+                    system=load_prompt("narration"),
+                )
             revised = PageNarration.model_validate(result)
             if revised.narration.strip():
                 self.rewrite_scene(scene, revised.narration.strip())
@@ -299,12 +300,13 @@ class NarrationSkill(Skill):
         drafts: dict[int, PageNarration] = {}
         for start in range(0, len(pages), BATCH_SIZE):
             batch = pages[start : start + BATCH_SIZE]
-            result = self.llm.complete_json(
-                self._prompt(batch, budgets, position=start),
-                schema=model_schema(NarrationResult),
-                system=load_prompt("narration"),
-                max_tokens=self.ctx.settings.llm_max_tokens,
-            )
+            with ledger.call(self.llm.source, f"第 {batch[0].index}-{batch[-1].index} 页"):
+                result = self.llm.complete_json(
+                    self._prompt(batch, budgets, position=start),
+                    schema=model_schema(NarrationResult),
+                    system=load_prompt("narration"),
+                    max_tokens=self.ctx.settings.llm_max_tokens,
+                )
             for page in NarrationResult.model_validate(result).pages:
                 if page.narration.strip():
                     drafts[page.index] = page

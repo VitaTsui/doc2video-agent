@@ -1157,6 +1157,24 @@ body {
   margin-top: 0;
 }
 
+/* The calls one step made, listed under it. Monospaced numbers so a column of
+   durations can be scanned rather than read one by one. */
+.ledger__calls {
+  display: flex;
+  flex-direction: column;
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+}
+
+.ledger__call {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* While the model writes: the count and a bar in place of the button, taking
    the space the button would have had so the row does not jump when it
    finishes and the button appears. */

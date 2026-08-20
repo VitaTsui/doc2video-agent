@@ -49,7 +49,8 @@ class RemotionAdapter(RendererAdapter):
         return f"Remotion 依赖未安装，请在 {self.renderer_dir} 下执行 pnpm install"
 
     def render_scene(self, plan: ScenePlan, out_path: Path) -> Path:
-        ledger.used(f"renderer:{self.name}")
+        # Recorded per scene: a thirty-scene render is thirty calls, and which
+        # one took nine seconds is the question someone actually asks.
         out_path.parent.mkdir(parents=True, exist_ok=True)
         staged = self._stage_assets(plan)
         props_path = out_path.with_suffix(".props.json")
@@ -76,13 +77,14 @@ class RemotionAdapter(RendererAdapter):
         ]
         log.debug("remotion: %s", " ".join(cmd))
         try:
-            subprocess.run(
-                cmd,
-                cwd=self.renderer_dir,
-                check=True,
-                capture_output=True,
-                timeout=RENDER_TIMEOUT,
-            )
+            with ledger.call(f"renderer:{self.name}", plan.scene_id):
+                subprocess.run(
+                    cmd,
+                    cwd=self.renderer_dir,
+                    check=True,
+                    capture_output=True,
+                    timeout=RENDER_TIMEOUT,
+                )
         except subprocess.CalledProcessError as exc:
             raise ToolFailed(
                 "Remotion 渲染失败",

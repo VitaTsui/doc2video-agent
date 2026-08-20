@@ -52,6 +52,10 @@ class Artifact(BaseModel):
 
 class EntryKind(StrEnum):
     STAGE = "stage"
+    # One call inside a stage: a model request, a page rasterised, a scene
+    # voiced, a clip rendered. A stage says a video was voiced in 40 seconds;
+    # these say which scene took eight of them.
+    CALL = "call"
     # The agent chose to do something, and why.
     DECISION = "decision"
     # A step did its lesser job because it could not do its better one.
@@ -64,6 +68,15 @@ class LedgerEntry(BaseModel):
     kind: EntryKind
     name: str
     detail: str = ""
+    # The skill this step is the work of, by the name it has everywhere else:
+    # `presentation-narration`, not 「生成讲稿」. The label says what was
+    # attempted, this says what ran, and only one of the two can be looked up
+    # in the code.
+    skill: str = ""
+    # For a call, the stage it happened inside — so a reader can fold the
+    # calls back under the step that made them instead of reading one long
+    # flat list where a thirty-scene render is thirty peers of 「解析文档」.
+    parent: int = 0
     # Which tools actually did the work: the parser, the voice, the renderer,
     # the model. A step named 「配音」 says what was attempted; `piper` or
     # `macos_say` says what it came out of, and those differ in ways someone

@@ -32,11 +32,12 @@ def parse_pdf(path: Path, assets_dir: Path, *, target_width: int = 1920) -> Docu
             zoom = target_width / page.rect.width if page.rect.width else 1.0
             matrix = fitz.Matrix(zoom, zoom)
 
-            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
-            image_name = f"page_{page_number:03d}.png"
-            pixmap.save(assets_dir / image_name)
+            with ledger.call("parser:pymupdf", f"第 {page_number} 页"):
+                pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+                image_name = f"page_{page_number:03d}.png"
+                pixmap.save(assets_dir / image_name)
 
-            elements = _extract_elements(page, page_number, zoom)
+                elements = _extract_elements(page, page_number, zoom)
             title = _guess_title(elements)
 
             pages.append(
