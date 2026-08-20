@@ -52,6 +52,7 @@ def _loop(tmp_path: Path, llm, renders: list) -> AgentLoop:
         render_all=lambda n: renders.append(("all", n)),
         render_scene=lambda s, n: renders.append(("scene", s, n)),
         revoice=lambda voice, rate: renders.append(("voice", voice, rate)),
+        write_all=lambda: renders.append(("write",)),
         reload=lambda: project,
     )
 
@@ -306,3 +307,43 @@ def test_changing_the_voice_does_not_go_near_the_script(tmp_path: Path):
     loop.run("把语音换成zh-CN-YunyangNeural")
 
     assert renders == [("voice", "zh-CN-YunyangNeural", 0.0)]
+
+
+def test_an_empty_write_script_hands_the_writing_to_the_skill(tmp_path: Path):
+    """Writing thirty pages in one answer is worse than writing them one by one.
+
+    Measured on the same 30-page deck: the narration skill wrote 2135–2483
+    characters, a model asked for the whole deck at once wrote 1800 twice —
+    and its pages carried the AI tics the writing prompt exists to keep out,
+    because that path never reads it.
+    """
+    renders: list = []
+    loop = _loop(
+        tmp_path,
+        _Scripted(
+            Decision(action="write_script", reason="还没有讲稿，先写一版"),
+            Decision(action="finish", reason="做完了", message="好了"),
+        ),
+        renders,
+    )
+
+    loop.run("帮我做一版")
+
+    assert renders == [("write",)]
+
+
+def test_naming_pages_still_replaces_exactly_those(tmp_path: Path):
+    """The other half of the same action: rewriting the pages it names."""
+    renders: list = []
+    loop = _loop(
+        tmp_path,
+        _Scripted(
+            Decision(action="write_script", reason="改第一页", narrations={"1": "新的开场。"}),
+            Decision(action="finish", reason="改完了", message="好了"),
+        ),
+        renders,
+    )
+
+    loop.run("第一页重写")
+
+    assert renders == [("all", {1: "新的开场。"})]

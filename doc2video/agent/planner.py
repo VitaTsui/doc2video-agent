@@ -128,6 +128,34 @@ class Planner:
             intent=intent,
         )
 
+    def write_plan(self, written: dict[int, str] | None = None) -> ExecutionPlan:
+        """Write the script here, then make the whole video from it.
+
+        The deck is already parsed and understood; what is missing is the
+        words. They are written by the narration skill — page by page, against
+        each page's character budget, under the writing prompt — rather than
+        by whoever asked for this.
+
+        That difference is measurable. On the same 30-page deck the skill wrote
+        2135–2483 characters; a model asked for the whole deck in one answer
+        wrote 1800 twice, and its pages came back with the AI tics the writing
+        prompt exists to keep out — 4 of them on a 9-page deck that the skill's
+        version had none of. One writing path, not two.
+        """
+        return ExecutionPlan(
+            summary="逐页写讲稿并生成视频",
+            stages=[
+                Stage.NARRATE,
+                Stage.VOICE,
+                Stage.DIRECT,
+                Stage.MOTION,
+                Stage.RENDER,
+                Stage.REVIEW,
+            ],
+            adopts_script=False,
+            narrations=dict(written or {}),
+        )
+
     def revoice_plan(self) -> ExecutionPlan:
         """Say the same words differently.
 
