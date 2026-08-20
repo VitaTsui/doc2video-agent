@@ -157,6 +157,35 @@ export async function plugins() {
   return body.steps
 }
 
+export interface PiperVoice {
+  key: string
+  name: string
+  quality: string
+  language: string
+  language_name: string
+  language_english: string
+  country: string
+  /** The model's size in bytes, so the button can say what it costs. */
+  size: number
+  installed: boolean
+}
+
+/** The published Piper voices, searchable. 「中文」/`zh`/`Chinese` all match. */
+export async function piperVoices(q = '', limit = 40) {
+  const query = new URLSearchParams({ q, limit: String(limit) })
+  return request<{ total: number; matched: number; voices: PiperVoice[] }>(
+    `/health/voices/piper?${query}`,
+  )
+}
+
+/** Download one, into the folder the provider reads. Tens of megabytes. */
+export async function installPiperVoice(key: string) {
+  return request<{ voices: PiperVoice[] }>('/health/voices/piper/install', {
+    method: 'POST',
+    body: JSON.stringify({ key }),
+  })
+}
+
 /** Choose the voice new videos start with. Empty hands it back to the machine. */
 export async function chooseVoice(voice: string) {
   return request<Awaited<ReturnType<typeof voicePacks>>>('/health/voices/current', {

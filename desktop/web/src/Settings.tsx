@@ -648,6 +648,91 @@ function Plugins() {
   )
 }
 
+/**
+ * The published Piper voices: search, and install the one you want.
+ *
+ * Piper is the one pack that is a file format, and its voices live in a
+ * HuggingFace repository — 174 of them, indexed with a size and an MD5 each.
+ * Finding one used to mean knowing that and reading a 240KB JSON by hand.
+ *
+ * The index is cached by the backend after the first look, so typing here is
+ * a local search rather than a request per keystroke.
+ */
+function PiperBrowser({ onInstalled }: { onInstalled: () => void }) {
+  const [query, setQuery] = useState('')
+  const [found, setFound] = useState<{ matched: number; voices: api.PiperVoice[] } | null>(null)
+  const [getting, setGetting] = useState('')
+  const [failure, setFailure] = useState('')
+
+  useEffect(() => {
+    let live = true
+    // A short wait rather than a request per keystroke: the index is on the
+    // backend's disk, but the round trip is still a round trip.
+    const timer = window.setTimeout(() => {
+      void api
+        .piperVoices(query)
+        .then((result) => live && setFound(result))
+        .catch((error: Error) => live && setFailure(api.describeError(error)))
+    }, 250)
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+    }
+  }, [query])
+
+  const install = async (voice: api.PiperVoice) => {
+    setFailure('')
+    setGetting(voice.key)
+    try {
+      await api.installPiperVoice(voice.key)
+      setFound(await api.piperVoices(query))
+      onInstalled()
+    } catch (error) {
+      setFailure(api.describeError(error))
+    } finally {
+      setGetting('')
+    }
+  }
+
+  return (
+    <div className="browse">
+      <input
+        className="browse__search"
+        value={query}
+        placeholder="搜音色：中文、zh、Chinese、huayan…"
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      {failure && <p className="modal__error">{failure}</p>}
+      {found && (
+        <>
+          <div className="muted browse__count">{`${found.matched} 个音色`}</div>
+          {found.voices.map((voice) => (
+            <div key={voice.key} className="browse__row">
+              <span className="browse__name">{voice.key}</span>
+              <span className="muted browse__lang">
+                {voice.language_name || voice.language_english}
+                {voice.country && ` · ${voice.country}`}
+              </span>
+              {voice.installed ? (
+                <span className="pack__tag pack__tag--on">已装</span>
+              ) : (
+                <Button
+                  size="small"
+                  loading={getting === voice.key}
+                  disabled={Boolean(getting)}
+                  onClick={() => void install(voice)}
+                >
+                  {`下载 ${Math.max(1, Math.round(voice.size / 1024 / 1024))}MB`}
+                </Button>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
 /** The engine and voice a video would be made with right now, as one line. */
 function inUse(state: Awaited<ReturnType<typeof api.voicePacks>>): string | null {
   const pack =
@@ -785,6 +870,9 @@ function VoiceSettings({ busy }: { busy: boolean }) {
               operating system's, and one is a file you drop in a folder. */}
           {pack.how && <div className="muted pack__note">{pack.how}</div>}
           {pack.folder && <div className="pack__folder">{pack.folder}</div>}
+          {/* 174 published voices is a thing you look through rather than a
+              list you read, so it is searchable and it downloads in place. */}
+          {pack.id === 'piper' && <PiperBrowser onInstalled={load} />}
           {pack.voices.length > 0 && (
             <div className="pack__voices">
               {pack.voices.map((voice) => (

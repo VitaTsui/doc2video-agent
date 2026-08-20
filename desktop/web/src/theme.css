@@ -1243,6 +1243,46 @@ body {
   border-color: var(--accent);
 }
 
+.browse {
+  margin-top: 10px;
+}
+
+.browse__search {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg);
+}
+
+.browse__count {
+  margin: 8px 0 2px;
+  font-size: 12px;
+}
+
+.browse__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12.5px;
+  border-top: 1px solid var(--line);
+}
+
+.browse__name {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.browse__lang {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* A path, so it reads as one and can be copied without a stray space. */
 .pack__folder {
   margin-top: 4px;

@@ -49,7 +49,7 @@ def catalogue(settings: Settings | None = None) -> list[VoicePack]:
     from .edge import DEFAULT_VOICE as EDGE_DEFAULT
     from .edge import EdgeProvider
     from .kokoro import KokoroProvider
-    from .piper import PiperProvider
+    from .piper import PiperProvider, engine_present
     from .providers import MacOSSayProvider
 
     settings = settings or get_settings()
@@ -119,8 +119,18 @@ def catalogue(settings: Settings | None = None) -> list[VoicePack]:
         ),
     ]
     # A pack with no voices on this machine is not a choice; it is a line of
-    # text explaining something the reader cannot act on.
-    return [pack for pack in packs if pack.installed or pack.packages]
+    # text explaining something the reader cannot act on. Piper is the
+    # exception in one direction: with its engine present but no voice file
+    # yet, the pack is exactly what someone needs to see — that is the state
+    # its downloader exists for. With the engine absent (macOS: the wheel's
+    # espeak data path is compiled in as the build machine's, re-checked on
+    # 1.7.x today) it stays hidden, because a voice downloaded there could not
+    # be spoken.
+    return [
+        pack
+        for pack in packs
+        if pack.installed or pack.packages or (pack.id == "piper" and engine_present())
+    ]
 
 
 def in_use(settings: Settings | None = None) -> tuple[str, str]:
