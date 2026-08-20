@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     doctor = sub.add_parser("doctor", help="检查运行环境与可用能力")
+    doctor.add_argument(
+        "--strict",
+        action="store_true",
+        help="缺少关键能力时退出码非零（给 CI 的运行时自检用）",
+    )
     doctor.set_defaults(func=cmd_doctor)
 
     run = sub.add_parser("run", help="从文档生成视频")
@@ -110,7 +115,7 @@ def cmd_voices(args) -> int:
     return 0
 
 
-def cmd_doctor(_args) -> int:
+def cmd_doctor(args) -> int:
     settings = get_settings()
 
     print("== 能力体检 ==")
@@ -148,7 +153,31 @@ def cmd_doctor(_args) -> int:
         print(f"  {mark} {name:8s} {info['purpose']}")
 
     print(f"\n工程目录：{settings.projects_dir.resolve()}")
+
+    # A report that only ever prints is a report nobody acts on. The packaged
+    # Windows runtime shipped mute for several releases while this very check
+    # ran in CI and wrote 「TTS: silent」 in the log — the voice was in the
+    # archive, nothing was looking where it landed, and printing it was not
+    # enough to stop the release.
+    if getattr(args, "strict", False):
+        missing = [name for name, ok in _essentials(settings).items() if not ok]
+        if missing:
+            print(f"\n自检失败：{'、'.join(missing)}", file=sys.stderr)
+            return 1
     return 0
+
+
+def _essentials(settings) -> dict[str, bool]:
+    """What a runtime has to be able to do to be worth shipping."""
+    return {
+        # Silence is a legitimate fallback at run time and a defect in a build:
+        # the packaged runtime carries a voice, so resolving to `silent` means
+        # it is not being found.
+        "语音（TTS 落到了 silent）": TTSTool(settings).provider_name != "silent",
+        "渲染器（一个可用的都没有）": any(
+            info["available"] for info in renderer_status(settings).values()
+        ),
+    }
 
 
 def cmd_run(args) -> int:

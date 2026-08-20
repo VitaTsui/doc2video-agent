@@ -128,11 +128,18 @@ jobs:
           # 的 storage 目录：没有它 storage_dir 会落到 cwd 下，而 cwd 是 /。
           work="$RUNNER_TEMP/selfcheck"
           mkdir -p "$work"
+          # D2V_NODE_DIR as the app sets it: the runtime's own font and voice
+          # directories are found relative to it, so without it this checks a
+          # layout nobody runs. --strict turns the report into a gate — it
+          # printed 「TTS: silent」 for several releases and let them out.
+          node="$GITHUB_WORKSPACE/dist/runtime/node"
           if [ "${{ runner.os }}" = "Windows" ]; then
-            D2V_STORAGE_DIR="$work" ./dist/runtime/python/python.exe -m doc2video.cli doctor
+            D2V_STORAGE_DIR="$work" D2V_NODE_DIR="$node" \
+              ./dist/runtime/python/python.exe -m doc2video.cli doctor --strict
           else
-            (cd / && env -i "D2V_STORAGE_DIR=$work" \
-              "$GITHUB_WORKSPACE/dist/runtime/python/bin/python3" -m doc2video.cli doctor)
+            (cd / && env -i "D2V_STORAGE_DIR=$work" "D2V_NODE_DIR=$node" \
+              "$GITHUB_WORKSPACE/dist/runtime/python/bin/python3" \
+              -m doc2video.cli doctor --strict)
           fi
 
       - name: 发布 base

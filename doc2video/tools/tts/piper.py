@@ -62,11 +62,30 @@ class PiperProvider(TTSProvider):
             return str(exc)[:120]
         return None
 
-    def _voices_dir(self) -> Path:
+    def _voice_dirs(self) -> list[Path]:
+        """Where a voice may be, in the order a voice should win.
+
+        Two places, and the second one is why a packaged app was silent. The
+        runtime ships a voice at `<runtime>/voices` — the build downloads it so
+        the first render does not wait on 61MB — but this only ever looked in
+        the data directory, which `doc2video voices` writes to and a fresh
+        install has nothing in. Piper then reported itself unavailable, and on
+        a machine with no `say` the search fell through to the silent provider:
+        a video with an audio track, correct durations, and no sound.
+
+        The downloaded one comes first because someone chose it; the shipped
+        one is the default nobody had to choose.
+        """
         from ...core.config import get_settings
 
         settings = self._settings or get_settings()
-        return settings.storage_dir / "voices"
+        # The same anchor `bundled_fonts_dir` uses: the runtime root is the
+        # parent of the Node workspace, and only the runtime has one there.
+        return [settings.storage_dir / "voices", settings.node_dir.parent / "voices"]
+
+    def _voices_dir(self) -> Path:
+        """The directory to tell someone about when there is no voice at all."""
+        return self._voice_dirs()[0]
 
     def voice_path(self) -> Path | None:
         """The model to speak with: an explicit path, a name, or whatever is there.
@@ -83,15 +102,20 @@ class PiperProvider(TTSProvider):
             path = Path(wanted).expanduser()
             return path if path.exists() else None
 
-        directory = self._voices_dir()
-        if wanted:
-            named = directory / f"{wanted}.onnx"
-            return named if named.exists() else None
+        directories = [d for d in self._voice_dirs() if d.is_dir()]
 
-        preferred = directory / f"{DEFAULT_VOICE}.onnx"
-        if preferred.exists():
+        def named(name: str) -> Path | None:
+            found = (d / f"{name}.onnx" for d in directories)
+            return next((path for path in found if path.exists()), None)
+
+        if wanted:
+            return named(wanted)
+        if (preferred := named(DEFAULT_VOICE)) is not None:
             return preferred
-        return next(iter(sorted(directory.glob("*.onnx"))), None)
+        for directory in directories:
+            if found := next(iter(sorted(directory.glob("*.onnx"))), None):
+                return found
+        return None
 
     # -- synthesis -----------------------------------------------------
     def synthesize(self, text: str, out_path: Path, *, voice: str = "", rate: float = 1.0) -> float:
