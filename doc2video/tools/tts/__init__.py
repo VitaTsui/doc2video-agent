@@ -149,6 +149,11 @@ class TTSTool:
         return self._provider.name
 
     @property
+    def chars_per_second(self) -> float:
+        """How fast this machine's chosen voice actually speaks Chinese."""
+        return self._provider.chars_per_second
+
+    @property
     def voice(self) -> str:
         return self._settings.tts_voice
 

@@ -48,6 +48,16 @@ class TTSResult:
 class TTSProvider:
     name = "base"
 
+    # How fast this engine actually speaks Chinese, in characters a second.
+    #
+    # The writing budget is computed from this before a word is written, so a
+    # wrong number here guarantees a video that misses its target length no
+    # matter how well the script is written. Measured on the same page of real
+    # narration: `say` 4.75, Edge's Yunyang 4.15 — the single shared constant
+    # that used to serve both put Edge 11% over before the model had done
+    # anything wrong.
+    chars_per_second = 4.6
+
     # The multiplier that gives this engine a comfortable narration pace.
     #
     # `1.0` does not mean the same thing to two engines: `say` lands near 266
@@ -91,11 +101,17 @@ class TTSProvider:
 # --------------------------------------------------------------------------
 
 
-def estimate_duration(text: str, rate: float = 1.0) -> float:
-    """Estimate spoken duration from text, mixing CJK and Latin scripts."""
+def estimate_duration(text: str, rate: float = 1.0, chars_per_second: float | None = None) -> float:
+    """Estimate spoken duration from text, mixing CJK and Latin scripts.
+
+    `chars_per_second` is the engine that will actually speak it. Left out, the
+    figure is the middle of the ones this project has measured — fine for a
+    rough guess and wrong by a tenth for whichever engine is furthest from it.
+    """
+    pace = chars_per_second or CJK_CHARS_PER_SECOND
     cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
     latin_words = len([w for w in _latin_only(text).split() if w])
-    seconds = cjk / CJK_CHARS_PER_SECOND + latin_words / LATIN_WORDS_PER_SECOND
+    seconds = cjk / pace + latin_words / LATIN_WORDS_PER_SECOND
     return max(0.8, seconds / max(rate, 0.1))
 
 

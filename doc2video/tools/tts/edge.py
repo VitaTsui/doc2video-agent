@@ -56,6 +56,9 @@ class EdgeProvider(TTSProvider):
     # Eight percent under its own pace, which is where it stopped sounding
     # hurried on a page of real narration.
     natural_rate = 0.92
+    # Measured over a 30-page deck at that pace: 2483 characters in 598
+    # seconds of speech.
+    chars_per_second = 4.15
 
     def available(self) -> bool:
         return self._import_error() is None
