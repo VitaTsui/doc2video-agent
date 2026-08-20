@@ -83,6 +83,56 @@ class ChartFacts(BaseModel):
     series: list[ChartSeriesFacts] = Field(default_factory=list)
 
 
+class DiagramEdge(BaseModel):
+    """One arrow, by the elements it actually joins."""
+
+    source: str
+    target: str
+    # What the connector had written on it, when anything did.
+    label: str = ""
+
+
+class DiagramFacts(BaseModel):
+    """A flow on a slide, read rather than recognised.
+
+    Present only when the deck *declares* the structure: a connector in OOXML
+    names the shapes it starts and ends at, so the graph is a fact about the
+    file rather than a guess about a picture. That distinction is the whole
+    gate — a diagram whose arrows are drawn as free-floating lines cannot be
+    read this way, and is left as the picture it is (方案 §12、§20).
+    """
+
+    nodes: list[str] = Field(default_factory=list)
+    edges: list[DiagramEdge] = Field(default_factory=list)
+
+    def order(self) -> list[str]:
+        """The nodes in the order the arrows walk them.
+
+        A flow is told in the order it flows: the narration and the camera
+        should follow the arrows rather than the reading order of the boxes,
+        which on a slide is often neither left-to-right nor top-to-bottom.
+        Cycles keep their remaining nodes rather than dropping them.
+        """
+        incoming = {node: 0 for node in self.nodes}
+        outgoing: dict[str, list[str]] = {node: [] for node in self.nodes}
+        for edge in self.edges:
+            if edge.source in incoming and edge.target in incoming:
+                incoming[edge.target] += 1
+                outgoing[edge.source].append(edge.target)
+
+        ready = [node for node in self.nodes if incoming[node] == 0]
+        walked: list[str] = []
+        while ready:
+            node = ready.pop(0)
+            walked.append(node)
+            for nxt in outgoing[node]:
+                incoming[nxt] -= 1
+                if incoming[nxt] == 0:
+                    ready.append(nxt)
+        walked += [node for node in self.nodes if node not in walked]
+        return walked
+
+
 class SlideElement(BaseModel):
     """One addressable thing on a page — the unit the director points at."""
 
@@ -115,6 +165,11 @@ class DocumentPage(BaseModel):
     page_type: PageType = PageType.CONTENT
     title: str = ""
     elements: list[SlideElement] = Field(default_factory=list)
+    # The flow this page draws, when it declares one. None means "this page
+    # has no readable structure", which is not the same as "this page has no
+    # diagram" — an architecture drawn as a picture is still a picture, and
+    # the honest thing to do with it is show it.
+    diagram: DiagramFacts | None = None
     speaker_notes: str = ""
     # Rendered full-resolution page image, relative to the project directory.
     image_path: str | None = None

@@ -102,6 +102,11 @@ class DirectorSkill(Skill):
             if element is None or not _worth_pointing_at(element):
                 continue
             score = element.importance + (0.5 if segment.emphasis else 0.0)
+            # A node in a declared flow is worth more than a box that happens
+            # to be on the page: the arrows say this one is part of the thing
+            # being explained.
+            if page.diagram is not None and target_id in page.diagram.nodes:
+                score += 0.3
             action_type = self._pick_action(segment, element, page)
             choice = ActionChoice(segment_id=segment.id, type=action_type, target=target_id)
             scored.append((score, choice))

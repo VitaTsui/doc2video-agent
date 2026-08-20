@@ -360,6 +360,14 @@ class NarrationSkill(Skill):
             lines.append(
                 f"\n## 第 {page.index} 页｜{page.page_type.value}｜{page.title or '无标题'}"
             )
+            if flow := _flow_of(page):
+                # The order the arrows go, which is the order the page has to
+                # be explained in. Given to the writer rather than used to
+                # reorder the camera: a shot is bound to the sentence that
+                # mentions it, and pointing at a box the current sentence is
+                # not talking about is worse than crossing the diagram out of
+                # order (方案 §20).
+                lines.append(f"这一页画的是一条流程，按箭头走是：{flow}")
             lines.append(f"字数预算：{self._char_budget(budgets[page.index])} 字（正负 15%）")
             if page.summary:
                 lines.append(f"页面摘要：{page.summary}")
@@ -491,3 +499,12 @@ class NarrationSkill(Skill):
 def _truncate(text: str, limit: int) -> str:
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def _flow_of(page: DocumentPage) -> str:
+    """A page's declared flow as words, or empty when it declares none."""
+    if page.diagram is None:
+        return ""
+    labels = {e.id: (e.text or e.label or e.id).strip() for e in page.elements}
+    walked = [labels.get(node, node) for node in page.diagram.order()]
+    return " → ".join(name for name in walked if name)

@@ -25,6 +25,8 @@ from ...schemas import (
     BBox,
     ChartFacts,
     ChartSeriesFacts,
+    DiagramEdge,
+    DiagramFacts,
     DocumentModel,
     DocumentPage,
     ElementKind,
@@ -69,11 +71,13 @@ def parse_ppt(
             elements = _extract_elements(
                 slide, index, slide_w, slide_h, px_w, px_h, assets_dir, theme
             )
+            diagram = _diagram_facts(slide, elements)
         pages.append(
             DocumentPage(
                 index=index,
                 title=_slide_title(slide, elements),
                 elements=elements,
+                diagram=diagram,
                 speaker_notes=_notes(slide),
                 width=float(px_w),
                 height=float(px_h),
@@ -93,6 +97,75 @@ def parse_ppt(
 # --------------------------------------------------------------------------
 # elements
 # --------------------------------------------------------------------------
+
+
+# The connector's own XML names the shapes it joins. Reading those is the
+# difference between a diagram this project may redraw and one it must leave
+# alone: a declared endpoint is a fact about the file, an inferred one is a
+# guess about a picture.
+_A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_P_NS = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+# A flow of one arrow is a label with a line under it, not a diagram.
+MIN_DIAGRAM_EDGES = 2
+
+
+def _diagram_facts(slide, elements: list[SlideElement]) -> DiagramFacts | None:
+    """The flow this slide draws, when it says what it joins to what.
+
+    The gate the whole thing turns on. A connector that declares its start and
+    end shapes gives a graph that is read, not recognised — nothing here looks
+    at a picture and decides what it means. A slide whose arrows are loose
+    lines produces nothing, and the picture stays the picture.
+    """
+    by_shape: dict[str, str] = {}
+    for shape, element in _shape_pairs(slide, elements):
+        try:
+            by_shape[str(shape.shape_id)] = element.id
+        except (AttributeError, ValueError):
+            continue
+
+    edges: list[DiagramEdge] = []
+    for shape in slide.shapes:
+        node = getattr(shape, "_element", None)
+        if node is None or not node.tag.endswith("}cxnSp"):
+            continue
+        start = node.find(f".//{_A_NS}stCxn")
+        end = node.find(f".//{_A_NS}endCxn")
+        if start is None or end is None:
+            continue
+        source = by_shape.get(start.get("id", ""))
+        target = by_shape.get(end.get("id", ""))
+        if not source or not target or source == target:
+            continue
+        edges.append(DiagramEdge(source=source, target=target))
+
+    if len(edges) < MIN_DIAGRAM_EDGES:
+        return None
+    nodes: list[str] = []
+    for edge in edges:
+        for end_id in (edge.source, edge.target):
+            if end_id not in nodes:
+                nodes.append(end_id)
+    return DiagramFacts(nodes=nodes, edges=edges)
+
+
+def _shape_pairs(slide, elements: list[SlideElement]):
+    """Match each shape back to the element extracted from it, by text.
+
+    Position would be sturdier, but the extractor drops shapes it has no use
+    for, so indices do not line up. Text does, for the shapes a diagram is
+    made of: a node in a flow has a name on it, which is why it is a node.
+    """
+    by_text: dict[str, SlideElement] = {}
+    for element in elements:
+        key = (element.text or "").strip()
+        if key and key not in by_text:
+            by_text[key] = element
+    for shape in slide.shapes:
+        text = (getattr(shape, "text", "") or "").strip()
+        element = by_text.get(text)
+        if element is not None:
+            yield shape, element
 
 
 def _deck_theme(source: Path):
