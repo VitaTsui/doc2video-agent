@@ -336,6 +336,17 @@ def parse_intent_rules(message: str, current: VideoIntent) -> VideoIntent:
     return intent
 
 
+# Voices people ask for by character rather than by name. The value is the
+# voice that character maps to, whichever engine owns it — 「播音腔」 is a
+# request about how it should sound, not about which package is installed.
+_VOICE_CHARACTER = {
+    "播音": "zh-CN-YunyangNeural",
+    "新闻": "zh-CN-YunyangNeural",
+    "主播": "zh-CN-YunyangNeural",
+    "解说": "zh-CN-YunjianNeural",
+}
+
+
 def _voice_from(message: str) -> str:
     """A voice named in the message, if this machine has one to match.
 
@@ -344,14 +355,22 @@ def _voice_from(message: str) -> str:
     no Chinese voices gets nothing rather than a name that will fail at
     synthesis time.
     """
-    from ..tools.tts import VOICE_GENDER, voices_available
+    from ..tools.tts import gender_of, voices_available
+    from ..tools.tts.edge import EdgeProvider
+
+    # A character asked for by name, if the engine that has it is installed.
+    for word, voice in _VOICE_CHARACTER.items():
+        if word in message and voice in EdgeProvider().voices():
+            return voice
 
     installed = voices_available()
     if not installed:
         return ""
     lowered = message.lower()
     for name in installed:
-        if name.lower() in lowered:
+        # By the speaker's name rather than the whole listing entry: nobody
+        # types 「用 Flo (中文（中国大陆）) 讲」.
+        if name.split("(")[0].strip().lower() in lowered:
             return name
     wanted = None
     if any(word in message for word in ("女声", "女生", "女的")):
@@ -360,7 +379,7 @@ def _voice_from(message: str) -> str:
         wanted = "male"
     if wanted is None:
         return ""
-    return next((name for name in installed if VOICE_GENDER.get(name) == wanted), "")
+    return next((name for name in installed if gender_of(name) == wanted), "")
 
 
 def parse_edit_rules(message: str, project: VideoProject) -> EditPlan:

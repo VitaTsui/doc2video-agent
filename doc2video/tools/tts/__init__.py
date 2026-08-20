@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 
-from ...core import ledger
+from ...core import ledger, telemetry
 from ...core.config import Settings, get_settings
 from ...core.logging import get_logger
 from . import align
@@ -18,8 +18,10 @@ from .base import (
     join_units,
     weight_of,
 )
+from .edge import EdgeProvider
+from .kokoro import KokoroProvider
 from .pronounce import for_speech
-from .providers import resolve_provider
+from .providers import AUTO_ORDER, resolve_provider
 from .units import plan_units
 
 log = get_logger(__name__)
@@ -55,6 +57,18 @@ VOICE_GENDER = {
 }
 
 
+def gender_of(voice: str) -> str | None:
+    """Whether this voice is spoken of as male or female, if we know.
+
+    Matched on the first word: macOS names its Mandarin voices
+    「Flo (中文（中国大陆）)」, and the part that identifies the speaker is the
+    part before the language. Keying the table on the full name meant 「换个
+    女声」 matched exactly one voice out of nine.
+    """
+    head = voice.split("(")[0].strip()
+    return VOICE_GENDER.get(voice) or VOICE_GENDER.get(head)
+
+
 def voices_available(settings: Settings | None = None) -> list[str]:
     """The Chinese voices this machine can actually speak with.
 
@@ -72,7 +86,63 @@ class TTSTool:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
         self._provider: TTSProvider = resolve_provider(self._settings.tts_provider)
+        self._fallback: TTSProvider | None = None
         log.info("TTS provider: %s", self._provider.name)
+
+    def _engine_for(self, voice: str) -> TTSProvider:
+        """The engine that owns this voice, when a voice was named.
+
+        A voice name says which engine it belongs to — `zh-CN-YunyangNeural` is
+        Edge's, `zm_yunxi` is Kokoro's, `Tingting` is the system's. Reading it
+        that way is what lets 「用播音腔讲」 work: the desktop app has no place
+        to set an environment variable, and asking someone to set one to change
+        a voice is asking them not to.
+        """
+        if not voice or voice in self._provider.voices():
+            return self._provider
+        for provider_cls in (EdgeProvider, KokoroProvider, *AUTO_ORDER):
+            candidate = provider_cls()
+            if voice in candidate.voices() and candidate.available():
+                if candidate.name != self._provider.name:
+                    log.info("按音色 %s 切到 %s", voice, candidate.name)
+                return candidate
+        return self._provider
+
+    def _speak_once(self, text: str, out_path: Path, *, voice: str, rate: float) -> float:
+        """One clip, with a local voice standing by.
+
+        The chosen voice may live on someone else's machine. Losing the network
+        at page nine of thirty should cost that page its intended voice, not
+        cost the run — so the first failure switches to the best local voice
+        and the rest of the deck is spoken by that one. Recorded as a
+        degradation, because a video half in one voice and half in another is
+        something the person who made it has to be told about.
+        """
+        self._provider = self._engine_for(voice)
+        try:
+            return self._provider.synthesize(text, out_path, voice=voice, rate=rate)
+        except Exception as exc:  # noqa: BLE001 - any failure, one answer
+            local = self._local_fallback()
+            if local is None:
+                raise
+            telemetry.record_degradation(
+                "配音", f"{self._provider.name} 合成失败，改用 {local.name}：{str(exc)[:120]}"
+            )
+            log.warning("%s 合成失败，改用 %s：%s", self._provider.name, local.name, exc)
+            self._provider = local
+            return local.synthesize(text, out_path, voice="", rate=local.natural_rate)
+
+    def _local_fallback(self) -> TTSProvider | None:
+        """The best voice on this machine, whatever the chosen one was."""
+        if self._fallback is None:
+            for provider_cls in AUTO_ORDER:
+                if provider_cls.name == self._provider.name:
+                    continue
+                candidate = provider_cls()
+                if candidate.available():
+                    self._fallback = candidate
+                    break
+        return self._fallback
 
     @property
     def provider_name(self) -> str:
@@ -150,9 +220,7 @@ class TTSTool:
         if len(units) <= 1:
             text = "".join(sentences)
             with ledger.call(f"tts:{self._provider.name}", f"{len(text)} 字"):
-                duration = self._provider.synthesize(
-                    spoken(text), out_path, voice=voice, rate=rate
-                )
+                duration = self._speak_once(spoken(text), out_path, voice=voice, rate=rate)
             segments, source = self._time(text, out_path, sentences, duration)
             return segments, duration, source
 
@@ -163,7 +231,7 @@ class TTSTool:
             for index, unit in enumerate(units):
                 clip = work / f"{index:02d}.wav"
                 with ledger.call(f"tts:{self._provider.name}", f"{len(unit.text)} 字"):
-                    self._provider.synthesize(spoken(unit.text), clip, voice=voice, rate=rate)
+                    self._speak_once(spoken(unit.text), clip, voice=voice, rate=rate)
                 clips.append(clip)
 
             windows = join_units(clips, [unit.pause_before for unit in units], out_path)

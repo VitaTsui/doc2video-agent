@@ -32,7 +32,9 @@ log = get_logger(__name__)
 # Kokoro's own sample rate. Resampling here would cost quality for nothing —
 # the pipeline mixes clips through ffmpeg, which handles rates itself.
 SAMPLE_RATE = 24000
-DEFAULT_VOICE = "zf_xiaoxiao"
+# Picked by ear against the other seven, on a page of real narration: the
+# steadiest of them for explaining something. The others are still selectable.
+DEFAULT_VOICE = "zm_yunxi"
 # `z` is Mandarin. The voices are named by language, gender and speaker.
 LANG_CODE = "z"
 VOICES = (

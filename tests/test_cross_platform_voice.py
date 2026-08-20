@@ -158,23 +158,31 @@ def test_each_provider_answers_for_its_own_voices(tmp_path: Path):
     assert piper.voices() == ["zh_CN-huayan-medium"]
 
 
-def test_kokoro_is_preferred_when_present_and_invisible_when_not():
-    """A better voice, picked up if it happens to be installed.
+def test_the_automatic_order_stays_local_and_leads_with_say():
+    """What "best" is, after a measurement and an ear disagreed.
 
-    Measured rather than preferred on taste: on one real page `say` pauses
-    varied by a coefficient of 0.13 — the signature of a punctuation table —
-    against Kokoro's 0.66 on the same sentences, and Kokoro ran 4.2 seconds
-    between breaths where `say` never passed 2.0.
+    Kokoro varies its pauses five times as much as `say` (0.66 against 0.13),
+    which is the measurable half of sounding like a person rather than a
+    punctuation table — and on that number this order had it first. Listening
+    settled it the other way for Mandarin narration: Kokoro carries an accent,
+    and for explaining a deck an even, accentless delivery wins over a livelier
+    foreign-sounding one. The metric was necessary and could not hear an
+    accent; nothing measurable here could have.
 
-    Deliberately not a dependency: it brings torch, and the packaged runtime is
-    already the slowest part of installing this app. Absent, the order falls
-    through exactly as it did before.
+    Kokoro keeps the place it earns: ahead of Piper, which is what Windows and
+    Linux choose between.
     """
     from doc2video.tools.tts.kokoro import VOICES, KokoroProvider
     from doc2video.tools.tts.providers import AUTO_ORDER
 
     names = [cls.name for cls in AUTO_ORDER]
-    assert names.index("kokoro") < names.index("macos_say") < names.index("silent")
+    assert names.index("macos_say") < names.index("kokoro") < names.index("piper")
+
+    # And the automatic choice never reaches for the network. Everything in
+    # `AUTO_ORDER` runs on the machine it is installed on; a video that cannot
+    # be made on a train is a different product, so the networked voice has to
+    # be asked for by name.
+    assert "edge" not in names
 
     provider = KokoroProvider()
     if not provider.available():
@@ -182,6 +190,29 @@ def test_kokoro_is_preferred_when_present_and_invisible_when_not():
         assert "kokoro" in provider.unavailable_reason()
     else:
         assert set(provider.voices()) == set(VOICES)
+
+
+def test_the_broadcast_voice_is_asked_for_and_degrades_locally():
+    """Chosen by ear over everything local, and it lives somewhere else.
+
+    Losing the network at page nine of thirty should cost that page its
+    intended voice, not cost the run — so a failure switches to the best local
+    voice and records a degradation, which is how the rest of this project
+    handles "the better path is unavailable".
+    """
+    import inspect
+
+    from doc2video.tools.tts import TTSTool
+    from doc2video.tools.tts.edge import DEFAULT_VOICE, EdgeProvider
+
+    assert DEFAULT_VOICE == "zh-CN-YunyangNeural"
+    # Slower than its own default: eight percent under is where it stopped
+    # sounding hurried.
+    assert EdgeProvider.natural_rate < 1.0
+
+    body = inspect.getsource(TTSTool._speak_once)
+    assert "record_degradation" in body
+    assert "_local_fallback" in body
 
 
 def test_an_unknown_voice_falls_back_rather_than_failing():
@@ -219,6 +250,14 @@ def test_the_upgrade_is_a_command_and_not_something_a_render_does():
 
     assert "voice-upgrade" in inspect.getsource(cli.main)
     body = inspect.getsource(cli.cmd_voice_upgrade)
-    assert "pip" in body and "install" in body
-    # Says what it costs before it spends it.
+    # Says what it costs before it spends it — both the megabytes and, for the
+    # networked one, that it is networked at all.
     assert "400MB" in body
+    assert "要联网" in body
+
+    # And it can actually put a package where it needs to go. The first version
+    # shelled out to `python -m pip`, which a uv-made environment does not have
+    # — it failed on the developer's own checkout, which is where it was going
+    # to fail for everyone.
+    installer = inspect.getsource(cli._install_into_runtime)
+    assert "uv" in installer and "ensurepip" in installer
