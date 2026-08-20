@@ -50,7 +50,8 @@ def parse_ppt(
 
     pages: list[DocumentPage] = []
     for index, slide in enumerate(prs.slides, start=1):
-        elements = _extract_elements(slide, index, slide_w, slide_h, px_w, px_h, assets_dir)
+        with ledger.call("parser:python-pptx", f"第 {index} 页"):
+            elements = _extract_elements(slide, index, slide_w, slide_h, px_w, px_h, assets_dir)
         pages.append(
             DocumentPage(
                 index=index,
