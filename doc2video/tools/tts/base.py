@@ -48,6 +48,15 @@ class TTSResult:
 class TTSProvider:
     name = "base"
 
+    # The multiplier that gives this engine a comfortable narration pace.
+    #
+    # `1.0` does not mean the same thing to two engines: `say` lands near 266
+    # characters a minute at its own default, Kokoro near 316 — fast enough to
+    # be the complaint people actually make. So the engine declares what its
+    # own comfortable speed is, and a request like 「慢一点」 is applied on top
+    # of that rather than instead of it.
+    natural_rate = 1.0
+
     def available(self) -> bool:
         return False
 

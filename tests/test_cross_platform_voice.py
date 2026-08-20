@@ -189,3 +189,36 @@ def test_an_unknown_voice_falls_back_rather_than_failing():
     from doc2video.tools.tts.kokoro import DEFAULT_VOICE, VOICES
 
     assert DEFAULT_VOICE in VOICES
+
+
+def test_each_engine_declares_its_own_comfortable_pace():
+    """`1.0` does not mean the same thing to two engines.
+
+    Measured on the same sentence: `say` lands near 266 characters a minute at
+    its own default, Kokoro near 316 — fast enough to be the complaint people
+    actually make. So a request like 「慢一点」 is applied on top of what the
+    engine calls normal, not instead of it.
+    """
+    from doc2video.tools.tts.kokoro import KokoroProvider
+    from doc2video.tools.tts.providers import MacOSSayProvider
+
+    assert KokoroProvider.natural_rate < MacOSSayProvider.natural_rate == 1.0
+    # 「慢一点」 on a fast engine has to end up slower than normal on it.
+    assert KokoroProvider.natural_rate * 0.9 < KokoroProvider.natural_rate
+
+
+def test_the_upgrade_is_a_command_and_not_something_a_render_does():
+    """Several hundred megabytes fetched mid-render looks exactly like a hang.
+
+    The same rule the Piper voice download follows: the provider reports itself
+    unavailable and points at a command, rather than fetching on its own.
+    """
+    import inspect
+
+    from doc2video import cli
+
+    assert "voice-upgrade" in inspect.getsource(cli.main)
+    body = inspect.getsource(cli.cmd_voice_upgrade)
+    assert "pip" in body and "install" in body
+    # Says what it costs before it spends it.
+    assert "400MB" in body

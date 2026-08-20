@@ -107,7 +107,8 @@ class TTSTool:
             emphasis=emphasis,
             pronunciation=pronunciation,
             voice=voice or self._settings.tts_voice,
-            rate=rate or self._settings.tts_speech_rate,
+            # What was asked for, relative to what this engine calls normal.
+            rate=self._provider.natural_rate * (rate or self._settings.tts_speech_rate or 1.0),
         )
         return TTSResult(
             path=out_path,

@@ -51,6 +51,10 @@ _pipeline = None
 
 class KokoroProvider(TTSProvider):
     name = "kokoro"
+    # 316 characters a minute at its own default, which is faster than anyone
+    # wants a technical deck read to them. 0.85 puts it near 288, in the band
+    # a listener follows.
+    natural_rate = 0.85
 
     def available(self) -> bool:
         return self._import_error() is None

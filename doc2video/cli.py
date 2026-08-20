@@ -58,6 +58,12 @@ def main(argv: list[str] | None = None) -> int:
     metrics.add_argument("--limit", type=int, default=500, help="参与统计的最近运行条数")
     metrics.set_defaults(func=cmd_metrics)
 
+    upgrade = sub.add_parser(
+        "voice-upgrade", help="装一个更自然的声音（Kokoro，约 400MB，一次性）"
+    )
+    upgrade.add_argument("--yes", action="store_true", help="不询问直接安装")
+    upgrade.set_defaults(func=cmd_voice_upgrade)
+
     voices = sub.add_parser("voices", help="下载 Piper 语音模型（Windows / Linux 的声音来源）")
     voices.add_argument(
         "name", nargs="?", default="", help="音色名，默认 zh_CN-huayan-medium（约 61MB）"
@@ -112,6 +118,57 @@ def cmd_voices(args) -> int:
         print("Piper 现在可用")
     else:
         print(f"仍不可用：{provider.unavailable_reason()}")
+    return 0
+
+
+def cmd_voice_upgrade(args) -> int:
+    """Install the better voice into whichever interpreter is running this.
+
+    The engine adapter has been there since the measurement that justified it;
+    what was missing is the one step a person cannot reasonably do themselves
+    inside a packaged app — putting the package into the runtime that app
+    downloaded. That is all this does.
+
+    Its own command, and not something a render triggers: this fetches several
+    hundred megabytes, and a download that starts in the middle of making a
+    video is indistinguishable from a hang.
+    """
+    import subprocess
+    import sys
+
+    from .tools.tts.kokoro import KokoroProvider
+
+    provider = KokoroProvider()
+    if provider.available():
+        print("已经装好了，直接用就是。可用音色：" + "、".join(provider.voices()))
+        return 0
+
+    print("要装的是 Kokoro——一个 82M 参数的中文语音模型。")
+    print("为什么值得：同一段讲稿，系统自带的声音每次停顿几乎一样长（离散度 0.13），")
+    print("Kokoro 是 0.66，会连着讲四秒再换气，听起来像在讲而不是在念。")
+    print(f"代价：连同 torch 约 400MB，装到 {sys.prefix}")
+    if not args.yes:
+        answer = input("现在装吗？[y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("没有安装。想好了再跑一次这个命令。")
+            return 0
+
+    command = [sys.executable, "-m", "pip", "install", "kokoro", "misaki[zh]"]
+    print("$ " + " ".join(command))
+    result = subprocess.run(command, check=False)
+    if result.returncode != 0:
+        print("安装失败。上面是 pip 的输出。", file=sys.stderr)
+        return result.returncode
+
+    # Import in a fresh interpreter: this one imported `kokoro` already and
+    # cached the failure, so asking it again would say no whatever happened.
+    check = subprocess.run(
+        [sys.executable, "-c", "import kokoro; print('ok')"], capture_output=True, text=True
+    )
+    if check.returncode != 0:
+        print(f"装完了但导入不了：{check.stderr.strip()[:200]}", file=sys.stderr)
+        return 1
+    print("装好了。下次生成会自动用它——第一次合成要再下一次模型权重。")
     return 0
 
 
