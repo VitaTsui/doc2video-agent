@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from ..core import tuning
 from ..schemas import (
     ActionType,
+    BBox,
     DirectorAction,
     DocumentPage,
     ElementKind,
@@ -207,7 +208,7 @@ class DirectorSkill(Skill):
         element = page.element(choice.target)
         if element is None or not page.width or not page.height:
             return choice.type
-        coverage = _coverage(element, page)
+        coverage = _coverage_box(focus_box(element, page), page)
         if choice.type is ActionType.POINTER:
             # Pointing at a box that fills the page indicates nothing.
             return ActionType.HIGHLIGHT if coverage > MAX_POINTER_COVERAGE else ActionType.POINTER
@@ -279,6 +280,119 @@ class DirectorSkill(Skill):
         return actions
 
 
+# How far apart two things can be and still be one thing, as a fraction of the
+# page's height. A caption sits just under its figure; anything further down is
+# the next block.
+GROUP_GAP = 0.03
+# Past this the group has stopped being a part of the page and become the page.
+# On a dense diagram slide the only thing that spans a label is the whole
+# diagram, and framing 44% of the slide points at nothing — better to leave
+# the label alone and let the rest of the director decide it is not a target.
+MAX_GROUP_COVERAGE = 0.30
+# The caption may be a little wider than dead-centre under its figure, and a
+# figure may be a hair narrower than the text under it. Neither means they are
+# unrelated.
+GROUP_SLACK = 0.02
+
+
+def focus_box(element, page: DocumentPage) -> BBox:
+    """The box to draw around this element — usually the block it belongs to.
+
+    A slide's parts arrive as separate elements because that is how they are
+    stored, not because that is how they are read: a picture card and the two
+    lines of caption under it are one thing to look at, and framing the second
+    line alone — 「国家重点研发计划项目」, twenty characters at the bottom of a
+    slide — points at the label instead of at what it labels.
+
+    Growth is vertical and one-directional on purpose: a thing is absorbed only
+    when it *spans* the box horizontally, which is what a figure does to its
+    caption and a card does to its contents. Growing sideways as well would
+    have swallowed the identical card beside this one — 「这一个」 turned into
+    「这两个」, which is a different sentence.
+    """
+    box = element.bbox
+    if not page.width or not page.height:
+        return box
+
+    gap = page.height * GROUP_GAP
+    slack = page.width * GROUP_SLACK
+    others = [
+        other
+        for other in page.elements
+        if other.id != element.id
+        and other.bbox.w > 0
+        and not _is_banner(other, page)
+        and not _is_backdrop(other, page)
+    ]
+
+    # One at a time, smallest first, so the box grows as far as it can rather
+    # than as far as its largest neighbour would take it. Taking every match at
+    # once was all-or-nothing: one oversized candidate in the round and the
+    # element kept its own box, caption and figure included.
+    for _ in range(len(others)):
+        fits = [
+            grown
+            for other in others
+            if _belongs(box, other.bbox, gap=gap, slack=slack)
+            # Something already inside the box unions to the box itself, and
+            # that is the smallest candidate there is — taken, it would win
+            # every round and the box would never grow at all.
+            and (grown := _union(box, other.bbox)) != box
+            and _coverage_box(grown, page) <= MAX_GROUP_COVERAGE
+        ]
+        if not fits:
+            break
+        box = min(fits, key=lambda grown: grown.w * grown.h)
+    return box
+
+
+def _belongs(box: BBox, near: BBox, *, gap: float, slack: float) -> bool:
+    """Whether `near` is something `box` is part of.
+
+    It has to span the box horizontally — that is what a figure does to its
+    caption and a card to its contents — and either touch it or sit within a
+    caption's distance above or below.
+    """
+    spans = near.x <= box.x + slack and near.x + near.w >= box.x + box.w - slack
+    above = 0 <= box.y - (near.y + near.h) <= gap
+    below = 0 <= near.y - (box.y + box.h) <= gap
+    overlaps = near.y < box.y + box.h and near.y + near.h > box.y
+    return spans and (above or below or overlaps)
+
+
+def _is_backdrop(element, page: DocumentPage) -> bool:
+    """Whether this is the slide's decoration rather than one of its parts.
+
+    Decks are built on artwork that bleeds off the edge: a wash in one corner,
+    a band across the bottom. Such a shape contains half the things on the page
+    without being what any of them belong to — the first version of this
+    grouped a caption with the graphic behind it and framed the corner of the
+    slide.
+
+    A corner and no words is the test: two *adjacent* edges, or all four.
+    Content keeps its margins; a picture that runs into the corner is there to
+    be looked past. Opposite edges do not count — a chart drawn the full width
+    of the slide touches left and right and is exactly the sort of thing a
+    caption underneath belongs to.
+    """
+    if (element.text or "").strip():
+        return False
+    box = element.bbox
+    edge_x, edge_y = page.width * 0.01, page.height * 0.01
+    left = box.x <= edge_x
+    top = box.y <= edge_y
+    right = box.x + box.w >= page.width - edge_x
+    bottom = box.y + box.h >= page.height - edge_y
+    return (left and top) or (top and right) or (right and bottom) or (bottom and left)
+
+
+def _union(a: BBox, b: BBox) -> BBox:
+    x, y = min(a.x, b.x), min(a.y, b.y)
+    return BBox(
+        x=x, y=y, w=max(a.x + a.w, b.x + b.w) - x, h=max(a.y + a.h, b.y + b.h) - y
+    )
+
+
 def _zoom_pays_off(element, page: DocumentPage) -> bool:
     """Whether pushing in on this actually shows the viewer anything.
 
@@ -289,7 +403,9 @@ def _zoom_pays_off(element, page: DocumentPage) -> bool:
     covering two thousandths of the page still covers under two percent of the
     frame. The viewer loses the page and gains nothing.
     """
-    coverage = _coverage(element, page)
+    # Judged on what will actually be framed. A caption on its own never pays
+    # off; the figure it belongs to usually does, and that is what gets shown.
+    coverage = _coverage_box(focus_box(element, page), page)
     return coverage * tuning.value("shot.max_scale") ** 2 >= tuning.value("shot.min_result")
 
 
@@ -332,6 +448,10 @@ def _worth_pointing_at(element) -> bool:
 
 def _coverage(element, page: DocumentPage) -> float:
     """Share of the page area a element occupies, 0..1."""
+    return _coverage_box(element.bbox, page)
+
+
+def _coverage_box(box: BBox, page: DocumentPage) -> float:
     if not page.width or not page.height:
         return 1.0
-    return (element.bbox.w * element.bbox.h) / (page.width * page.height)
+    return (box.w * box.h) / (page.width * page.height)

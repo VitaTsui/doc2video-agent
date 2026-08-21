@@ -113,7 +113,11 @@ async def run(request: Request) -> dict:
         )
 
     agent = get_agent()
-    job_request = JobRequest(message=message, project_id=project_id, files=uploaded)
+    # The one route where `message` is something a person wrote, so it is the
+    # one route that asks for it to be kept.
+    job_request = JobRequest(
+        message=message, project_id=project_id, files=uploaded, remember=True
+    )
 
     if wait:
         try:
@@ -121,6 +125,7 @@ async def run(request: Request) -> dict:
                 message=job_request.message,
                 project_id=job_request.project_id,
                 files=job_request.files,
+                remember=True,
             )
         except Doc2VideoError as exc:
             raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc

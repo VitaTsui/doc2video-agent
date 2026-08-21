@@ -34,6 +34,7 @@ from ..core import ledger
 from ..core.logging import get_logger
 from ..schemas import VideoProject
 from ..schemas.session import Session, Speaker, Turn
+from ..skills.base import load_prompt
 from ..tools.llm import LLMTool, model_schema
 from .session import SessionStore, compact
 
@@ -168,7 +169,7 @@ class AgentLoop:
             answer = self.llm.complete_json(
                 self._prompt(session),
                 schema=model_schema(Decision),
-                system=_SYSTEM,
+                system=_system(),
             )
             return Decision.model_validate(answer)
         except Exception as exc:  # noqa: BLE001 - a broken answer ends the turn, not the app
@@ -311,25 +312,9 @@ _ACTION_LABEL = {
     "finish": "决定收工",
 }
 
-_SYSTEM = """你在把一份演示文档做成讲解视频。你能做的只有五件事：
-
-- write_script：写讲稿，然后配音、设计镜头、渲染、质检。第一次必须走这一步。
-  第一次把 narrations 留空——讲稿会逐页写，每页对着自己的字数预算，用的是专门的
-  写作提示，比你在这里一次性写三十页要好。只有当你要替换某几页时才填 narrations，
-  键用页码（"4"）或场景号（"scn_04"）。
-- revise：只重做一页。改动只影响这一页，其余片段直接复用。
-- retune：只换声音或语速，一个字都不改。用户说「换成某某音色」「语速慢点」时用它，
-  不要用 write_script——那会把他认可的讲稿重写一遍。voice 填音色名，speech_rate 填
-  倍率（0 表示不改）。
-- ask：需要用户说明才能继续时，问一句。
-- finish：告诉用户结果，结束这一轮。
-
-判断依据：
-
-1. 字数预算是硬约束。时长由字数估算而来，音频一旦生成长度就改不动，只能重写重配。
-2. 质检里的 warning 值得处理，但不必全部消灭。「重合度高、接近照读」说明那一页在念
-   页面文字，值得重写；「实际时长与目标偏差大」要看偏多少，差一两成不值得为它重做全片。
-3. 每重做一次都要几分钟。改一页就用 revise，不要整体重来。
-4. 想不清楚该改什么的时候，用 ask 问，而不是猜着改。
-
-reason 会原样显示给用户，写清楚你为什么这么决定。"""
+# The agent's own instructions live beside the other prompts, so the window can
+# show them and someone can change them: it is the most consequential prompt in
+# the product — it decides what happens after you say something — and it was
+# the one that could not be read without opening the source.
+def _system() -> str:
+    return load_prompt("agent_loop")

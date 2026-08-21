@@ -347,3 +347,42 @@ def test_naming_pages_still_replaces_exactly_those(tmp_path: Path):
     loop.run("第一页重写")
 
     assert renders == [("all", {1: "新的开场。"})]
+
+
+def test_the_brief_is_kept_where_it_was_said(tmp_path: Path, settings, store):
+    """Reopening a project has to show the conversation that made it.
+
+    The transcript used to be written only by the chat loop, and the main path
+    never goes through it: a project made by dropping a deck and pressing the
+    buttons had no transcript at all, or one whose only 「用户」 line was a
+    sentence the window had sent on its own behalf. The one thing the person
+    really wrote — what they asked for when they dropped the file — was the
+    thing that went missing.
+    """
+    from doc2video.agent.service import Doc2VideoAgent
+
+    service = Doc2VideoAgent(settings=settings, store=store)
+    project = service.create_project(_deck(tmp_path))
+    service._remember(project.project_id, Speaker.USER, "讲给技术同事听，两分钟左右")
+
+    turns = SessionStore(store.project_dir(project.project_id) / SESSION_FILE).load(
+        project.project_id
+    ).turns
+    assert [(t.speaker.value, t.text) for t in turns] == [
+        ("user", "讲给技术同事听，两分钟左右")
+    ]
+
+    # Nothing typed is nothing said: an empty brief must not become a turn.
+    service._remember(project.project_id, Speaker.USER, "   ")
+    assert len(
+        SessionStore(store.project_dir(project.project_id) / SESSION_FILE)
+        .load(project.project_id)
+        .turns
+    ) == 1
+
+
+def _deck(tmp_path: Path) -> Path:
+    """The smallest thing `create_project` will accept as a source."""
+    path = tmp_path / "d.pptx"
+    path.write_bytes(b"PK\x03\x04")
+    return path

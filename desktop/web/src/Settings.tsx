@@ -579,6 +579,7 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
 function Plugins() {
   const [all, setAll] = useState<api.Plugin[] | null>(null)
   const [query, setQuery] = useState('')
+  const [kind, setKind] = useState('')
   const [open, setOpen] = useState('')
   const [failure, setFailure] = useState('')
 
@@ -598,17 +599,33 @@ function Plugins() {
     }
   }
 
+  const setPrompt = async (id: string, text: string) => {
+    setFailure('')
+    try {
+      setAll(await api.setPrompt(id, text))
+    } catch (error) {
+      setFailure(api.describeError(error))
+    }
+  }
+
   // Matched against everything on the card, so 「配音」, `tts`, `ffmpeg` and
   // 「渲染」 all find what someone means by them.
   const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  const shown = (all ?? []).filter((plugin) =>
+  const matches = (plugin: api.Plugin) =>
     words.every((word) =>
       [plugin.id, plugin.name, plugin.kind, plugin.kind_name, plugin.stage, plugin.what]
         .join(' ')
         .toLowerCase()
         .includes(word),
-    ),
-  )
+    )
+  // Counted over what the search left, so a tab never offers a number that
+  // turns out to be an empty list.
+  const searched = (all ?? []).filter(matches)
+  const kinds: [string, string][] = []
+  for (const plugin of searched) {
+    if (!kinds.some(([id]) => id === plugin.kind)) kinds.push([plugin.kind, plugin.kind_name])
+  }
+  const shown = searched.filter((plugin) => !kind || plugin.kind === kind)
 
   return (
     <>
@@ -629,7 +646,27 @@ function Plugins() {
             placeholder="搜插件：配音、ffmpeg、解析器、prompt…"
             onChange={(event) => setQuery(event.target.value)}
           />
-          <div className="muted browse__count">{`${shown.length} / ${all.length} 个插件`}</div>
+          {/* By kind, because that is the question the list is usually opened
+              with: 「有哪些语音引擎」, not 「第七个插件是什么」. */}
+          <div className="kinds">
+            <button
+              type="button"
+              className={kind === '' ? 'kinds__tab kinds__tab--on' : 'kinds__tab'}
+              onClick={() => setKind('')}
+            >
+              {`全部 ${searched.length}`}
+            </button>
+            {kinds.map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={kind === id ? 'kinds__tab kinds__tab--on' : 'kinds__tab'}
+                onClick={() => setKind(id)}
+              >
+                {`${label} ${searched.filter((plugin) => plugin.kind === id).length}`}
+              </button>
+            ))}
+          </div>
         </>
       )}
 
@@ -681,13 +718,69 @@ function Plugins() {
                 </div>
               )}
               {/* The instructions as they are sent, not a summary of them: a
-                  paraphrase is the thing you cannot check the output against. */}
-              {plugin.prompt && <pre className="prompt">{plugin.prompt}</pre>}
+                  paraphrase is the thing you cannot check the output against —
+                  and editable, because the person whose videos these are knows
+                  things about them that this text does not. */}
+              {plugin.prompt && <PromptField plugin={plugin} onSet={setPrompt} />}
             </>
           )}
         </div>
       ))}
     </>
+  )
+}
+
+/**
+ * A prompt, as something to read and to change.
+ *
+ * Saved on 「保存」 rather than as you type: this is a document, and a
+ * half-typed sentence sent to the model on every keystroke is not an edit,
+ * it is a series of accidents.
+ *
+ * Edits live in the storage directory, so an update replaces the build and
+ * leaves them alone — which is the only thing that makes editing worth
+ * offering. 「复原」 deletes the override rather than writing the shipped text
+ * back, so a later release's better wording is not frozen out by a copy of
+ * the old one.
+ */
+function PromptField({
+  plugin,
+  onSet,
+}: {
+  plugin: api.Plugin
+  onSet: (id: string, text: string) => void
+}) {
+  const [text, setText] = useState(plugin.prompt)
+  useEffect(() => setText(plugin.prompt), [plugin.prompt])
+  const changed = text.trim() !== plugin.prompt.trim()
+
+  return (
+    <div className="promptbox">
+      <div className="promptbox__bar">
+        <span className="muted">{`提示词 · ${plugin.prompt_id}`}</span>
+        {plugin.prompt_edited && <span className="pack__tag">改过</span>}
+        <span style={{ marginLeft: 'auto' }} />
+        {plugin.prompt_edited && (
+          <button type="button" className="rule__reset" onClick={() => onSet(plugin.prompt_id, '')}>
+            复原
+          </button>
+        )}
+        <Button
+          size="small"
+          type={changed ? 'primary' : 'default'}
+          disabled={!changed}
+          onClick={() => onSet(plugin.prompt_id, text)}
+        >
+          保存
+        </Button>
+      </div>
+      <textarea
+        className="prompt prompt--edit"
+        rows={14}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+      />
+    </div>
   )
 }
 

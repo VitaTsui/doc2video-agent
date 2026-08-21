@@ -449,3 +449,39 @@ def test_a_rule_can_be_changed_and_put_back(client, tmp_path, monkeypatch):
     from doc2video.tools.tts import units
 
     assert _breaks_before("这一句是重点。", True) == units.PAUSE_EMPHASIS
+
+
+def test_an_edited_prompt_is_what_gets_sent_and_survives_an_update(client, tmp_path, monkeypatch):
+    """A prompt you can change that the next release overwrites is a prompt you
+    cannot change. So edits live in the storage directory, not beside the code.
+    """
+    from doc2video.core.config import get_settings
+    from doc2video.skills.base import PROMPTS_DIR, load_prompt, shipped_prompt
+
+    monkeypatch.setattr(get_settings(), "storage_dir", tmp_path)
+    original = shipped_prompt("narration")
+
+    client.put("/health/plugins/prompt", json={"id": "narration", "text": "只写一句话。"})
+    # What the skill will actually send, not merely what was stored.
+    assert load_prompt("narration") == "只写一句话。\n"
+    # And the build's own copy is untouched, which is what an update replaces.
+    assert (PROMPTS_DIR / "narration.md").read_text("utf-8") == original
+
+    found = {p["id"]: p for p in client.get("/health/plugins").json()["plugins"]}
+    assert found["presentation-narration"]["prompt_edited"] is True
+
+    # 「复原」 removes the override rather than storing a copy of the shipped
+    # text, so a later release's better wording is not frozen out.
+    client.put("/health/plugins/prompt", json={"id": "narration", "text": ""})
+    assert not (tmp_path / "prompts" / "narration.md").exists()
+    assert load_prompt("narration") == original
+
+
+def test_the_plugin_list_is_plugins_and_not_plumbing(client):
+    """`node` and `npx` are not things anyone installs on purpose.
+
+    A missing one already says so where it matters — the renderer that needs
+    it reports itself unavailable, with the reason.
+    """
+    found = [p["id"] for p in client.get("/health/plugins").json()["plugins"]]
+    assert not [p for p in found if p.startswith("bin:")], found

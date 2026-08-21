@@ -65,6 +65,9 @@ class JobRequest:
     # Set when the job's only work is writing a first script, for a deck that
     # has already been parsed.
     draft: bool = False
+    # Whether `message` is a person's own words, and so belongs in the
+    # project's conversation. False for the job labels this queue invents.
+    remember: bool = False
     # Set when the agent should decide for itself what to do with `message`,
     # rather than being handed a script. A chat turn may render several times,
     # which is why it is a job like any other instead of a request that waits.
@@ -246,6 +249,7 @@ class JobManager:
                     narrations=job.request.narrations,
                     scene_narrations=job.request.scene_narrations,
                     draft=job.request.draft,
+                    remember=job.request.remember,
                 )
             job.result = result
             job.status = "succeeded"
