@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import TypeVar
 
@@ -37,10 +36,41 @@ ProgressFn = Callable[[str, str, int, int], None]
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 
-@lru_cache(maxsize=16)
 def load_prompt(name: str) -> str:
-    """Read a prompt template. Cached — they are read once per process."""
+    """A prompt, as it will be sent — someone's edit if there is one.
+
+    Edits live in the storage directory rather than beside the code, so an
+    update replaces the build and leaves them alone. That is the whole point:
+    a prompt you can change and that the next release quietly overwrites is a
+    prompt you cannot change.
+
+    Not cached. It used to be, and the reason was that a prompt is read once
+    per process — true when the only way to change one was to ship a new
+    build. Now the window can change it, and a cache would mean the change
+    takes effect on the next restart, which reads as "it did nothing".
+    """
+    edited = _prompt_override(name)
+    if edited is not None:
+        return edited
+    return shipped_prompt(name)
+
+
+def shipped_prompt(name: str) -> str:
+    """The text this build was released with, whatever anyone has since done."""
     return (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+
+
+def prompt_override_path(name: str, settings=None):
+    from ..core.config import get_settings
+
+    return (settings or get_settings()).storage_dir / "prompts" / f"{name}.md"
+
+
+def _prompt_override(name: str) -> str | None:
+    try:
+        return prompt_override_path(name).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
 
 
 @dataclass

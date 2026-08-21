@@ -1281,6 +1281,33 @@ body {
   min-width: 0;
 }
 
+.kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+
+.kinds__tab {
+  border: 1px solid transparent;
+  background: var(--user-bg);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 12px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.kinds__tab:hover {
+  color: var(--accent);
+}
+
+.kinds__tab--on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .browse {
   margin-top: 10px;
 }
@@ -1371,6 +1398,30 @@ body {
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.promptbox {
+  margin-top: 8px;
+}
+
+.promptbox__bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+/* The same face as the read-only view it replaced: it is still the text as it
+   is sent, and a form control that looks like a form makes it read as a
+   setting rather than as the document it is. */
+.prompt--edit {
+  display: block;
+  width: 100%;
+  max-height: none;
+  border: 1px solid var(--line);
+  color: inherit;
+  resize: vertical;
 }
 
 .rules {

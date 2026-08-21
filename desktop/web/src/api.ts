@@ -144,6 +144,11 @@ export interface Plugin {
   reason: string
   /** What it tells the model, verbatim. Empty when it asks none. */
   prompt: string
+  /** Which prompt file that is, so it can be edited and put back. */
+  prompt_id: string
+  /** The text this build shipped with. */
+  prompt_default: string
+  prompt_edited: boolean
   /** Anything else worth reading: a path, a size, where it came from. */
   detail: Record<string, string>
   /** The numbers that decide what comes out, as they are set right now. */
@@ -161,6 +166,15 @@ export interface Plugin {
     unit: string
     integer: boolean
   }[]
+}
+
+/** Change what a step says to the model. Empty text restores the shipped one. */
+export async function setPrompt(id: string, text: string) {
+  const body = await request<{ plugins: Plugin[] }>('/health/plugins/prompt', {
+    method: 'PUT',
+    body: JSON.stringify({ id, text }),
+  })
+  return body.plugins
 }
 
 /** Change one of those numbers. `null` puts the measured default back. */

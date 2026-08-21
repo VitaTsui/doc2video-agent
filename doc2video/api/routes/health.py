@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from ...core import inventory, prefs, tuning
 from ...core.config import dependency_report, filter_report, get_settings
 from ...core.errors import Doc2VideoError
+from ...skills.base import prompt_override_path, shipped_prompt
 from ...tools.llm import llm_status
 from ...tools.llm.models import catalogue_payload
 from ...tools.renderer import renderer_status
@@ -27,6 +28,13 @@ class VoiceChoiceIn(BaseModel):
     """The voice to use from now on. Empty hands the choice back to the machine."""
 
     voice: str = ""
+
+
+class PromptIn(BaseModel):
+    """A prompt and its new text. Empty text restores what was shipped."""
+
+    id: str
+    text: str = ""
 
 
 class RuleIn(BaseModel):
@@ -240,6 +248,38 @@ def set_rule(body: RuleIn) -> dict:
     else:
         rules[body.id] = max(knob.low, min(knob.high, float(body.value)))
     prefs.save(current.model_copy(update={"rules": rules}), settings)
+    return inventory.report(settings)
+
+
+@router.put("/health/plugins/prompt")
+def set_prompt(body: PromptIn) -> dict:
+    """Change what a step says to the model, or put the shipped text back.
+
+    Written into the storage directory rather than beside the code: an update
+    replaces the build, and a prompt you can edit that the next release
+    quietly overwrites is a prompt you cannot edit.
+
+    Sending the shipped text — or nothing — removes the override rather than
+    storing a copy of it, so 「改过」 keeps meaning what it says and a later
+    release's better wording is not frozen out by a file that matches the old
+    one word for word.
+    """
+    settings = get_settings()
+    try:
+        original = shipped_prompt(body.id)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "unknown_prompt", "message": f"没有这份提示词：{body.id}"},
+        ) from exc
+
+    path = prompt_override_path(body.id, settings)
+    text = (body.text or "").strip()
+    if not text or text == original.strip():
+        path.unlink(missing_ok=True)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + "\n", encoding="utf-8")
     return inventory.report(settings)
 
 

@@ -16,6 +16,7 @@ from ..core.errors import InvalidRequest
 from ..core.ids import new_project_id
 from ..core.logging import get_logger
 from ..schemas import ProjectStatus, Source, VideoProject
+from ..schemas.session import Speaker, Turn
 from ..skills.base import SkillContext
 from ..storage import ProjectStore
 from ..storage.run_log import RunLog
@@ -98,6 +99,14 @@ class Doc2VideoAgent:
         for that separately, with `draft`.
         """
         project = self.create_project(source_file)
+        # What the person actually said, written down where they said it.
+        # The conversation used to be recorded only by the chat loop, and the
+        # main path never goes through it — so a project made by dropping a
+        # deck and pressing the buttons had either no transcript at all or one
+        # whose only 「用户」 line was a sentence the window had sent on its
+        # own behalf. Reopening it showed a conversation the person had not
+        # had, missing the one thing they had really written.
+        self._remember(project.project_id, Speaker.USER, brief)
         plan = self.planner.prepare_plan(brief, project)
         with (
             telemetry.run(project.project_id, flags=self._flags(project)) as recorder,
@@ -124,6 +133,7 @@ class Doc2VideoAgent:
         draft: bool = False,
         revoice: bool = False,
         write: bool = False,
+        remember: bool = False,
     ) -> AgentRunResult:
         if project_id:
             project = self.store.load(project_id)
@@ -133,6 +143,13 @@ class Doc2VideoAgent:
             if len(files) > 1:
                 log.warning("当前版本仅处理第一个文件：%s", files[0].name)
             project = self.create_project(files[0])
+
+        # Opt-in, because most callers of this method are the machine talking
+        # to itself: 「逐页起草讲稿」 and 「按调用方讲稿生成视频」 are job
+        # labels, and writing those into the transcript as things the person
+        # said would be worse than the silence this fixes.
+        if remember:
+            self._remember(project.project_id, Speaker.USER, message)
 
         active = self._flags(project)
 
@@ -281,6 +298,15 @@ class Doc2VideoAgent:
         # account too — they happen between the renders, not during one.
         with ledger.recording(self._ledger_path(project)):
             return loop.run(message)
+
+    def _remember(self, project_id: str, speaker: Speaker, text: str) -> None:
+        """Put one turn into the project's conversation, if there is one to put."""
+        from .session import SESSION_FILE, SessionStore
+
+        if not text.strip():
+            return
+        store = SessionStore(self.store.project_dir(project_id) / SESSION_FILE)
+        store.append(Turn(speaker=speaker, text=text.strip()))
 
     def describe(self, project_id: str) -> AgentRunResult:
         """A project's current state in the shape a job reports.

@@ -25,11 +25,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass, field
 
-from .config import Settings, dependency_report, get_settings
-
-# The binaries the render step reaches for. The dependency report covers more
-# than that — `soffice` belongs to opening a deck and `say` to speaking one.
-RENDER_BINARIES = ("ffmpeg", "ffprobe", "node", "npx")
+from .config import Settings, get_settings
 
 
 @dataclass
@@ -72,6 +68,10 @@ class Plugin:
     reason: str = ""
     # What this plugin tells the model, verbatim. Empty when it asks none.
     prompt: str = ""
+    # Which prompt file that is, so it can be edited and put back.
+    prompt_id: str = ""
+    # The text this build shipped with, for comparison and for 「复原」.
+    prompt_default: str = ""
     rules: list[Rule] = field(default_factory=list)
     # Anything else worth reading: a path, a size, where it came from.
     detail: dict[str, str] = field(default_factory=dict)
@@ -102,6 +102,9 @@ def report(settings: Settings | None = None) -> dict:
                 "available": item.available,
                 "reason": item.reason,
                 "prompt": item.prompt,
+                "prompt_id": item.prompt_id,
+                "prompt_default": item.prompt_default,
+                "prompt_edited": bool(item.prompt_id and item.prompt != item.prompt_default),
                 "detail": item.detail,
                 "rules": [
                     {
@@ -157,17 +160,22 @@ def _rules(prefix: str, settings: Settings | None = None) -> list[Rule]:
     ]
 
 
-def _prompt(load, name: str) -> str:
-    """A prompt, or nothing. An unreadable file is not worth failing over."""
+def _prompt(name: str) -> tuple[str, str, str]:
+    """One prompt as (id, current text, shipped text).
+
+    An unreadable file is not worth failing over — the page still has
+    everything else to say about that plugin.
+    """
+    from ..skills.base import load_prompt, shipped_prompt
+
     try:
-        return load(name)
+        return name, load_prompt(name), shipped_prompt(name)
     except OSError:
-        return ""
+        return "", "", ""
 
 
 def plugins(settings: Settings | None = None) -> list[Plugin]:
     """Every part of this build, in the order the pipeline reaches for them."""
-    from ..agent import loop as agent_loop
     from ..skills import (
         DirectorSkill,
         DocumentSkill,
@@ -176,7 +184,6 @@ def plugins(settings: Settings | None = None) -> list[Plugin]:
         ReviewSkill,
         VoiceSkill,
     )
-    from ..skills.base import load_prompt
     from ..tools.llm import llm_status
     from ..tools.renderer import renderer_status
     from ..tools.tts import packs as voice_packs
@@ -184,7 +191,6 @@ def plugins(settings: Settings | None = None) -> list[Plugin]:
     settings = settings or get_settings()
     llm = llm_status(settings)
     renderers = renderer_status(settings)
-    binaries = dependency_report()
     soffice = shutil.which("soffice")
 
     model = Plugin(
@@ -233,7 +239,9 @@ def plugins(settings: Settings | None = None) -> list[Plugin]:
             what=DocumentSkill.description + "：认页面类型、挑重点、排叙事顺序。",
             available=model.available,
             reason=model.reason,
-            prompt=_prompt(load_prompt, "document_understanding"),
+            prompt_id="document_understanding",
+            prompt=_prompt("document_understanding")[1],
+            prompt_default=_prompt("document_understanding")[2],
         ),
         Plugin(
             id=NarrationSkill.name,
@@ -243,7 +251,9 @@ def plugins(settings: Settings | None = None) -> list[Plugin]:
             what=NarrationSkill.description + "：按目标时长分配每页字数，写完再压回时长。",
             available=model.available,
             reason=model.reason,
-            prompt=_prompt(load_prompt, "narration"),
+            prompt_id="narration",
+            prompt=_prompt("narration")[1],
+            prompt_default=_prompt("narration")[2],
         ),
         Plugin(
             id=VoiceSkill.name,
@@ -288,7 +298,9 @@ def plugins(settings: Settings | None = None) -> list[Plugin]:
             "换个声音、还是先问你一句。它只能用这里的其它插件，没有别的权限。",
             available=model.available,
             reason=model.reason,
-            prompt=agent_loop._SYSTEM,  # noqa: SLF001 - the text is the point
+            prompt_id="agent_loop",
+            prompt=_prompt("agent_loop")[1],
+            prompt_default=_prompt("agent_loop")[2],
         ),
         model,
     ]
@@ -332,18 +344,4 @@ def plugins(settings: Settings | None = None) -> list[Plugin]:
         ),
     ]
 
-    listed += [
-        Plugin(
-            id=f"bin:{name}",
-            name=name,
-            kind="binary",
-            stage="渲染合成",
-            what=info["purpose"],
-            available=info["available"],
-            reason="" if info["available"] else "没找到，装一个或在设置里指定路径",
-            detail={"路径": info.get("path") or "未找到", "来源": info.get("source", "")},
-        )
-        for name, info in binaries.items()
-        if name in RENDER_BINARIES
-    ]
     return listed
