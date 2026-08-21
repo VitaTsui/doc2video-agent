@@ -17,6 +17,7 @@ it makes that the obvious thing to do rather than something to remember.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -67,3 +68,46 @@ def require(name: str, hint: str) -> str:
     if found is None:
         raise FileNotFoundError(hint)
     return found
+
+
+def node_command(node_dir: Path, package: str, bin_name: str = "") -> list[str] | None:
+    """How to run a package's CLI out of `node_dir`, without npm.
+
+    `npx` was the obvious way and it is not a safe one. The desktop runtime
+    ships Node's binary and the workspace's `node_modules`, but not npm's own
+    `lib/` — so the `npx` shim it also ships is a three-line file that requires
+    `../lib/cli.js` and dies with MODULE_NOT_FOUND before it has resolved
+    anything. It is present, it is executable, `which` finds it, and every check
+    in this repo that asked 「有没有 npx」 answered yes. Measured in the installed
+    app: the bridge died in 0.118s and every batch of the document understanding
+    silently fell back to heuristics.
+
+    A package's own entry point is right there in its `package.json`, and the
+    interpreter is the one we shipped. Nothing in between to be missing.
+    """
+    package_json = node_dir / "node_modules" / package / "package.json"
+    if not package_json.is_file():
+        return None
+    try:
+        declared = json.loads(package_json.read_text(encoding="utf-8")).get("bin")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if isinstance(declared, str):
+        entry = declared
+    elif isinstance(declared, dict):
+        entry = declared.get(bin_name or package) or next(iter(declared.values()), "")
+    else:
+        entry = ""
+    if not entry:
+        return None
+
+    script = (package_json.parent / entry).resolve()
+    if not script.is_file():
+        return None
+
+    node = node_dir / "bin" / ("node.exe" if os.name == "nt" else "node")
+    if not node.is_file():
+        node = node_dir / ("node.exe" if os.name == "nt" else "node")
+    resolved = str(node) if node.is_file() else find("node")
+    return [resolved, str(script)] if resolved else None

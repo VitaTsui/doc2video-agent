@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 from ...core import ledger, programs
-from ...core.config import Settings, get_settings, which
+from ...core.config import Settings, get_settings
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
 from .base import RendererAdapter, ScenePlan
@@ -36,16 +36,16 @@ class RemotionAdapter(RendererAdapter):
 
     def available(self) -> bool:
         return (
-            which("npx") is not None
+            remotion_command(self.renderer_dir) is not None
             and (self.renderer_dir / "package.json").exists()
             and (self.renderer_dir / "node_modules").exists()
         )
 
     def unavailable_reason(self) -> str:
-        if which("npx") is None:
-            return "未安装 Node.js / npx"
         if not (self.renderer_dir / "package.json").exists():
             return f"未找到 Remotion 工程：{self.renderer_dir}"
+        if remotion_command(self.renderer_dir) is None:
+            return "未安装 Node.js，或工作区里没有 Remotion CLI"
         return f"Remotion 依赖未安装，请在 {self.renderer_dir} 下执行 pnpm install"
 
     def render_scene(self, plan: ScenePlan, out_path: Path) -> Path:
@@ -59,11 +59,11 @@ class RemotionAdapter(RendererAdapter):
             encoding="utf-8",
         )
 
+        command = remotion_command(self.renderer_dir)
+        if command is None:
+            raise ToolFailed("未安装 Node.js，或工作区里没有 Remotion CLI")
         cmd = [
-            # The resolved path: on Windows `npx` is `npx.cmd`, which
-            # `CreateProcess` will not run by its bare name. See core.programs.
-            programs.require("npx", "未安装 Node.js / npx"),
-            "remotion",
+            *command,
             "render",
             "src/index.ts",
             COMPOSITION_ID,
@@ -123,3 +123,15 @@ class RemotionAdapter(RendererAdapter):
         # too would double the audio in the finished video.
         staged.audio = None
         return staged
+
+
+def remotion_command(node_dir: Path) -> list[str] | None:
+    """How to run the Remotion CLI out of `node_dir`, or None if it is not there.
+
+    Prefers the workspace's own copy over `npx`, which in the packaged runtime
+    is a shim over an npm that was never shipped — see `programs.node_command`.
+    """
+    if command := programs.node_command(node_dir, "@remotion/cli", "remotion"):
+        return command
+    npx = programs.find("npx")
+    return [npx, "remotion"] if npx else None

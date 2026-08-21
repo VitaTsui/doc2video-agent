@@ -289,11 +289,14 @@ def _resolve_command(settings: Settings) -> list[str]:
         return [found]
 
     node_dir = settings.node_dir
-    # The resolved path, not the bare name. On Windows `npx` is `npx.cmd`, and
-    # `CreateProcess` will not run a shim by its bare name — it answers
-    # `[WinError 2] 系统找不到指定的文件`, for a command `shutil.which` had just
-    # found. Using the check's own answer is the whole fix, and this is the
-    # third place in this repo to have needed it.
+    # The package's own entry point, run by the Node we ship. Not `npx`: the
+    # desktop runtime carries Node and the workspace's `node_modules` but not
+    # npm's `lib/`, so its `npx` shim dies with MODULE_NOT_FOUND — present,
+    # executable, found by `which`, and unable to start anything.
+    if command := programs.node_command(node_dir, PACKAGE):
+        return command
+
+    # Left as a last resort for a source checkout, where npm is whole.
     npx = programs.find("npx")
     if npx and (node_dir / "node_modules" / PACKAGE).exists():
         return [npx, "--no-install", PACKAGE]
