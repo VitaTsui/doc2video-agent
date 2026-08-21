@@ -52,6 +52,29 @@ CATALOGUE: dict[str, list[ModelInfo]] = {
 }
 
 
+PROVIDER_LABELS = {
+    "agent_cli": "本机 CLI Agent",
+    "anthropic": "Anthropic",
+    "openai": "OpenAI",
+    "gemini": "Google Gemini",
+    "compatible": "OpenAI 兼容通道",
+    "mock": "无模型（规则降级）",
+}
+
+
+def display_name(provider: str, model: str) -> str:
+    """What to call the current model when telling the user which one is writing.
+
+    The window was printing `tool.source` — 「讲稿我来写（agent_virtualization）」.
+    That is the name of a code path, and the person reading it has no way to
+    connect it to the 「Claude Code」 they picked two clicks earlier.
+    """
+    for entry in CATALOGUE.get(provider, []):
+        if entry.id == model:
+            return entry.label
+    return model or PROVIDER_LABELS.get(provider, provider)
+
+
 def catalogue_payload() -> dict[str, list[dict]]:
     """JSON-ready copy for the API, with the local CLIs checked.
 

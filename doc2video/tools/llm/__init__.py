@@ -22,7 +22,7 @@ from .base import (
     parse_json_reply,
     to_strict_schema,
 )
-from .models import CATALOGUE, ModelInfo
+from .models import CATALOGUE, ModelInfo, display_name
 
 log = get_logger(__name__)
 
@@ -110,4 +110,7 @@ def llm_status(settings: Settings | None = None) -> dict:
         "model": tool.model,
         "available": tool.available,
         "configured": settings.llm_provider,
+        # The name it has in the settings panel, for anywhere this is shown to
+        # a person rather than logged.
+        "label": display_name(settings.llm_provider, tool.model),
     }

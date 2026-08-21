@@ -178,8 +178,10 @@ export function App() {
         say({
           role: 'assistant',
           kind: 'deck',
+          // Reopened: whoever set this length did so in a conversation that is
+          // being restored, not in one being had — so state it, don't credit it.
           text: `《${summary.title || summary.source}》共 ${deckPages.length} 页，`
-            + `按这个要求算下来大约 ${seconds} 秒。`,
+            + `目标时长大约 ${seconds} 秒。`,
           projectId: summary.project_id,
           pages: deckPages,
           guide,
@@ -297,7 +299,9 @@ export function App() {
     // is a message means the transcript is never empty, so the centred opening
     // screen — the one 「新会话」 gives — could never appear on launch.
     setGreeting(
-      caps?.llm.available ? GREETING_WITH_MODEL(caps.llm.provider) : GREETING_WITHOUT_MODEL,
+      caps?.llm.available
+        ? GREETING_WITH_MODEL(caps.llm.label || caps.llm.provider)
+        : GREETING_WITHOUT_MODEL,
     )
   }, [loadModels, loadProjects])
 
@@ -491,7 +495,13 @@ export function App() {
         amend(thinking, {
           pending: false,
           kind: 'deck',
-          text: `《${prepared.title}》共 ${prepared.pages.length} 页，按这个要求算下来大约 ${seconds} 秒。`,
+          // 「按这个要求」 only when there was one. A brief that never mentions
+          // a length gets the default, and reporting the default as though it
+          // were the request is how a video comes back a different length than
+          // the person thought they had asked for.
+          text: prepared.duration_stated
+            ? `《${prepared.title}》共 ${prepared.pages.length} 页，按这个要求算下来大约 ${seconds} 秒。`
+            : `《${prepared.title}》共 ${prepared.pages.length} 页。没说要多长，先按默认算下来大约 ${seconds} 秒——想改直接说，比如「七分钟左右」。`,
           projectId: prepared.project_id,
           pages: prepared.pages,
           guide,
@@ -843,7 +853,7 @@ export function App() {
             role: 'assistant',
             kind: 'text',
             text: caps?.llm.available
-              ? `模型已就绪：${caps.llm.provider}｜${caps.llm.model}。投文档时我就把讲稿写好，你在上面改。`
+              ? `模型已就绪：${caps.llm.label || caps.llm.provider}。投文档时我就把讲稿写好，你在上面改。`
               : '设置已保存，后端已重启。',
           })
         }}

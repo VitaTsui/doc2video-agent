@@ -127,7 +127,13 @@ const CATALOGUE = {
 }
 
 const CAPABILITIES = {
-  llm: { provider: 'agent_virtualization', model: 'claude-code', available: true, configured: 'agent_cli' },
+  llm: {
+    provider: 'agent_virtualization',
+    model: 'claude-code',
+    available: true,
+    configured: 'agent_cli',
+    label: 'Claude Code',
+  },
   tts: { provider: 'macos_say' },
   renderers: { remotion: { available: true, reason: '' }, ffmpeg: { available: true, reason: '' } },
 }
