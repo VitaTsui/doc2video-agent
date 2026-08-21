@@ -310,3 +310,107 @@ def test_the_largest_push_matches_what_the_renderer_will_do():
 
     source = Path("renderer/src/components/useCameraTransform.ts").read_text(encoding="utf-8")
     assert f"const MAX_SCALE = {int(RENDER_MAX_SCALE)}" in source
+
+
+# The slide this came from, at its own coordinates: two picture cards side by
+# side, each with two lines of caption under it, a heading across the top and
+# artwork bleeding out of two corners.
+def _cards_page() -> DocumentPage:
+    def at(element_id, x, y, w, h, kind=ElementKind.PARAGRAPH, text="x"):
+        return SlideElement(
+            id=element_id, kind=kind, text=text, bbox=BBox(x=x, y=y, w=w, h=h), importance=0.8
+        )
+
+    return DocumentPage(
+        index=6,
+        title="AI技术优势",
+        width=1920,
+        height=1080,
+        elements=[
+            at("backdrop_bottom", 0, 837, 623, 243, ElementKind.IMAGE, ""),
+            at("backdrop_corner", 1473, 0, 447, 176, ElementKind.IMAGE, ""),
+            at("heading", 204, 57, 1176, 80, ElementKind.TITLE, "AI技术优势"),
+            at("left_card", 114, 387, 855, 493, ElementKind.IMAGE, ""),
+            at("right_card", 996, 387, 755, 493, ElementKind.IMAGE, ""),
+            at("left_caption_1", 395, 904, 220, 26, text="浙江大学作为申报单位的"),
+            at("left_caption_2", 405, 928, 200, 26, text="国家重点研发计划项目"),
+            at("right_caption_1", 1264, 904, 220, 26, text="浙江大学作为链主单位的"),
+            at("right_caption_2", 1274, 928, 200, 26, text="高质量数据集建设项目"),
+        ],
+    )
+
+
+def test_a_caption_is_framed_with_what_it_captions():
+    """「国家重点研发计划项目」 is twenty characters at the bottom of a slide.
+
+    A box around them points at the label instead of at the picture card they
+    belong to — which is the thing the sentence is actually about.
+    """
+    from doc2video.skills.director import focus_box
+
+    page = _cards_page()
+    box = focus_box(page.element("left_caption_2"), page)
+
+    # The card, plus both lines of its caption.
+    assert (round(box.x), round(box.y)) == (114, 387)
+    assert (round(box.w), round(box.h)) == (855, 567)
+
+
+def test_the_identical_card_beside_it_is_left_out():
+    """Growing sideways would turn 「这一个」 into 「这两个」, a different sentence."""
+    from doc2video.skills.director import focus_box
+
+    page = _cards_page()
+    left = focus_box(page.element("left_caption_2"), page)
+    right = focus_box(page.element("right_caption_2"), page)
+
+    assert left.x + left.w <= right.x
+    assert (round(right.x), round(right.w)) == (996, 755)
+
+
+def test_the_artwork_bleeding_off_the_corner_is_not_a_group():
+    """Decoration contains half the slide without being what any of it belongs to.
+
+    The first version of this grouped the caption with the graphic behind it
+    and framed the bottom-left corner of the page.
+    """
+    from doc2video.skills.director import focus_box
+
+    page = _cards_page()
+    box = focus_box(page.element("left_caption_2"), page)
+
+    assert box.y < 837, "框到了那张衬底图上"
+
+
+def test_a_thing_that_is_already_the_page_is_not_a_group():
+    """On a dense diagram the only thing that spans a label is the whole diagram.
+
+    Framing 44% of a slide points at nothing, so the label keeps its own box
+    and the rest of the director decides — correctly — that it is not a target.
+    """
+    from doc2video.skills.director import focus_box
+
+    page = DocumentPage(
+        index=1,
+        title="示意图",
+        width=1920,
+        height=1080,
+        elements=[
+            SlideElement(
+                id="hub",
+                kind=ElementKind.IMAGE,
+                text="",
+                bbox=BBox(x=83, y=302, w=1744, h=521),
+                importance=0.5,
+            ),
+            SlideElement(
+                id="label",
+                kind=ElementKind.PARAGRAPH,
+                text="安全可审计",
+                bbox=BBox(x=431, y=565, w=140, h=37),
+                importance=0.9,
+            ),
+        ],
+    )
+
+    assert focus_box(page.element("label"), page) == page.element("label").bbox
