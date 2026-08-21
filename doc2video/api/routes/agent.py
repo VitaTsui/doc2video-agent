@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ...agent import JobRequest
+from ...agent.planner import stated_duration
 from ...core.config import get_settings
 from ...core.errors import Doc2VideoError, InvalidRequest
 from ...core.logging import get_logger
@@ -45,6 +46,11 @@ def prepare(body: PrepareIn) -> dict:
         "title": project.document.title,
         "topic": project.document.topic,
         "intent": project.intent.model_dump(mode="json"),
+        # Whether the length is theirs or ours. The window reports the number
+        # back as 「按这个要求算下来」, which is only true when the request named
+        # one — and when it did not, the sentence credited the user with a
+        # default they never chose.
+        "duration_stated": stated_duration(body.brief) is not None,
         "pages": page_views(project),
     }
 

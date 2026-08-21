@@ -165,3 +165,45 @@ def test_asking_for_a_slower_voice_is_understood():
 
     assert parse_intent_rules("快一点", VideoIntent()).speech_rate > 1
     assert parse_intent_rules("按默认来", VideoIntent()).speech_rate == 0
+
+
+def test_a_length_typed_in_chinese_numerals_is_a_length():
+    """「七分钟」 is not an exotic phrasing — it is how the sentence gets typed.
+
+    Reading only 「7分钟」 left the duration at its 480-second default, and the
+    window then reported 「按这个要求算下来大约 480 秒」: the request had been
+    dropped and the confirmation claimed to have honoured it. Wrong in the one
+    direction that cannot be noticed until the video is finished.
+    """
+    said = {
+        "做一个七分钟左右的讲解视频": 420,
+        "控制在五分半": 330,
+        "十分钟": 600,
+        "二十五分钟以内": 1500,
+        "两分钟": 120,
+        "九十秒": 90,
+        "半分钟": 30,
+        "半小时": 1800,
+        "一个小时": 3600,
+        # 「5 分 30 秒」 read as 秒 alone is a 30-second video — further from the
+        # request than not understanding it at all.
+        "压到 5 分 30 秒": 330,
+        "五分三十秒": 330,
+    }
+    for message, seconds in said.items():
+        assert parse_intent_rules(message, VideoIntent()).duration == seconds, message
+
+
+def test_a_number_that_is_not_a_length_stays_out_of_it():
+    """分 is too common a character to key on by itself."""
+    for message in ("这一页十分重要", "把第二部分讲透", "讲清楚就行"):
+        assert parse_intent_rules(message, VideoIntent(duration=480)).duration == 480, message
+
+
+def test_the_default_is_not_something_the_user_asked_for():
+    """The window credits the number to the user; it may only do that when it is theirs."""
+    from doc2video.agent.planner import stated_duration
+
+    assert stated_duration("做一个七分钟左右的讲解视频") == 420
+    assert stated_duration("讲清楚就行") is None
+    assert stated_duration("") is None

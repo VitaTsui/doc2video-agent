@@ -17,7 +17,7 @@ from ...core.config import dependency_report, filter_report, get_settings
 from ...core.errors import Doc2VideoError
 from ...skills.base import prompt_override_path, shipped_prompt
 from ...tools.llm import llm_status
-from ...tools.llm.models import catalogue_payload
+from ...tools.llm.models import PROVIDER_LABELS, catalogue_payload
 from ...tools.renderer import renderer_status
 from ...tools.tts import TTSTool, piper_catalogue
 from ...tools.tts import packs as voice_packs
@@ -313,18 +313,33 @@ def models() -> dict:
         "providers": [
             {
                 "id": "agent_cli",
-                "label": "本机 CLI Agent",
+                "label": PROVIDER_LABELS["agent_cli"],
                 "needs_key": False,
                 "needs_base_url": False,
                 "note": "装了并登录过 Claude Code 或 Codex 就能用，不要 Key",
                 "model_label": "用哪个 CLI",
             },
-            {"id": "anthropic", "label": "Anthropic", "needs_key": True, "needs_base_url": False},
-            {"id": "openai", "label": "OpenAI", "needs_key": True, "needs_base_url": False},
-            {"id": "gemini", "label": "Google Gemini", "needs_key": True, "needs_base_url": False},
+            {
+                "id": "anthropic",
+                "label": PROVIDER_LABELS["anthropic"],
+                "needs_key": True,
+                "needs_base_url": False,
+            },
+            {
+                "id": "openai",
+                "label": PROVIDER_LABELS["openai"],
+                "needs_key": True,
+                "needs_base_url": False,
+            },
+            {
+                "id": "gemini",
+                "label": PROVIDER_LABELS["gemini"],
+                "needs_key": True,
+                "needs_base_url": False,
+            },
             {
                 "id": "compatible",
-                "label": "OpenAI 兼容通道",
+                "label": PROVIDER_LABELS["compatible"],
                 "needs_key": True,
                 "needs_base_url": True,
                 "note": "DeepSeek / 通义 / 月之暗面 / 自建网关",

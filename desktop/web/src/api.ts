@@ -419,7 +419,13 @@ export async function pages(projectId: string) {
 
 /** Parse a deck and stop — fast, and everything the script needs to be written. */
 export async function prepare(uploadId: string, brief: string) {
-  return request<{ project_id: string; title: string; pages: PageView[] }>('/agent/prepare', {
+  return request<{
+    project_id: string
+    title: string
+    pages: PageView[]
+    /** Did the brief name a length, or is the number our default? */
+    duration_stated: boolean
+  }>('/agent/prepare', {
     method: 'POST',
     body: JSON.stringify({ upload_id: uploadId, brief }),
   })
@@ -497,7 +503,14 @@ export async function quality(projectId: string) {
 
 export async function capabilities() {
   return request<{
-    llm: { provider: string; model: string; available: boolean; configured: string }
+    /** `label` is the name it has in the settings panel; `provider` is the code path. */
+    llm: {
+      provider: string
+      model: string
+      available: boolean
+      configured: string
+      label?: string
+    }
     tts: { provider: string }
     renderers: Record<string, { available: boolean; reason: string }>
   }>('/health/capabilities')

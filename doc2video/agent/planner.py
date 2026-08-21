@@ -287,8 +287,91 @@ def _only_sound(intent: VideoIntent, project: VideoProject) -> bool:
 # Rule-based fallbacks — used when no LLM is configured, and as a safety net.
 # --------------------------------------------------------------------------
 
-_MINUTES = re.compile(r"(\d+(?:\.\d+)?)\s*分钟")
-_SECONDS = re.compile(r"(\d+(?:\.\d+)?)\s*秒")
+# Numbers as people type them. 「7分钟」 was the only form these rules read,
+# so 「做一个七分钟左右的讲解视频」 left the duration at its default 480 and the
+# window then reported 「按这个要求算下来大约 480 秒」 — the request had been
+# dropped and the confirmation claimed to have honoured it. Chinese numerals are
+# not a rare phrasing; they are how the sentence gets typed when nobody is
+# thinking about a form field.
+_CN_DIGIT = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+             "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_NUM = r"(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十]{1,3})"
+
+
+def _number(text: str) -> float | None:
+    """Read 「7」/「7.5」/「七」/「十」/「十五」/「二十五」 as one number."""
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    if any(ch not in _CN_DIGIT and ch != "十" for ch in text):
+        return None
+    # 十 is a place, not a digit: 十五 is 15, 二十 is 20, 二十五 is 25.
+    if "十" not in text:
+        return sum(_CN_DIGIT[ch] for ch in text) if len(text) == 1 else None
+    tens, _, ones = text.partition("十")
+    high = _CN_DIGIT.get(tens, 1) if tens else 1
+    low = _CN_DIGIT.get(ones, 0) if ones else 0
+    if (tens and tens not in _CN_DIGIT) or (ones and ones not in _CN_DIGIT):
+        return None
+    return high * 10 + low
+
+
+# 分 alone is too common to key on (「十分重要」「这部分」), so only the forms
+# that can only mean a length: 分钟, 分半, 半分钟, 小时.
+_MINUTES_RE = re.compile(rf"({_NUM})\s*分\s*(钟|半)")
+_HALF_MINUTE = re.compile(r"半\s*分钟")
+_HOURS_RE = re.compile(rf"({_NUM})\s*个?\s*(?:小时|钟头)(半)?")
+_HALF_HOUR = re.compile(r"半\s*(?:小时|个小时|钟头)")
+_SECONDS_RE = re.compile(rf"({_NUM})\s*秒")
+# 「5 分 30 秒」 reads as 30 seconds to a pattern that only knows 分钟 and 秒 —
+# and a 30-second video is further from what was asked for than not
+# understanding at all.
+_MIN_SEC = re.compile(rf"({_NUM})\s*分\s*({_NUM})\s*秒")
+
+
+def minutes_in(message: str) -> float | None:
+    """Minutes the message asks for, or None if it names no length."""
+    if m := _HOURS_RE.search(message):
+        hours = _number(m.group(1))
+        if hours is not None:
+            return hours * 60 + (30 if m.group(2) else 0)
+    if _HALF_HOUR.search(message):
+        return 30.0
+    if m := _MINUTES_RE.search(message):
+        minutes = _number(m.group(1))
+        if minutes is not None:
+            return minutes + (0.5 if m.group(2) == "半" else 0.0)
+    if _HALF_MINUTE.search(message):
+        return 0.5
+    return None
+
+
+def seconds_in(message: str) -> float | None:
+    if m := _MIN_SEC.search(message):
+        minutes, seconds = _number(m.group(1)), _number(m.group(2))
+        if minutes is not None and seconds is not None:
+            return minutes * 60 + seconds
+    if m := _SECONDS_RE.search(message):
+        return _number(m.group(1))
+    return None
+
+
+def stated_duration(message: str) -> float | None:
+    """The whole-video length this message asks for, in seconds.
+
+    Also the honest answer to 「did they say how long?」, which the window needs:
+    a default is not something the user requested and should not be reported as
+    though it were.
+    """
+    if _MIN_SEC.search(message):
+        return seconds_in(message)
+    if (minutes := minutes_in(message)) is not None:
+        return minutes * 60
+    return seconds_in(message)
 _PAGE = re.compile(r"第\s*(\d+)\s*[页頁]")
 _PAGE_RANGE = re.compile(r"第?\s*(\d+)\s*[~-—到至]\s*(\d+)\s*[页頁]")
 
@@ -350,10 +433,8 @@ def parse_intent_rules(message: str, current: VideoIntent) -> VideoIntent:
     """Regex intent parsing — covers the phrasings users actually type."""
     intent = current.model_copy(deep=True)
 
-    if m := _MINUTES.search(message):
-        intent.duration = int(float(m.group(1)) * 60)
-    elif m := _SECONDS.search(message):
-        intent.duration = int(float(m.group(1)))
+    if (asked := stated_duration(message)) is not None:
+        intent.duration = int(asked)
 
     for keyword, style in _STYLE_HINTS.items():
         if keyword in message:
@@ -460,10 +541,10 @@ def parse_edit_rules(message: str, project: VideoProject) -> EditPlan:
     mentions_page = bool(pages)
 
     target_seconds = 0.0
-    if m := _SECONDS.search(message):
-        target_seconds = float(m.group(1))
-    elif m := _MINUTES.search(message):
-        minutes = float(m.group(1))
+    minutes = minutes_in(message)
+    if (secs := seconds_in(message)) is not None:
+        target_seconds = secs
+    elif minutes is not None:
         if mentions_page:
             target_seconds = minutes * 60
         else:
@@ -481,7 +562,7 @@ def parse_edit_rules(message: str, project: VideoProject) -> EditPlan:
                     target_duration=target_seconds,
                 )
             )
-    elif target_seconds and not _MINUTES.search(message):
+    elif target_seconds and minutes is None:
         intent.duration = int(target_seconds)
 
     revoice = any(k in message for k in ("音色", "声音", "配音", "语速", "换个声音"))
