@@ -8,11 +8,14 @@ import type { Message } from './types'
 export function MessageList({
   messages,
   onShow,
+  onStop,
   deck,
 }: {
   messages: Message[]
   /** Open the artifacts panel on this project. */
   onShow: (projectId: string) => void
+  /** Ask the running job to stop. */
+  onStop: (jobId: string) => void
   /** The gate: how much of the script is written, and how to start.
    *
    * `drafting` is the model writing it right now — non-null only for as long
@@ -23,7 +26,13 @@ export function MessageList({
     written: number
     locked: boolean
     generated: boolean
-    drafting: { done: number; total: number; writing: string } | null
+    drafting: {
+      done: number
+      total: number
+      writing: string
+      jobId: string
+      rewriting: boolean
+    } | null
     onRender: () => void
     /** Write the pages nobody has written, keeping the ones they have. */
     onDraft: () => void
@@ -89,9 +98,21 @@ export function MessageList({
                             pages per model call and a call takes a minute or
                             more, so the finished count alone sits still long
                             enough to look stuck. */}
-                        {`已写 ${deck.drafting.done} / ${deck.drafting.total} 页`}
+                        {`${deck.drafting.rewriting ? '已重写' : '已写'} `}
+                        {`${deck.drafting.done} / ${deck.drafting.total} 页`}
                         {deck.drafting.writing && `，正在写${deck.drafting.writing}`}
                       </span>
+                      {/* Writing a deck is minutes of model time, and it was
+                          the one long wait with no way out of it. */}
+                      {deck.drafting.jobId && (
+                        <button
+                          type="button"
+                          className="rule__reset"
+                          onClick={() => onStop(deck.drafting!.jobId)}
+                        >
+                          中止
+                        </button>
+                      )}
                       <span className="bar">
                         <div
                           className="bar__fill"
@@ -129,7 +150,12 @@ export function MessageList({
                               ? '想自己写的页先写在右侧，剩下的点「生成讲稿」补齐'
                               : `你写了 ${deck.written} / ${message.pages.length} 页，剩下的可以让模型补`}
                       </span>
-                      {message.hasModel && deck.written < message.pages.length && (
+                      {/* Three states, one button. With every page written
+                          it used to disappear, which left 「重新生成」 — the
+                          whole film, from the voice down — as the only thing
+                          to press, and no way at all to ask for the script to
+                          be written again. */}
+                      {message.hasModel && (
                         <button
                           type="button"
                           className="deckgate__draft"
@@ -138,7 +164,9 @@ export function MessageList({
                         >
                           {deck.written === 0
                             ? '生成讲稿'
-                            : `补齐剩下 ${message.pages.length - deck.written} 页`}
+                            : deck.written < message.pages.length
+                              ? `补齐剩下 ${message.pages.length - deck.written} 页`
+                              : '重写讲稿'}
                         </button>
                       )}
                       <button
@@ -169,7 +197,9 @@ export function MessageList({
                 </div>
               )}
 
-              {message.kind === 'job' && <JobCard job={message.job} />}
+              {message.kind === 'job' && (
+                <JobCard job={message.job} onStop={message.job ? () => onStop(message.job!.job_id) : undefined} />
+              )}
               {/* A reference, not the thing itself. Unrolling a player, a
                   quality report and a thirty-entry ledger into the middle of
                   the conversation pushed the reply a screen and a half away

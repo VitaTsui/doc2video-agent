@@ -57,6 +57,10 @@ export function App() {
     total: number
     /** The pages the model is on right now, e.g. 「第 5-8 页」. */
     writing: string
+    /** The job doing it, so it can be stopped. */
+    jobId: string
+    /** A rewrite counts what it has replaced, not what was already there. */
+    rewriting: boolean
   } | null>(null)
   const [running, setRunning] = useState(false)
   const [greeting, setGreeting] = useState('')
@@ -441,29 +445,36 @@ export function App() {
    * writing your own page meant overwriting someone else's.
    */
   const draftScript = useCallback(
-    async (project: string, total: number, written: Record<string, string>) => {
+    async (project: string, total: number, written: Record<string, string>, before?: Record<string, string>) => {
       const already = Object.entries(written).filter(([, text]) => text.trim())
       // How many pages have words on them is the progress — measured, not
       // estimated. The job reports stages, and "writing" is one stage however
       // long the deck is; the page count is the thing that actually moves.
       const fill = (written: api.PageView[]) => {
         const filled = written.filter((page) => page.narration)
-        // Never below what the user typed: their pages are written, whether or
-        // not the backend has saved them yet, and a count that drops to zero
-        // the moment they press the button reads as "mine were thrown away".
+        // A rewrite counts what has actually been replaced. Counting pages
+        // that have words on them would read 「已写 9 / 9 页」 from the first
+        // second, because the old script is still there until the first batch
+        // lands on top of it.
+        const done = before
+          ? written.filter((page) => page.narration && page.narration !== before[page.index]).length
+          : Math.max(filled.length, already.length)
         setDrafting((current) => ({
           ...current,
-          done: Math.max(filled.length, already.length),
+          done,
           total,
           writing: current?.writing ?? '',
+          jobId: current?.jobId ?? '',
+          rewriting: Boolean(before),
         }))
         if (filled.length === 0) return 0
         setDrafts(Object.fromEntries(filled.map((p) => [String(p.index), p.narration])))
         return filled.length
       }
 
-      setDrafting({ done: already.length, total, writing: '' })
+      setDrafting({ done: already.length, total, writing: '', jobId: '', rewriting: Boolean(before) })
       const jobId = await api.draftScript(project, Object.fromEntries(already))
+      setDrafting((current) => (current ? { ...current, jobId } : current))
       const poll = window.setInterval(() => {
         void api
           .pages(project)
@@ -482,9 +493,7 @@ export function App() {
         // in it: 「正在写第 5-8 页」.
         await api.watchJob(jobId, (state) => {
           if (state.stage !== 'narrate') return
-          setDrafting((current) =>
-            current ? { ...current, writing: state.detail } : current,
-          )
+          setDrafting((current) => (current ? { ...current, writing: state.detail } : current))
         })
         // The last batch may have landed between polls — and so may the step
         // that closes the record, which is the one naming what was written.
@@ -593,8 +602,15 @@ export function App() {
     const project = projectId
     const deck = artifacts?.deck
     if (!project || !deck || drafting) return
+    // Nothing left blank means this is a rewrite, and a rewrite keeps nothing:
+    // sending the current text back would be asking the model to fill in no
+    // gaps at all, which is a button that does nothing.
+    const blank = deck.pages.some((page) => !(drafts[page.index] ?? '').trim())
+    const keep = blank ? drafts : {}
+    const before = blank ? undefined : { ...drafts }
+    if (!blank) setDrafts({})
     try {
-      const written = await draftScript(project, deck.pages.length, drafts)
+      const written = await draftScript(project, deck.pages.length, keep, before)
       if (written === 0) {
         say({
           role: 'assistant',
@@ -805,6 +821,13 @@ export function App() {
               generated: (artifacts?.scenes.length ?? 0) > 0,
               onRender: () => void startRender(),
               onDraft: () => void fillInScript(),
+            }}
+            onStop={(jobId) => {
+              // A request, not a kill: the scene in flight finishes, and the
+              // card says 「正在停…」 until it does.
+              void api.cancelJob(jobId).catch((error) => {
+                say({ role: 'assistant', kind: 'text', text: `没能中止：${api.describeError(error)}` })
+              })
             }}
             onShow={(id) => {
               void loadArtifacts(id, true)

@@ -14,10 +14,12 @@ const STAGE_LABEL: Record<string, string> = {
   done: '完成',
 }
 
-export function JobCard({ job }: { job: JobState | null }) {
+export function JobCard({ job, onStop }: { job: JobState | null; onStop?: () => void }) {
   if (!job) return null
-  const finished = job.status === 'succeeded' || job.status === 'failed'
-  const label = STAGE_LABEL[job.stage] ?? job.stage ?? '排队中'
+  const finished =
+    job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled'
+  const label =
+    job.status === 'cancelled' ? '已中止' : (STAGE_LABEL[job.stage] ?? job.stage ?? '排队中')
 
   return (
     <div className="card">
@@ -34,6 +36,21 @@ export function JobCard({ job }: { job: JobState | null }) {
               below — printing it here too showed the same three paragraphs
               twice, once squeezed into a progress card. */}
           {job.total > 0 ? `${job.done}/${job.total}` : finished ? '' : job.detail}
+          {/* Minutes of work, and until now no way to take it back. Stopping
+              is a request rather than a kill: the scene being rendered right
+              now finishes, because a half-written clip is one the incremental
+              render would later mistake for a good one. */}
+          {!finished && onStop && (
+            <button
+              type="button"
+              className="rule__reset"
+              style={{ marginLeft: 10 }}
+              disabled={job.stopping}
+              onClick={onStop}
+            >
+              {job.stopping ? '正在停…' : '中止'}
+            </button>
+          )}
         </span>
       </div>
       <div className="bar">

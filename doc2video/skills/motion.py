@@ -70,7 +70,10 @@ class MotionSkill(Skill):
                     )
                 )
 
-            for cue in build_subtitles(scene):
+            # The clip goes with it: whether two clauses belong on one line
+            # depends on whether the voice stops between them, and only the
+            # audio knows that.
+            for cue in build_subtitles(scene, self.ctx.asset_path(scene.audio.path)):
                 timeline.subtitles.append(
                     SubtitleCue(
                         start=round(start + cue.start, 3),

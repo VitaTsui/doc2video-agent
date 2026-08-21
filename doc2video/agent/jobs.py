@@ -74,11 +74,22 @@ class JobRequest:
     chat: bool = False
 
 
+class JobCancelled(Exception):
+    """Raised inside a running job when someone has asked it to stop.
+
+    Thrown from the progress callback rather than checked by every stage:
+    progress is already reported at every point a job could sensibly stop —
+    between stages, and between the scenes of the two stages that loop — so
+    the callback is the heartbeat, and a heartbeat is the natural place to
+    find out that the run is over.
+    """
+
+
 @dataclass
 class Job:
     id: str
     request: JobRequest
-    status: str = "queued"  # queued | running | succeeded | failed
+    status: str = "queued"  # queued | running | succeeded | failed | cancelled
     stage: str = ""
     detail: str = ""
     error: dict[str, Any] | None = None
@@ -92,6 +103,10 @@ class Job:
     reply: str = ""
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
+    # Someone has asked this to stop. Honoured at the next progress report,
+    # so a scene already being rendered finishes rather than leaving a
+    # half-written file behind.
+    stopping: bool = False
     # Live listeners. Jobs run on threads and the SSE endpoint is async, so the
     # handoff is a thread-safe queue rather than shared mutable state.
     watchers: list[queue.SimpleQueue] = field(default_factory=list, repr=False)
@@ -105,6 +120,8 @@ class Job:
             "done": self.done,
             "total": self.total,
             "reply": self.reply,
+            # Asked to stop, but the stage in flight has not noticed yet.
+            "stopping": self.stopping,
             "attempts": self.attempts,
             "project_id": self.result.project_id if self.result else self.request.project_id,
             "error": self.error,
@@ -200,6 +217,28 @@ class JobManager:
             if final:
                 channel.put(None)
 
+    def cancel(self, job_id: str) -> Job | None:
+        """Ask a job to stop. Honoured at its next progress report.
+
+        Not a kill: a scene being rendered right now finishes first, because
+        the alternative is a half-written clip that the incremental render
+        would later mistake for a good one.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status in ("succeeded", "failed", "cancelled"):
+                return job
+            job.stopping = True
+            job.updated_at = _now()
+            # Still waiting for a slot: it has done nothing, so there is
+            # nothing to unwind and no reason to make anyone watch it 「正在
+            # 停下来」 until whatever is ahead of it finishes.
+            waiting = job.status == "queued"
+            job.status = "cancelled" if waiting else job.status
+            job.detail = "已中止" if waiting else "正在停下来…"
+        self._publish(job, final=waiting)
+        return job
+
     def get(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
@@ -217,11 +256,22 @@ class JobManager:
         self._slots.acquire()
         with self._lock:
             self._waiting -= 1
+        if job.stopping:
+            # Asked to stop while it was still waiting for a slot: it never
+            # ran, so there is nothing to unwind.
+            job.status = "cancelled"
+            job.detail = "已中止"
+            job.updated_at = _now()
+            self._publish(job, final=True)
+            self._slots.release()
+            return
         job.status = "running"
         job.attempts += 1
         job.updated_at = _now()
 
         def progress(stage: str, detail: str, done: int = 0, total: int = 0) -> None:
+            if job.stopping:
+                raise JobCancelled
             job.stage = stage
             job.detail = detail
             job.done, job.total = done, total
@@ -255,6 +305,11 @@ class JobManager:
             job.status = "succeeded"
             job.stage = "done"
             job.detail = result.summary
+            job.done = job.total = 0
+        except JobCancelled:
+            log.info("任务 %s 已中止", job.id)
+            job.status = "cancelled"
+            job.detail = "已中止"
             job.done = job.total = 0
         except Exception as exc:
             log.exception("任务 %s 失败", job.id)
