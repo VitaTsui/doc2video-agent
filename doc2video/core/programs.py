@@ -17,7 +17,29 @@ it makes that the obvious thing to do rather than something to remember.
 
 from __future__ import annotations
 
+import os
 import shutil
+from pathlib import Path
+
+# Where a user's own programs live when the process was not started from their
+# shell. A window opened from the Dock inherits `/usr/bin:/bin:/usr/sbin:/sbin`
+# and nothing else, so `claude` — installed at ~/.local/bin like every other
+# per-user CLI — is invisible to `which`, the model layer degrades to the mock,
+# and the app tells the user 「没写的会是占位文本」 for a CLI they have installed
+# and are logged into. The shell's PATH is handed to the backend by the desktop
+# shell; this is the net under it, and it costs a few `stat` calls on a miss.
+_USER_BINS = (
+    "~/.local/bin",
+    "~/bin",
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    "~/.bun/bin",
+    "~/.volta/bin",
+    "~/.deno/bin",
+    "~/.cargo/bin",
+    "~/.npm-global/bin",
+    "~/.yarn/bin",
+)
 
 
 def find(name: str) -> str | None:
@@ -26,7 +48,13 @@ def find(name: str) -> str | None:
     Always the resolved path — never the name back — so a caller cannot use
     this to decide a program exists and then spawn something else.
     """
-    return shutil.which(name)
+    if found := shutil.which(name):
+        return found
+    for directory in _USER_BINS:
+        candidate = Path(directory).expanduser() / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
 
 def require(name: str, hint: str) -> str:
@@ -35,7 +63,7 @@ def require(name: str, hint: str) -> str:
     `hint` is shown to the person; it should name the thing to install rather
     than the symbol that is missing.
     """
-    found = shutil.which(name)
+    found = find(name)
     if found is None:
         raise FileNotFoundError(hint)
     return found

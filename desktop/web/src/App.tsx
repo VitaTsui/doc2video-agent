@@ -37,6 +37,14 @@ const GREETING_WITHOUT_MODEL =
   '还没配模型，所以讲稿要你自己写——解析完我会把每页的字数预算列出来。想让我代写的话，' +
   '在设置里配一个 API Key；本机装了 Claude Code 或 Codex 的话，不用 Key 也能直接用它们。'
 
+// A provider is configured and could not be reached. 「还没配模型」 is the wrong
+// thing to say here — it sends the person to a settings panel that already has
+// what they need in it, and hides the one sentence that would fix this.
+const GREETING_MODEL_UNREACHABLE = (why: string) =>
+  '把 PPT 或 PDF 拖进来，再说一句你想要什么样的视频。\n\n' +
+  `配了模型但这次没连上：${why}\n` +
+  '现在讲稿要你自己写——解析完我会把每页的字数预算列出来。设置里改完会重启后端，改完就能用。'
+
 export function App() {
   const [connection, setConnection] = useState<Connection | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
@@ -301,7 +309,9 @@ export function App() {
     setGreeting(
       caps?.llm.available
         ? GREETING_WITH_MODEL(caps.llm.label || caps.llm.provider)
-        : GREETING_WITHOUT_MODEL,
+        : caps?.llm.reason
+          ? GREETING_MODEL_UNREACHABLE(caps.llm.reason)
+          : GREETING_WITHOUT_MODEL,
     )
   }, [loadModels, loadProjects])
 

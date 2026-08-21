@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.0.0",
-    "@hsu-react/ui": "^2.4.5",
+    "@hsu-react/ui": "^2.4.6",
     "@iconify/react": "^5.2.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
