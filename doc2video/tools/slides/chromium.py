@@ -17,10 +17,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from ...core import programs
-from ...core.config import Settings, get_settings, which
+from ...core.config import Settings, get_settings
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
+from ..renderer.remotion import remotion_command
 from .model import SlideDeck
 
 log = get_logger(__name__)
@@ -39,14 +39,14 @@ class ChromiumSlideRenderer:
 
     def available(self) -> bool:
         return (
-            which("npx") is not None
+            remotion_command(self.renderer_dir) is not None
             and (self.renderer_dir / "package.json").exists()
             and (self.renderer_dir / "node_modules").exists()
         )
 
     def unavailable_reason(self) -> str:
-        if which("npx") is None:
-            return "未安装 Node.js / npx"
+        if remotion_command(self.renderer_dir) is None:
+            return "未安装 Node.js，或工作区里没有 Remotion CLI"
         if not (self.renderer_dir / "node_modules").exists():
             return f"Remotion 依赖未安装，请在 {self.renderer_dir} 下执行 pnpm install"
         return "不可用"
@@ -68,10 +68,12 @@ class ChromiumSlideRenderer:
             encoding="utf-8",
         )
 
+        command = remotion_command(self.renderer_dir)
+        if command is None:
+            raise ToolFailed("未安装 Node.js，或工作区里没有 Remotion CLI")
         cmd = [
-            # Resolved, not bare — see core.programs.
-            programs.require("npx", "未安装 Node.js / npx"),
-            "remotion", "render",
+            *command,
+            "render",
             "src/index.ts", COMPOSITION_ID,
             str(work_dir.resolve()),
             f"--props={props_path.resolve()}",
