@@ -69,8 +69,21 @@ PROVIDERS = ("anthropic", "openai", "gemini", "compatible", "agent_cli")
 AUTO_ORDER = ("agent_cli", "anthropic", "openai", "gemini", "compatible")
 
 
-def get_llm(settings: Settings | None = None, *, rollout_key: str = "") -> LLMTool:  # noqa: ARG001
-    """Build the configured LLM tool, degrading to MockLLM when unusable.
+def get_llm(settings: Settings | None = None, *, rollout_key: str = "") -> LLMTool:
+    """Build the configured LLM tool, degrading to MockLLM when unusable."""
+    return build_llm(settings, rollout_key=rollout_key)[0]
+
+
+def build_llm(
+    settings: Settings | None = None, *, rollout_key: str = ""  # noqa: ARG001
+) -> tuple[LLMTool, str]:
+    """The tool, and why it is not the one that was configured.
+
+    The reason used to go only to the log. But a degraded model layer is not a
+    log-level event: it is the difference between a script someone wrote and
+    placeholder text, and the window can only say 「还没配模型」 — which is wrong
+    and unactionable when a provider *is* configured and simply could not be
+    reached. The second half of the tuple is empty when nothing went wrong.
 
     ``rollout_key`` is accepted so this matches ``select_adapter``'s signature
     and can gate providers by project later; it is unused today.
@@ -78,13 +91,13 @@ def get_llm(settings: Settings | None = None, *, rollout_key: str = "") -> LLMTo
     settings = settings or get_settings()
     provider = settings.llm_provider.strip().lower()
     if provider in ("", "mock", "none"):
-        return MockLLM()
+        return MockLLM(), ""
 
     try:
         registry = _providers()
     except ImportError as exc:
         log.warning("模型 SDK 未安装（%s），本次运行使用启发式规则降级处理", exc)
-        return MockLLM()
+        return MockLLM(), f"模型 SDK 未安装：{exc}"
 
     reasons: list[str] = []
     for name in AUTO_ORDER if provider == "auto" else (provider,):
@@ -93,18 +106,19 @@ def get_llm(settings: Settings | None = None, *, rollout_key: str = "") -> LLMTo
             reasons.append(f"{name}：未知的 provider")
             continue
         try:
-            return factory(settings)
+            return factory(settings), ""
         except Exception as exc:  # missing key, SDK absent, bad base_url
             reasons.append(f"{name}：{exc}")
 
-    log.warning("模型不可用（%s），本次运行使用启发式规则降级处理", "；".join(reasons))
-    return MockLLM()
+    why = "；".join(reasons)
+    log.warning("模型不可用（%s），本次运行使用启发式规则降级处理", why)
+    return MockLLM(), why
 
 
 def llm_status(settings: Settings | None = None) -> dict:
     """What `doctor` and /health/capabilities report about this layer."""
     settings = settings or get_settings()
-    tool = get_llm(settings)
+    tool, why = build_llm(settings)
     return {
         "provider": tool.source,
         "model": tool.model,
@@ -113,4 +127,8 @@ def llm_status(settings: Settings | None = None) -> dict:
         # The name it has in the settings panel, for anywhere this is shown to
         # a person rather than logged.
         "label": display_name(settings.llm_provider, tool.model),
+        # Empty unless the configured provider could not be built. The window
+        # shows it: 「配的是本机 CLI，但没找到 claude」 is fixable; 「还没配模型」
+        # is not, and was not even true.
+        "reason": why,
     }

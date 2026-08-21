@@ -49,6 +49,12 @@ const READY_TIMEOUT: Duration = Duration::from_secs(90);
 /// ready. Its output is piped, so this is the only place a traceback survives.
 const DIAGNOSTIC_LINES: usize = 60;
 
+/// How long to let the user's shell take to report its PATH.
+const SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Wraps the PATH in the shell's output, which is not only the PATH.
+const MARKER: &str = "__D2V_PATH__";
+
 pub struct Backend {
     child: Child,
     pub base_url: String,
@@ -89,11 +95,20 @@ impl Backend {
         // The runtime ships its own node; without it on PATH the backend looks
         // for `npx`, does not find one, and quietly renders through ffmpeg with
         // plainer slides — a downgrade nobody asked for and nothing reports.
-        if let Some(bin) = paths.node_bin() {
-            let existing = std::env::var("PATH").unwrap_or_default();
-            let separator = if cfg!(windows) { ";" } else { ":" };
-            command.env("PATH", format!("{}{separator}{existing}", bin.display()));
-        }
+        //
+        // And what we inherit is not the user's PATH. An app opened from the
+        // Dock gets `/usr/bin:/bin:/usr/sbin:/sbin` — launchd's, not the
+        // shell's — so `claude`, installed at ~/.local/bin like every other
+        // per-user CLI, is invisible. The model layer then degrades to the mock
+        // and the window offers to write placeholder text for a CLI the user
+        // has installed and is logged into. Measured on this machine: the
+        // sidecar's PATH was those four directories and nothing else.
+        let inherited = shell_path().unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
+        let separator = if cfg!(windows) { ";" } else { ":" };
+        match paths.node_bin() {
+            Some(bin) => command.env("PATH", format!("{}{separator}{inherited}", bin.display())),
+            None => command.env("PATH", &inherited),
+        };
 
         // Its own process group, so the whole tree can be signalled at once.
         // `uv run` forks the interpreter; signalling only what we spawned would
@@ -370,4 +385,73 @@ mod tests {
         assert!(!pid_file.exists());
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// rc files print things. The answer has to be found in that, not assumed.
+    #[test]
+    fn the_path_is_found_among_whatever_the_rc_files_printed() {
+        let noisy = "Last login: Tue\n(base) __D2V_PATH__/opt/homebrew/bin:/usr/bin__D2V_PATH__";
+        assert_eq!(marked_path(noisy).as_deref(), Some("/opt/homebrew/bin:/usr/bin"));
+        assert_eq!(marked_path("nvm: version 0.39\n"), None);
+        assert_eq!(marked_path("__D2V_PATH____D2V_PATH__"), None);
+    }
+}
+
+/// The PATH a terminal would have, asked for once at launch.
+///
+/// The shell is the only thing that knows it: it is assembled by ~/.zprofile
+/// and ~/.zshrc, which a GUI launch never runs. `-ilc` runs both.
+///
+/// Bounded, because an interactive shell is someone else's script: an rc file
+/// that waits for input, or for a network, would otherwise hold the whole app
+/// on its splash screen. Three seconds, then we take what we inherited.
+///
+/// Windows has no equivalent problem: its PATH is in the registry and every
+/// process gets it.
+#[cfg(not(windows))]
+fn shell_path() -> Option<String> {
+    let shell = std::env::var("SHELL").ok()?;
+    let mut child = Command::new(shell)
+        .args(["-ilc", &format!("printf '{MARKER}%s{MARKER}' \"$PATH\"")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let mut pipe = child.stdout.take()?;
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        use std::io::Read;
+        let _ = pipe.read_to_string(&mut text);
+        let _ = send.send(text);
+    });
+
+    match receive.recv_timeout(SHELL_PATH_TIMEOUT) {
+        Ok(text) => {
+            let _ = child.wait();
+            marked_path(&text)
+        }
+        Err(_) => {
+            let _ = child.kill();
+            None
+        }
+    }
+}
+
+#[cfg(windows)]
+fn shell_path() -> Option<String> {
+    None
+}
+
+/// The PATH out of the shell's output.
+///
+/// The marker is there because rc files print things — version notices, a motd,
+/// a `pyenv` banner — so the answer has to be found in that output rather than
+/// assumed to be all of it.
+fn marked_path(text: &str) -> Option<String> {
+    let (_, rest) = text.split_once(MARKER)?;
+    let (path, _) = rest.split_once(MARKER)?;
+    let path = path.trim();
+    (!path.is_empty()).then(|| path.to_string())
 }

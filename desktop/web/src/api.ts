@@ -510,6 +510,8 @@ export async function capabilities() {
       available: boolean
       configured: string
       label?: string
+      /** Why it is not the configured one. Empty when nothing went wrong. */
+      reason?: string
     }
     tts: { provider: string }
     renderers: Record<string, { available: boolean; reason: string }>
