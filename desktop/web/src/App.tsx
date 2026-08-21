@@ -329,9 +329,15 @@ export function App() {
       .catch((error: Error) => setFailure(error.message))
   }, [begin])
 
-  /** Follow one job, keeping its message updated, then show what came out. */
+  /**
+   * Follow one job, keeping its message updated, then show what came out.
+   *
+   * `expectsVideo: false` for a turn whose product is not a film — writing the
+   * script is the one. It ended with 「这一轮没有出片。」, which is true and reads
+   * as a complaint about a step that did exactly what it was asked to do.
+   */
   const follow = useCallback(
-    async (jobId: string, intro: string) => {
+    async (jobId: string, intro: string, expectsVideo = true) => {
       const id = say({ role: 'assistant', kind: 'job', text: intro, job: null })
       abort.current?.abort()
       abort.current = new AbortController()
@@ -413,19 +419,23 @@ export function App() {
       // A turn can end without a video — the agent asked something, or stopped
       // before rendering. Showing a player pointed at a file that does not
       // exist would be worse than saying only what happened.
-      say(
-        rendered
-          ? {
-              role: 'assistant',
-              kind: 'video',
-              text: final.reply || '好了。',
-              projectId: final.project_id,
-              scenes,
-              quality,
-              ledger: chain,
-            }
-          : { role: 'assistant', kind: 'text', text: final.reply || '这一轮没有出片。' },
-      )
+      if (rendered) {
+        say({
+          role: 'assistant',
+          kind: 'video',
+          text: final.reply || '好了。',
+          projectId: final.project_id,
+          scenes,
+          quality,
+          ledger: chain,
+        })
+        return
+      }
+      // A turn that was never going to end in a film says what it did produce
+      // where it produced it — the caller knows the count. Nothing to add here
+      // but a second sentence saying the same thing more vaguely.
+      const closing = final.reply || (expectsVideo ? '这一轮没有出片。' : '')
+      if (closing) say({ role: 'assistant', kind: 'text', text: closing })
     },
     [amend, projectId, say],
   )
@@ -477,7 +487,7 @@ export function App() {
         // The same card a render reports through, in the same place: a line
         // of its own below, with what it is doing and a way to stop it. Two
         // presentations of one wait is one more than the wait deserves.
-        await follow(jobId, '开始写讲稿，逐页来。')
+        await follow(jobId, '开始写讲稿，逐页来。', false)
         return fill(await api.pages(project).catch(() => []))
       } finally {
         window.clearInterval(poll)
@@ -602,6 +612,12 @@ export function App() {
           role: 'assistant',
           kind: 'text',
           text: '讲稿没写出来，可以自己写，或者留空让占位文本顶上。',
+        })
+      } else {
+        say({
+          role: 'assistant',
+          kind: 'text',
+          text: `讲稿写好了，${written} 页都在右侧，逐页可以改。改完点「开始生成」。`,
         })
       }
     } catch (error) {
@@ -809,9 +825,12 @@ export function App() {
               // `locked`, which is what makes the button read 「已开始」 —
               // and 「已开始」 is a lie while it is the script being written.
               busy: running,
-              // A script that came out of a render, rather than out of the
-              // boxes: the same fields, a different sentence.
-              generated: (artifacts?.scenes.length ?? 0) > 0,
+              // Whether a film exists — which is what 「重新生成」 claims and
+              // 「开始生成」 denies. Scene count is not that: writing the script
+              // creates a scene per page, so the button flipped to 「重新生成」
+              // the moment the script was written, offering to redo a video
+              // that had never been made.
+              generated: Boolean(artifacts?.rendered),
               onRender: () => void startRender(),
               onDraft: () => void fillInScript(),
             }}
