@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from ..core import ledger, telemetry, tuning
 from ..core.ids import scene_id
@@ -80,14 +80,31 @@ STYLE_BRIEF = {
 
 class SegmentDraft(BaseModel):
     text: str
-    element_refs: list[str]
-    emphasis: bool
+    element_refs: list[str] = Field(default_factory=list)
+    emphasis: bool = False
 
 
 class PageNarration(BaseModel):
-    index: int
-    narration: str
-    segments: list[SegmentDraft]
+    """One page's script, as the model returns it.
+
+    Two accommodations, both because the same thing has two reasonable names
+    and refusing one of them costs a whole batch its script:
+
+    * the page is `index` here and `page_number` in most people's prompts;
+    * the page's text is the segments, so a model that sends only those is not
+      missing anything. Asking for `narration` as well was asking for the same
+      words twice, and the second copy is the one that could disagree.
+    """
+
+    index: int = Field(validation_alias=AliasChoices("index", "page_number", "page"))
+    segments: list[SegmentDraft] = Field(default_factory=list)
+    narration: str = ""
+
+    @model_validator(mode="after")
+    def _fill_narration(self) -> PageNarration:
+        if not self.narration.strip() and self.segments:
+            self.narration = "".join(segment.text for segment in self.segments)
+        return self
 
 
 class NarrationResult(BaseModel):
@@ -181,6 +198,19 @@ class NarrationSkill(Skill):
             return len(text) / pace
 
         total = sum(spoken(d.narration) for d in drafts.values()) + silence
+        if total < target * (1 - DURATION_TOLERANCE):
+            # Nothing to do about it here — a script can be cut to length and
+            # cannot be filled out without writing more of it — but a video a
+            # sixth shorter than the one that was asked for should not arrive
+            # without anyone having said so. Trimming records its side; this
+            # is the other.
+            self.log.info(
+                "讲稿比目标短 %.0f 秒（%.0fs / 目标 %.0fs）", target - total, total, target
+            )
+            telemetry.record_degradation(
+                "讲稿", f"比目标时长短 {target - total:.0f} 秒，成片会短一截"
+            )
+            return drafts
         if total <= target * (1 + DURATION_TOLERANCE):
             return drafts
 
@@ -562,7 +592,19 @@ class NarrationSkill(Skill):
                 # not talking about is worse than crossing the diagram out of
                 # order (方案 §20).
                 lines.append(f"这一页画的是一条流程，按箭头走是：{flow}")
-            lines.append(f"字数预算：{self._char_budget(budgets[page.index])} 字（正负 15%）")
+            # Said with the remedy attached, because the budget loses on its
+            # own. A prompt that (rightly) warns against padding and says
+            # 「每页只抓一个讲解重点」 pulls the other way, and the model
+            # resolves the tension toward brevity: measured at 30% under
+            # budget on nine pages out of nine, which is a video a third
+            # shorter than the one that was asked for. Trimming can fix an
+            # overrun after the fact; nothing can fill a shortfall.
+            budget = self._char_budget(budgets[page.index])
+            low, high = int(budget * 0.85), int(budget * 1.15)
+            lines.append(
+                f"字数预算：{budget} 字，必须落在 {low}–{high} 字。不够时补的是原因、影响、"
+                "与上下页的关系、数字背后的含义，不是把结论换个说法再说一遍。"
+            )
             if page.summary:
                 lines.append(f"页面摘要：{page.summary}")
             if page.key_points:
