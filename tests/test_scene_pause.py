@@ -94,3 +94,48 @@ def test_a_scene_holds_its_frame_through_the_pause(
     # nothing is said while the page fades in, or after the last word.
     assert scene.segments[0].start == pytest.approx(lead, abs=0.05)
     assert scene.segments[-1].end <= scene.duration - tail + 0.05
+
+
+def test_the_engine_s_own_silence_is_trimmed_so_the_pause_is_the_pause():
+    """Lead and tail have to mean what they say.
+
+    Edge ends a clip with the better part of a second of nothing. Padded on
+    top of that, a page turn measured 2.39 seconds against a designed 1.5 —
+    thirty of those is seventy seconds of dead air in a ten-minute film.
+    """
+    import math
+    import wave
+
+    from doc2video.tools.tts.base import audio_duration, pad_silence
+
+    rate = 22050
+
+    def clip(path, before, speech, after):
+        with wave.open(str(path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(rate)
+            quiet = b"\x00\x00" * int(rate * before)
+            loud = b"".join(
+                int(20000 * math.sin(i / 8)).to_bytes(2, "little", signed=True)
+                for i in range(int(rate * speech))
+            )
+            handle.writeframes(quiet + loud + b"\x00\x00" * int(rate * after))
+
+    import tempfile
+    from pathlib import Path
+
+    work = Path(tempfile.mkdtemp())
+    noisy = work / "noisy.wav"
+    clip(noisy, before=0.3, speech=2.0, after=0.9)
+    assert audio_duration(noisy) == pytest.approx(3.2, abs=0.05)
+
+    padded = pad_silence(noisy, lead=0.6, tail=0.5)
+    # The speech, plus exactly the silence that was asked for.
+    assert padded == pytest.approx(2.0 + 0.6 + 0.5, abs=0.06)
+
+    # A clip that is silent all the way through is the silent provider's, and
+    # it is the whole scene: trimming it would leave a page with no duration.
+    mute = work / "mute.wav"
+    clip(mute, before=0.0, speech=0.0, after=3.0)
+    assert pad_silence(mute, lead=0.6, tail=0.5) == pytest.approx(3.0 + 1.1, abs=0.06)

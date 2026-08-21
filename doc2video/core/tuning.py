@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config import Settings
+from .config import Settings, get_settings
 from .logging import get_logger
 
 log = get_logger(__name__)
@@ -41,10 +41,17 @@ class Knob:
     integer: bool = False
 
 
-def _knobs() -> dict[str, Knob]:
-    """Built on demand, so importing this does not import half the pipeline."""
+def _knobs(settings: Settings | None = None) -> dict[str, Knob]:
+    """Built on demand, so importing this does not import half the pipeline.
+
+    Takes the settings it is asked about rather than the process-wide ones:
+    two of these knobs default to a setting, and reading the global copy made
+    a caller's own configuration invisible to them.
+    """
     from ..skills import director, render_review, speech_review
     from ..tools.tts import units
+
+    settings = settings or get_settings()
 
     listed = [
         Knob(
@@ -54,6 +61,24 @@ def _knobs() -> dict[str, Knob]:
             units.TARGET_UNIT_SECONDS,
             3.0,
             20.0,
+            "秒",
+        ),
+        Knob(
+            "voice.lead",
+            "每页开口前留白",
+            "页面先到，说话后到；转场期间开口，讲的是还没看见的东西",
+            settings.scene_lead_seconds,
+            0.0,
+            2.0,
+            "秒",
+        ),
+        Knob(
+            "voice.tail",
+            "每页收尾后留白",
+            "最后一个字落地，再翻页",
+            settings.scene_tail_seconds,
+            0.0,
+            2.0,
             "秒",
         ),
         Knob(
@@ -160,8 +185,8 @@ def _knobs() -> dict[str, Knob]:
     return {knob.id: knob for knob in listed}
 
 
-def knobs() -> dict[str, Knob]:
-    return _knobs()
+def knobs(settings: Settings | None = None) -> dict[str, Knob]:
+    return _knobs(settings)
 
 
 def value(knob_id: str, settings: Settings | None = None) -> float:
@@ -171,7 +196,7 @@ def value(knob_id: str, settings: Settings | None = None) -> float:
     failing a render over a number somebody typed weeks ago."""
     from . import prefs
 
-    knob = _knobs().get(knob_id)
+    knob = _knobs(settings).get(knob_id)
     if knob is None:
         raise KeyError(knob_id)
     chosen = prefs.load(settings).rules.get(knob_id)
@@ -194,5 +219,5 @@ def report(settings: Settings | None = None) -> list[dict]:
             "unit": knob.unit,
             "integer": knob.integer,
         }
-        for knob in _knobs().values()
+        for knob in _knobs(settings).values()
     ]

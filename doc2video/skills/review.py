@@ -12,6 +12,7 @@ import re
 
 from pydantic import BaseModel
 
+from ..core import tuning
 from ..schemas import PageType, ReviewFinding
 from ..schemas.telemetry import QualityDimension, QualityReport
 from ..tools.renderer.base import SUBTITLE_BOTTOM_MARGIN
@@ -103,8 +104,8 @@ class ReviewSkill(Skill):
             speech_review.check_speech(
                 self.project,
                 self.ctx.asset_path,
-                lead=self.ctx.settings.scene_lead_seconds,
-                tail=self.ctx.settings.scene_tail_seconds,
+                lead=tuning.value("voice.lead", self.ctx.settings),
+                tail=tuning.value("voice.tail", self.ctx.settings),
             )
         )
         if self.project.render.scene_clips:

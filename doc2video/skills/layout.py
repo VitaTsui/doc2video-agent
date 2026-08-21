@@ -8,16 +8,21 @@ coordinates.
 from __future__ import annotations
 
 import re
+from math import ceil
 
 from ..schemas import BBox, DocumentPage, Scene, SubtitleCue
 
-# Roughly one comfortable line of CJK subtitle at 1080p.
-MAX_SUBTITLE_CHARS = 22
+# One comfortable line of CJK subtitle at 1080p. Measured against a
+# hand-written subtitle track for a deck of this kind: 78 captions, median 21
+# characters, longest 32.
+MAX_SUBTITLE_CHARS = 28
 MIN_CUE_SECONDS = 0.8
 
-# Every mark a speaker pauses on is a cut, so this doubles as the split points
-# and the set stripped off the ends of a cue.
-CLAUSE_SPLIT = re.compile(r"(?<=[，,。！？!?；;、：:…])")
+# Where a caption may break: the marks a speaker actually stops on. `、` and
+# `：` are not among them — they separate items *inside* a clause, and cutting
+# there produced captions of four characters. The same hand-written track
+# keeps its `、` and never cuts at one.
+CLAUSE_SPLIT = re.compile(r"(?<=[，,。！？!?；;…])")
 PUNCTUATION = "，,。！？!?；;、：:…—－·「」『』（）()《》〈〉【】\"'“”‘’ "
 
 
@@ -62,24 +67,43 @@ def _shares(chunks: list[str], span: float) -> list[float]:
 
 
 def _chunk(text: str) -> list[str]:
-    """One cue per clause, with the punctuation itself left off the screen.
+    """A caption per line's worth of speech, with the punctuation left off.
 
-    Punctuation is where a listener hears a break, so it is where the subtitle
-    breaks too — a comma becomes a cut rather than a character. Nothing is
-    merged back across a mark: two clauses on one line would re-run the pause
-    the audio just took.
+    A comma becomes a cut rather than a character — but not every comma, and
+    that was the mistake. Cutting at every mark gave 270 captions over a
+    six-minute film, a median of seven characters, two seconds each, and
+    thirty-eight that were gone in under a second. A hand-written track for
+    the same kind of deck runs 78 captions at a median of 21 characters and
+    4.6 seconds; its captions hold a whole thought.
+
+    So clauses are cut at the marks a speaker stops on, and then joined back
+    up to a line's worth. Joining does not re-run the pause the audio just
+    took — the line simply stays on screen across it, which is what reading a
+    subtitle is like. The comma is replaced by a space, again as the reference
+    track does.
     """
     pieces = [stripped for p in CLAUSE_SPLIT.split(text) if (stripped := p.strip(PUNCTUATION))]
 
-    # A clause longer than the line limit still has to be broken somewhere.
-    final: list[str] = []
+    # A clause longer than a line still has to be broken somewhere. Into equal
+    # parts rather than off the front: taking a full line at a time leaves the
+    # tail as a remainder, and one nine-character caption after two long ones
+    # reads as a mistake.
+    split: list[str] = []
     for chunk in pieces:
-        while len(chunk) > MAX_SUBTITLE_CHARS * 1.4:
-            final.append(chunk[:MAX_SUBTITLE_CHARS])
-            chunk = chunk[MAX_SUBTITLE_CHARS:]
-        if chunk:
-            final.append(chunk)
-    return final or [text.strip(PUNCTUATION) or text]
+        parts = ceil(len(chunk) / MAX_SUBTITLE_CHARS)
+        if parts <= 1:
+            split.append(chunk)
+            continue
+        size = ceil(len(chunk) / parts)
+        split.extend(chunk[at : at + size] for at in range(0, len(chunk), size))
+
+    merged: list[str] = []
+    for chunk in split:
+        if merged and len(merged[-1]) + 1 + len(chunk) <= MAX_SUBTITLE_CHARS:
+            merged[-1] = f"{merged[-1]} {chunk}"
+        else:
+            merged.append(chunk)
+    return merged or [text.strip(PUNCTUATION) or text]
 
 
 def to_frame_area(bbox: BBox, page: DocumentPage, width: int, height: int) -> BBox:

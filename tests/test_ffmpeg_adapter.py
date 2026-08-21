@@ -110,3 +110,62 @@ def test_subtitles_disable_template_expansion(monkeypatch: pytest.MonkeyPatch):
     assert drawtext, "本机 ffmpeg 应支持 drawtext"
     assert "expansion=none" in drawtext[0]
     assert "333%" in drawtext[0]
+
+
+def test_concat_puts_each_clip_where_its_frames_say(tmp_path):
+    """The picture must land where the plan puts it, not where AAC padding does.
+
+    `concat` offsets each input by the previous ones' *container* durations,
+    and a clip's container is as long as its longest stream. Each clip carries
+    a copy of its narration encoded to AAC, and an AAC frame does not divide
+    evenly into a clip — so the container measured tens of milliseconds longer
+    than the pictures in it, and every scene started that much later than the
+    one before. Measured on a real thirty-scene film: page 27 arrived 1.37
+    seconds after the plan, which is a highlight drawn while the *next*
+    sentence is being spoken.
+    """
+    import json
+    import subprocess
+
+    from doc2video.tools import ffmpeg, media_binaries
+
+    if not ffmpeg.available():
+        pytest.skip("没有 ffmpeg")
+
+    # As a rendered scene comes out: the picture is a whole number of frames
+    # and the narration is whatever length the voice made it, so the audio
+    # track overhangs the video by a few tens of milliseconds.
+    narration = tmp_path / "narration.m4a"
+    ffmpeg.run([
+        "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono",
+        "-t", "1.04", "-c:a", "aac", "-y", str(narration),
+    ])
+    clips = []
+    for index in range(6):
+        clip = tmp_path / f"{index}.mp4"
+        ffmpeg.run([
+            "-f", "lavfi", "-i", f"color=c=0x{index}0{index}0{index}0:s=160x90:r=30:d=1",
+            "-i", str(narration),
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "copy", "-y", str(clip),
+        ])
+        clips.append(clip)
+
+    joined = ffmpeg.concat(clips, tmp_path / "out.mp4", work_dir=tmp_path)
+    probe = media_binaries.ffprobe()
+    if not probe.available:
+        pytest.skip("没有 ffprobe")
+    found = json.loads(
+        subprocess.run(
+            [probe.path, "-v", "error", "-select_streams", "v:0", "-count_frames",
+             "-show_entries", "stream=nb_read_frames:format=duration", "-of", "json",
+             str(joined)],
+            capture_output=True, text=True,
+        ).stdout
+    )
+    # Six one-second clips: 180 frames — which was never the part that broke.
+    # The frames were all there, spread over 6.29 seconds instead of 6, each
+    # one held a little longer than it should be. That is what puts a caption
+    # a second and a half behind by the end of a film.
+    assert int(found["streams"][0]["nb_read_frames"]) == 180
+    assert float(found["format"]["duration"]) == pytest.approx(6.0, abs=0.02)

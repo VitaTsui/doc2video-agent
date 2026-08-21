@@ -8,7 +8,9 @@ director binds narration to on-screen elements.
 from __future__ import annotations
 
 import contextlib
+import sys
 import wave
+from array import array
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -170,6 +172,12 @@ def pad_silence(path: Path, *, lead: float = 0.0, tail: float = 0.0) -> float | 
     exactly as long as the audio runs, and the subtitle cues — which come from
     the speech — sit inside the silence rather than over it.
 
+    The engine's own silence is trimmed off first, so these two numbers mean
+    what they say. Without that they were a floor rather than a value: Edge
+    ends a clip with the better part of a second of nothing, and a page turn
+    measured 2.39 seconds against a designed 1.5 — thirty of those is seventy
+    seconds of dead air in a ten-minute film.
+
     WAV only, written with the standard library so a pause costs no external
     binary. Anything else is left untouched rather than transcoded.
     """
@@ -188,10 +196,62 @@ def pad_silence(path: Path, *, lead: float = 0.0, tail: float = 0.0) -> float | 
         samples = max(0, int(seconds * params.framerate))
         return b"\x00" * (samples * params.sampwidth * params.nchannels)
 
+    frames = _trim_quiet_ends(frames, params)
+
     with wave.open(str(path), "wb") as handle:
         handle.setparams(params)
         handle.writeframes(_silence(lead) + frames + _silence(tail))
     return audio_duration(path)
+
+
+# Anything under this counts as nothing being said. Low enough to survive the
+# noise floor of a neural voice, high enough to catch the tail it leaves.
+QUIET = 0.02
+# Never take more than this off either end: a clip that measures quiet all the
+# way through is a clip this should leave alone rather than erase.
+MAX_TRIM_SECONDS = 1.5
+
+
+def _trim_quiet_ends(frames: bytes, params) -> bytes:
+    """Drop the engine's own silence from both ends, keeping the speech.
+
+    Only 16-bit PCM, which is what every provider here writes; anything else
+    is returned untouched rather than guessed at.
+    """
+    if params.sampwidth != 2 or not frames:
+        return frames
+
+    audio = array("h")
+    audio.frombytes(frames[: len(frames) - len(frames) % 2])
+    if sys.byteorder == "big":  # WAV is little-endian
+        audio.byteswap()
+
+    step = params.nchannels
+    limit = int(QUIET * 32767)
+    window = max(1, int(params.framerate * 0.01)) * step  # 10ms
+    most = int(MAX_TRIM_SECONDS * params.framerate) * step
+
+    def loud(at: int) -> bool:
+        chunk = audio[at : at + window]
+        return bool(chunk) and max(max(chunk), -min(chunk)) > limit
+
+    # A clip with nothing loud anywhere is the silent provider's, and it is
+    # the whole scene: trimming it would leave a page with no duration at all.
+    if not any(loud(at) for at in range(0, len(audio), window)):
+        return frames
+
+    head = 0
+    while head < min(most, len(audio)) and not loud(head):
+        head += window
+    tail = len(audio)
+    while tail > max(len(audio) - most, head) and not loud(max(head, tail - window)):
+        tail -= window
+
+    if tail <= head:
+        return frames
+    start = head * params.sampwidth
+    end = tail * params.sampwidth
+    return frames[start:end]
 
 
 def audio_duration(path: Path) -> float | None:
