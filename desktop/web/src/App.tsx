@@ -52,16 +52,6 @@ export function App() {
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   /** The model writing the script, and how far it has got. Null when it isn't. */
   const [redoing, setRedoing] = useState<number | null>(null)
-  const [drafting, setDrafting] = useState<{
-    done: number
-    total: number
-    /** The pages the model is on right now, e.g. 「第 5-8 页」. */
-    writing: string
-    /** The job doing it, so it can be stopped. */
-    jobId: string
-    /** A rewrite counts what it has replaced, not what was already there. */
-    rewriting: boolean
-  } | null>(null)
   const [running, setRunning] = useState(false)
   const [greeting, setGreeting] = useState('')
   const [notice, setNotice] = useState('')
@@ -389,6 +379,10 @@ export function App() {
         current?.deck ? { ...current, deck: { ...current.deck, locked: false } } : current,
       )
 
+      // Stopping on purpose is not a failure, and the card above already
+      // says 「已中止」 — a second line calling it one would be wrong twice.
+      if (final.status === 'cancelled') return
+
       if (final.status !== 'succeeded' || !final.project_id) {
         say({
           role: 'assistant',
@@ -445,67 +439,38 @@ export function App() {
    * writing your own page meant overwriting someone else's.
    */
   const draftScript = useCallback(
-    async (project: string, total: number, written: Record<string, string>, before?: Record<string, string>) => {
+    async (project: string, written: Record<string, string>) => {
       const already = Object.entries(written).filter(([, text]) => text.trim())
-      // How many pages have words on them is the progress — measured, not
-      // estimated. The job reports stages, and "writing" is one stage however
-      // long the deck is; the page count is the thing that actually moves.
-      const fill = (written: api.PageView[]) => {
-        const filled = written.filter((page) => page.narration)
-        // A rewrite counts what has actually been replaced. Counting pages
-        // that have words on them would read 「已写 9 / 9 页」 from the first
-        // second, because the old script is still there until the first batch
-        // lands on top of it.
-        const done = before
-          ? written.filter((page) => page.narration && page.narration !== before[page.index]).length
-          : Math.max(filled.length, already.length)
-        setDrafting((current) => ({
-          ...current,
-          done,
-          total,
-          writing: current?.writing ?? '',
-          jobId: current?.jobId ?? '',
-          rewriting: Boolean(before),
-        }))
+
+      // The pages fill in as they are written — every batch the model
+      // finishes is saved, so the boxes on the right can be read while the
+      // rest is still being written.
+      const fill = (pages: api.PageView[]) => {
+        const filled = pages.filter((page) => page.narration)
         if (filled.length === 0) return 0
         setDrafts(Object.fromEntries(filled.map((p) => [String(p.index), p.narration])))
         return filled.length
       }
 
-      setDrafting({ done: already.length, total, writing: '', jobId: '', rewriting: Boolean(before) })
       const jobId = await api.draftScript(project, Object.fromEntries(already))
-      setDrafting((current) => (current ? { ...current, jobId } : current))
       const poll = window.setInterval(() => {
-        void api
-          .pages(project)
-          .then(fill)
-          .catch(() => 0)
+        void api.pages(project).then(fill).catch(() => 0)
         // The record grows through this step as much as through a render —
         // this is where the model is deciding things — so it is read here too.
         void api.ledger(project).then(showRecord).catch(() => undefined)
       }, 1500)
-      let done = 0
       try {
-        // The deck is written a few pages per model call, and a call takes a
-        // minute or more. Counting finished pages alone, the number sits still
-        // for that whole minute and the bar looks broken. The job says which
-        // pages it is on before it starts them, so the wait has something true
-        // in it: 「正在写第 5-8 页」.
-        await api.watchJob(jobId, (state) => {
-          if (state.stage !== 'narrate') return
-          setDrafting((current) => (current ? { ...current, writing: state.detail } : current))
-        })
-        // The last batch may have landed between polls — and so may the step
-        // that closes the record, which is the one naming what was written.
-        done = fill(await api.pages(project).catch(() => []))
-        void api.ledger(project).then(showRecord).catch(() => undefined)
+        // The same card a render reports through, in the same place: a line
+        // of its own below, with what it is doing and a way to stop it. Two
+        // presentations of one wait is one more than the wait deserves.
+        await follow(jobId, '开始写讲稿，逐页来。')
+        return fill(await api.pages(project).catch(() => []))
       } finally {
         window.clearInterval(poll)
-        setDrafting(null)
+        void api.ledger(project).then(showRecord).catch(() => undefined)
       }
-      return done
     },
-    [showRecord],
+    [follow, showRecord],
   )
 
   /** A deck arrives: parse it, then report what is in it and what it will cost. */
@@ -601,16 +566,17 @@ export function App() {
   const fillInScript = useCallback(async () => {
     const project = projectId
     const deck = artifacts?.deck
-    if (!project || !deck || drafting) return
+    // One job at a time: the gate stays on screen while the script is being
+    // written, and a second press would queue a second run over the first.
+    if (!project || !deck || running) return
     // Nothing left blank means this is a rewrite, and a rewrite keeps nothing:
     // sending the current text back would be asking the model to fill in no
     // gaps at all, which is a button that does nothing.
     const blank = deck.pages.some((page) => !(drafts[page.index] ?? '').trim())
     const keep = blank ? drafts : {}
-    const before = blank ? undefined : { ...drafts }
     if (!blank) setDrafts({})
     try {
-      const written = await draftScript(project, deck.pages.length, keep, before)
+      const written = await draftScript(project, keep)
       if (written === 0) {
         say({
           role: 'assistant',
@@ -621,7 +587,7 @@ export function App() {
     } catch (error) {
       say({ role: 'assistant', kind: 'text', text: `写讲稿失败：${api.describeError(error)}` })
     }
-  }, [artifacts, draftScript, drafting, drafts, projectId, say])
+  }, [artifacts, draftScript, drafts, projectId, running, say])
 
   /**
    * A deck dropped onto the window.
@@ -813,9 +779,16 @@ export function App() {
               // one being worked on — without this they describe all of them,
               // and a second upload leaves two cards claiming to be writing.
               projectId,
+              pages: artifacts?.deck?.pages.length ?? 0,
+              hasModel,
               written: Object.values(drafts).filter((text) => text.trim()).length,
               locked: Boolean(artifacts?.deck?.locked),
-              drafting,
+              // Greyed while anything is running: the card no longer swaps
+              // itself for a progress line, so both buttons stay on screen
+              // through a run that is already under way. Separate from
+              // `locked`, which is what makes the button read 「已开始」 —
+              // and 「已开始」 is a lie while it is the script being written.
+              busy: running,
               // A script that came out of a render, rather than out of the
               // boxes: the same fields, a different sentence.
               generated: (artifacts?.scenes.length ?? 0) > 0,

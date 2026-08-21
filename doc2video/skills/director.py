@@ -25,7 +25,15 @@ from ..schemas import (
 from .base import Skill
 
 # Rhythm guardrails: too many camera moves is as bad as none (方案 §10 判断原则).
-MAX_ACTIONS_PER_SCENE = 4
+# A flat cap of four was one of them measured against nothing: on a page that
+# is on screen for twenty-seven seconds and names five different boxes, the
+# fifth sentence pointed at nothing and the film felt disjointed — the voice
+# says 「再看这一块」 and the picture does not move. So the budget is time: one
+# move per stretch of speech, floored so a short page still gets a gesture and
+# capped so a long one does not turn into a slideshow of boxes.
+SECONDS_PER_ACTION = 6.0
+MIN_ACTIONS_PER_SCENE = 2
+MAX_ACTIONS_PER_SCENE = 8
 MIN_ACTION_DURATION = 1.2
 MAX_ACTION_DURATION = 4.0
 # Below this an action flashes rather than reads; drop it instead of squeezing it.
@@ -59,12 +67,17 @@ POINTER_DURATION = 1.4
 AUDIO_LEAD = 0.3
 ZOOM_KINDS = {ElementKind.NUMBER, ElementKind.CHART, ElementKind.TABLE, ElementKind.IMAGE}
 
-# Pages that are signposts rather than content: a cover, the table of contents,
-# a section divider. Every one of them says the same thing — "here is where we
-# are" — and there is nothing on them to point at. Boxing something anyway is
-# how a deck ended up with a highlight around the word 「CONTENTS」 and around
-# the numeral 「1」 on a divider. The page change is the whole gesture.
-SIGNPOST_PAGES = {PageType.COVER, PageType.AGENDA, PageType.SECTION}
+# Pages whose whole content is 「here is where we are」: a cover, a section
+# divider. There is nothing on them to point at, and boxing something anyway is
+# how a deck ended up with a highlight around the numeral 「1」 on a divider.
+#
+# A table of contents is not one of them, which cost it thirteen shots on a
+# thirty-page deck. Its items are the one thing on the page worth pointing at:
+# the narration walks the list — 「先立资质。再谈痛点和思路。」 — and the eye
+# has nowhere to go. What the rule was really protecting against was the
+# *heading* 「CONTENTS」, and `_is_banner` and `DECORATIVE_TEXT` already refuse
+# that.
+SIGNPOST_PAGES = {PageType.COVER, PageType.SECTION}
 
 # Text with nothing in it worth looking at. A target has to carry information:
 # a lone digit is the section's number, 「CONTENTS」 is the word above the list,
@@ -131,20 +144,24 @@ class DirectorSkill(Skill):
             scored.append((score, choice))
 
         scored.sort(key=lambda item: -item[0])
-        # One move per element: repeatedly zooming the same box reads as a stutter,
-        # not as emphasis.
         chosen: list[ActionChoice] = []
-        seen_targets: set[str] = set()
         for _, choice in scored:
-            if choice.target in seen_targets:
-                continue
-            seen_targets.add(choice.target)
             chosen.append(choice)
-            if len(chosen) >= MAX_ACTIONS_PER_SCENE:
+            if len(chosen) >= _action_budget(scene):
                 break
         # Keep narrative order — ranking was only for selection.
         order = {s.id: i for i, s in enumerate(scene.segments)}
         chosen.sort(key=lambda c: order.get(c.segment_id, 0))
+        # Never the same box twice *in a row* — that reads as a stutter. Twice
+        # with something else in between is not a stutter but a return, and
+        # refusing it left the picture still while the narration came back to
+        # a box it had already left. (`_to_actions` enforces the same rule on
+        # the timed actions; this keeps the count honest before the budget.)
+        chosen = [
+            choice
+            for index, choice in enumerate(chosen)
+            if index == 0 or choice.target != chosen[index - 1].target
+        ]
 
         if sum(1 for c in chosen if c.type is ActionType.ZOOM) >= 2 and scene.segments:
             chosen.append(
@@ -391,6 +408,12 @@ def _union(a: BBox, b: BBox) -> BBox:
     return BBox(
         x=x, y=y, w=max(a.x + a.w, b.x + b.w) - x, h=max(a.y + a.h, b.y + b.h) - y
     )
+
+
+def _action_budget(scene: Scene) -> int:
+    """How many camera moves this page's own length can carry."""
+    by_time = round(scene.duration / SECONDS_PER_ACTION)
+    return max(MIN_ACTIONS_PER_SCENE, min(MAX_ACTIONS_PER_SCENE, by_time))
 
 
 def _zoom_pays_off(element, page: DocumentPage) -> bool:

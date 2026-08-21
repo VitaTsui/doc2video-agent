@@ -171,17 +171,23 @@ def test_actions_never_target_unknown_elements(settings: Settings, store: Projec
 
 
 def test_a_signpost_page_gets_no_box_drawn_on_it():
-    """A cover, a table of contents, a section divider — nothing to point at.
+    """A cover and a section divider — nothing on them to point at.
 
-    Every one of them says the same thing: here is where we are. A deck went
-    out with a highlight around the word 「CONTENTS」 and around the numeral on
-    a divider, and both read as the camera pointing at furniture. The page
-    change is the whole gesture.
+    Both say the same thing: here is where we are. A deck went out with a
+    highlight around the numeral on a divider, which read as the camera
+    pointing at furniture. The page change is the whole gesture.
+
+    A table of contents is not one of them, though it was, and that cost it
+    thirteen shots on a thirty-page deck: its items are the one thing on the
+    page worth pointing at, and the narration walks them one by one. What the
+    rule was protecting against there was the heading 「CONTENTS」, which
+    `_worth_pointing_at` refuses on its own.
     """
     from doc2video.schemas import PageType
     from doc2video.skills.director import SIGNPOST_PAGES
 
-    assert {PageType.COVER, PageType.AGENDA, PageType.SECTION} == SIGNPOST_PAGES
+    assert {PageType.COVER, PageType.SECTION} == SIGNPOST_PAGES
+    assert PageType.AGENDA not in SIGNPOST_PAGES
 
 
 def test_page_furniture_is_never_a_target():
@@ -414,3 +420,23 @@ def test_a_thing_that_is_already_the_page_is_not_a_group():
     )
 
     assert focus_box(page.element("label"), page) == page.element("label").bbox
+
+
+def test_a_long_page_can_carry_more_than_four_shots():
+    """The budget is the page's own length, not a number picked once.
+
+    A flat cap of four was measured against nothing: on a page that is on
+    screen for twenty-seven seconds and names five different boxes, the fifth
+    sentence pointed at nothing — the voice says 「再看这一块」 and the picture
+    does not move.
+    """
+    from doc2video.schemas import Scene
+    from doc2video.skills.director import (
+        MAX_ACTIONS_PER_SCENE,
+        MIN_ACTIONS_PER_SCENE,
+        _action_budget,
+    )
+
+    assert _action_budget(Scene(scene_id="s", duration=6.0)) == MIN_ACTIONS_PER_SCENE
+    assert _action_budget(Scene(scene_id="s", duration=30.0)) == 5
+    assert _action_budget(Scene(scene_id="s", duration=600.0)) == MAX_ACTIONS_PER_SCENE

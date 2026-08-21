@@ -295,6 +295,12 @@ def join_units(clips: list[Path], pauses: list[float], out_path: Path) -> list[t
             if params is None:
                 params = handle.getparams()
             body = handle.readframes(handle.getnframes())
+        # The engine's own silence comes off first, so the gap between two
+        # units is the number asked for and nothing else. Left on, a 「句号后
+        # 停 0.10 秒」 measured 1.44 seconds on a real film — the pause we
+        # chose plus two clips' worth of edges — while the sentences inside a
+        # unit ran 0.79. The beats were the wrong way round.
+        body = _trim_quiet_ends(body, params)
         gap = max(0, int(max(pause, 0.0) * params.framerate))
         frames += b"\x00" * (gap * params.sampwidth * params.nchannels)
         start = len(frames) / (params.framerate * params.sampwidth * params.nchannels)

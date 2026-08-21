@@ -66,8 +66,15 @@ class Settings(BaseSettings):
     # Silence around each page's narration, so pages do not cut into one
     # another and nobody speaks over a slide that is still fading in. Part of
     # the scene's own clip, so subtitles stay inside the speech.
-    scene_lead_seconds: float = 0.8
-    scene_tail_seconds: float = 0.7
+    #
+    # Together they are the beat at a page turn, and it is the longest pause
+    # in the film for a reason: the viewer has a new page to take in. Once the
+    # engine's own trailing silence was trimmed the measured gap fell from
+    # 2.39s to these two numbers alone, and a page turn stopped landing — one
+    # page ran into the next. So they are set to what the measurement showed
+    # was actually working, rather than to the smallest that reads as a pause.
+    scene_lead_seconds: float = 1.1
+    scene_tail_seconds: float = 1.0
 
     # --- Renderer / encoding ---
     renderer: str = "auto"

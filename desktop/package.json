@@ -1,7 +1,7 @@
 {
   "name": "doc2video-desktop",
   "private": true,
-  "version": "0.9.11",
+  "version": "0.9.12",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build"

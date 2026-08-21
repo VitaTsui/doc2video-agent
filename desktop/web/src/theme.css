@@ -1650,6 +1650,21 @@ body {
 /* Second, and quieter than 「开始生成」: writing the script is a step you can
    take twice, rendering is the one that costs minutes. An outline against the
    filled accent next to it says which is which without a word. */
+/* What to do next, under the last reply. Not a card: it belongs to the
+   conversation the way a toolbar belongs to a document — present, and not
+   asking to be looked at. */
+.actionbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 4px 0 8px;
+}
+
+.actionbar__hint {
+  flex: 1;
+  font-size: 12.5px;
+}
+
 .deckgate__draft {
   display: inline-flex;
   align-items: center;
