@@ -18,8 +18,10 @@ export function JobCard({ job, onStop }: { job: JobState | null; onStop?: () => 
   if (!job) return null
   const finished =
     job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled'
+  // `??` was the wrong operator: a queued job's stage is an empty string, not
+  // missing, so the card sat there labelled with nothing at all.
   const label =
-    job.status === 'cancelled' ? '已中止' : (STAGE_LABEL[job.stage] ?? job.stage ?? '排队中')
+    job.status === 'cancelled' ? '已中止' : STAGE_LABEL[job.stage] || job.stage || '排队中'
 
   return (
     <div className="card">
