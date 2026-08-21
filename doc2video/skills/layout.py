@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from math import ceil
+from pathlib import Path
 
 from ..schemas import BBox, DocumentPage, Scene, SubtitleCue
 
@@ -26,8 +27,18 @@ CLAUSE_SPLIT = re.compile(r"(?<=[，,。！？!?；;…])")
 PUNCTUATION = "，,。！？!?；;、：:…—－·「」『』（）()《》〈〉【】\"'“”‘’ "
 
 
-def build_subtitles(scene: Scene) -> list[SubtitleCue]:
-    """Split each narration segment into readable cues within its own window."""
+def build_subtitles(scene: Scene, audio: Path | None = None) -> list[SubtitleCue]:
+    """Split each narration segment into readable cues within its own window.
+
+    `audio` is the scene's own clip, when there is one. Clauses are joined up
+    to a line's worth, and whether two of them belong on one line depends on
+    something only the clip knows: whether the voice stops between them. It
+    usually does not — a comma costs about a third of a second — but a long
+    enumeration can take a second and a half, and a caption held across that
+    reads as one continuous sentence while the narrator audibly stops in the
+    middle of it.
+    """
+    pauses = _pauses_in(audio)
     cues: list[SubtitleCue] = []
     for segment in scene.segments:
         span = max(segment.end - segment.start, 0.0)
@@ -48,7 +59,79 @@ def build_subtitles(scene: Scene) -> list[SubtitleCue]:
             cursor = cursor_end
             if cursor >= segment.end:
                 break
-    return cues
+    return _split_where_the_voice_stops(cues, pauses)
+
+
+def _split_where_the_voice_stops(
+    cues: list[SubtitleCue], pauses: list[tuple[float, float]]
+) -> list[SubtitleCue]:
+    """Cut any caption the narrator breaks in the middle of.
+
+    Clauses are joined up to a line's worth because a caption of seven
+    characters is gone before it is read. Most joins are across a comma the
+    voice runs through in a third of a second — but some are two thirds, and a
+    line held across one of those reads as a single continuous sentence while
+    the narrator audibly stops inside it.
+
+    Done here rather than when the pieces are joined because here the cue has
+    a time: there is no need to guess which comma a gap belongs to, only to
+    ask whether this caption's own window contains one.
+    """
+    if not pauses:
+        return cues
+
+    out: list[SubtitleCue] = []
+    for cue in cues:
+        gap = next(
+            (
+                (at, length)
+                for at, length in pauses
+                # Both halves have to stand on their own, or the cure is a
+                # caption that flashes past — which is the thing this whole
+                # file was rearranged to stop doing.
+                if length >= AUDIBLE_BREAK
+                and cue.start + MIN_CUE_SECONDS < at < cue.end - MIN_CUE_SECONDS
+            ),
+            None,
+        )
+        if gap is None or " " not in cue.text:
+            out.append(cue)
+            continue
+
+        at, _ = gap
+        # Which join the gap falls at, by where it sits in the cue's window.
+        spaces = [i for i, ch in enumerate(cue.text) if ch == " "]
+        share = (at - cue.start) / max(cue.end - cue.start, 0.001)
+        cut = min(spaces, key=lambda i: abs(i / len(cue.text) - share))
+        out.append(
+            SubtitleCue(
+                start=cue.start, end=round(at, 3), text=cue.text[:cut], scene_id=cue.scene_id
+            )
+        )
+        out.append(
+            SubtitleCue(
+                start=round(at, 3), end=cue.end, text=cue.text[cut + 1 :], scene_id=cue.scene_id
+            )
+        )
+    return out
+
+
+# A gap the ear registers as a stop. Below it a comma is just a comma; the
+# measured median inside a sentence is 0.32s, and the ones worth splitting on
+# are the tail — P90 1.37s, longest 1.53s.
+AUDIBLE_BREAK = 0.45
+
+
+def _pauses_in(audio: Path | None) -> list[tuple[float, float]]:
+    """Every gap in this clip as (when, how long), in scene time."""
+    if audio is None or not audio.exists():
+        return []
+    try:
+        from ..tools.tts.align import find_pauses
+
+        return [(pause.end - pause.duration / 2, pause.duration) for pause in find_pauses(audio)]
+    except Exception:  # noqa: BLE001 - subtitles must not fail over a probe
+        return []
 
 
 def _shares(chunks: list[str], span: float) -> list[float]:
@@ -89,17 +172,24 @@ def _chunk(text: str) -> list[str]:
     # tail as a remainder, and one nine-character caption after two long ones
     # reads as a mistake.
     split: list[str] = []
+    # Which pieces begin at a punctuation mark, as opposed to in the middle of
+    # a clause that was too long for one line. Only the first kind can line up
+    # with a pause in the audio.
+    marks: list[bool] = []
     for chunk in pieces:
         parts = ceil(len(chunk) / MAX_SUBTITLE_CHARS)
         if parts <= 1:
             split.append(chunk)
+            marks.append(True)
             continue
         size = ceil(len(chunk) / parts)
-        split.extend(chunk[at : at + size] for at in range(0, len(chunk), size))
+        for offset in range(0, len(chunk), size):
+            split.append(chunk[offset : offset + size])
+            marks.append(offset == 0)
 
     merged: list[str] = []
-    for chunk in split:
-        if merged and len(merged[-1]) + 1 + len(chunk) <= MAX_SUBTITLE_CHARS:
+    for chunk, at_mark in zip(split, marks, strict=True):
+        if merged and at_mark and len(merged[-1]) + 1 + len(chunk) <= MAX_SUBTITLE_CHARS:
             merged[-1] = f"{merged[-1]} {chunk}"
         else:
             merged.append(chunk)

@@ -130,3 +130,78 @@ def test_a_chat_turn_reports_what_the_agent_said():
     # happened to be last.
     assert done.as_dict()["result"]["duration"] == 42.0
     assert agent.asked == "第 3 页太长了"
+
+
+class _ReportingAgent:
+    """Reports progress the way the pipeline does: once per scene."""
+
+    def __init__(self) -> None:
+        self.scenes_done = 0
+        self.started = threading.Event()
+
+    def run(self, *, progress=None, **kwargs):  # noqa: ANN003, ARG002
+        self.started.set()
+        for index in range(20):
+            time.sleep(0.02)
+            if progress is not None:
+                progress("render", f"渲染场景 {index}", index, 20)
+            self.scenes_done = index + 1
+
+        class _Result:
+            project_id = "proj_1"
+            summary = "done"
+            __dict__ = {"project_id": "proj_1"}
+
+        return _Result()
+
+
+def test_a_running_job_can_be_asked_to_stop(settings: Settings):
+    """Minutes of work, and until now no way to take it back.
+
+    Stopping is a request rather than a kill: the scene being rendered right
+    now finishes, because a half-written clip is one the incremental render
+    would later mistake for a good one. So the job reports `stopping` first
+    and `cancelled` when it actually stops.
+    """
+    agent = _ReportingAgent()
+    manager = JobManager(agent, settings=settings)
+    job = manager.submit(JobRequest(message="做一版"))
+
+    assert agent.started.wait(timeout=5)
+    manager.cancel(job.id)
+    assert job.stopping is True
+
+    for _ in range(200):
+        if job.status == "cancelled":
+            break
+        time.sleep(0.02)
+    assert job.status == "cancelled"
+    # It stopped where it was, rather than running to the end.
+    assert agent.scenes_done < 20
+
+
+def test_a_job_cancelled_before_it_starts_never_runs(settings: Settings):
+    agent = _ReportingAgent()
+    manager = JobManager(agent, settings=settings)
+    job = manager.submit(JobRequest(message="做一版"))
+    manager.cancel(job.id)
+
+    for _ in range(200):
+        if job.status in ("cancelled", "succeeded"):
+            break
+        time.sleep(0.02)
+    assert job.status == "cancelled"
+
+
+def test_cancelling_a_finished_job_changes_nothing(settings: Settings):
+    agent = _ReportingAgent()
+    manager = JobManager(agent, settings=settings)
+    job = manager.submit(JobRequest(message="做一版"))
+    for _ in range(300):
+        if job.status == "succeeded":
+            break
+        time.sleep(0.02)
+    assert job.status == "succeeded"
+
+    manager.cancel(job.id)
+    assert job.status == "succeeded"

@@ -25,7 +25,9 @@ export interface Connection {
 
 export interface JobState {
   job_id: string
-  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+  /** Asked to stop; the stage in flight has not noticed yet. */
+  stopping?: boolean
   stage: string
   detail: string
   done: number
@@ -184,6 +186,11 @@ export async function setRule(id: string, value: number | null) {
     body: JSON.stringify({ id, value }),
   })
   return body.plugins
+}
+
+/** Ask a running job to stop. It ends at the next thing it finishes. */
+export async function cancelJob(jobId: string) {
+  return request<JobState>(`/jobs/${jobId}/cancel`, { method: 'POST' })
 }
 
 /** Everything this build is made of, and what works on this machine. */

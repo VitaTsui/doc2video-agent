@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from doc2video.schemas import BBox, DocumentPage, NarrationSegment, Scene
 from doc2video.skills.layout import build_subtitles, to_frame_area, with_highlight_padding
 
@@ -118,3 +120,53 @@ def test_a_list_stays_on_one_line():
     assert [cue.text for cue in cues] == ["检索、生成、编程、推理、协同 都要靠它"]
     assert cues[-1].end <= 3.0
     assert all(cue.start < cue.end for cue in cues)
+
+
+def test_a_caption_is_cut_where_the_narrator_stops(tmp_path):
+    """One line, and the voice audibly breaks in the middle of it.
+
+    Clauses are joined up to a line's worth because a caption of seven
+    characters is gone before it is read. Most joins are across a comma the
+    voice runs through in a third of a second — but some are two thirds, and a
+    line held across one of those reads as one continuous sentence while the
+    narrator stops inside it.
+    """
+    import math
+    import wave
+
+    from doc2video.skills.layout import build_subtitles
+
+    rate = 22050
+    clip = tmp_path / "scene.wav"
+
+    def tone(seconds):
+        return b"".join(
+            int(18000 * math.sin(i / 7)).to_bytes(2, "little", signed=True)
+            for i in range(int(rate * seconds))
+        )
+
+    with wave.open(str(clip), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        # Two clauses with two thirds of a second of nothing between them.
+        handle.writeframes(tone(2.0) + b"\x00\x00" * int(rate * 0.65) + tone(2.0))
+
+    scene = Scene(
+        scene_id="scene_01",
+        narration="再谈痛点和思路，落到建设内容与商业价值。",
+        segments=[
+            NarrationSegment(
+                id="s1", text="再谈痛点和思路，落到建设内容与商业价值。", start=0.0, end=4.65
+            )
+        ],
+        duration=4.65,
+    )
+
+    # Without the clip there is nothing to know, and the line is one caption.
+    assert len(build_subtitles(scene)) == 1
+
+    cut = build_subtitles(scene, clip)
+    assert [cue.text for cue in cut] == ["再谈痛点和思路", "落到建设内容与商业价值"]
+    # And the cut lands in the silence, not at a guessed position.
+    assert cut[0].end == pytest.approx(2.3, abs=0.25)

@@ -34,6 +34,23 @@ def get_job(job_id: str) -> dict:
     return job.as_dict()
 
 
+@router.post("/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict:
+    """Ask a running job to stop.
+
+    A request rather than a kill. The stage in flight finishes — a scene half
+    rendered is a file the incremental render would later mistake for a good
+    one — so this returns immediately with `stopping`, and the job reports
+    `cancelled` when it actually stops.
+    """
+    job = get_jobs().cancel(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404, detail={"code": "job_not_found", "message": "任务不存在"}
+        )
+    return job.as_dict()
+
+
 @router.post("/{job_id}/retry")
 def retry_job(job_id: str) -> dict:
     try:
