@@ -22,7 +22,7 @@ import re
 
 from pydantic import BaseModel
 
-from ..core import ledger, telemetry
+from ..core import ledger, telemetry, tuning
 from ..core.ids import scene_id
 from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisual, VisualType
 from ..tools.llm import model_schema
@@ -380,7 +380,9 @@ class NarrationSkill(Skill):
 
     def _page_silence(self) -> float:
         """Seconds each page holds without speech, at its head and its tail."""
-        return self.ctx.settings.scene_lead_seconds + self.ctx.settings.scene_tail_seconds
+        return tuning.value("voice.lead", self.ctx.settings) + tuning.value(
+            "voice.tail", self.ctx.settings
+        )
 
     def _allocate_budget(self, pages: list[DocumentPage]) -> dict[int, float]:
         """Seconds of *speech* per page, summing to the requested duration.

@@ -54,16 +54,38 @@ def run(args: list[str], *, timeout: int = DEFAULT_TIMEOUT) -> None:
 
 
 def concat(clips: list[Path], out_path: Path, *, work_dir: Path | None = None) -> Path:
-    """Concatenate pre-rendered clips that share codec parameters."""
+    """Concatenate pre-rendered clips into one silent video.
+
+    Silent on purpose. Each clip carries a copy of its own narration, encoded
+    to AAC, and an AAC frame does not divide evenly into a clip's length — the
+    encoder pads, so the file measures a few tens of milliseconds longer than
+    the pictures in it. Concatenating with those tracks attached made the
+    timeline the *audio's* length, and the pictures fell behind by that padding
+    once per scene: measured at two seconds by scene 27 of a thirty-scene film,
+    which is a highlight that appears while the next sentence is being spoken.
+
+    Dropped from a copy rather than from the clips themselves: the panel plays
+    each scene's own clip, and a silent preview would be a worse answer to
+    「这一页出来对不对」 than a slightly slower assembly. The copies are stream
+    copies — no re-encode, about a second for a thirty-scene film.
+    """
     if not clips:
         raise ToolFailed("没有可拼接的片段")
     work_dir = work_dir or out_path.parent
     work_dir.mkdir(parents=True, exist_ok=True)
+    silent_dir = work_dir / "silent"
+    silent_dir.mkdir(parents=True, exist_ok=True)
+    silent: list[Path] = []
+    for index, clip in enumerate(clips):
+        copy = silent_dir / f"{index:04d}.mp4"
+        run(["-i", str(clip), "-an", "-c:v", "copy", "-y", str(copy)])
+        silent.append(copy)
+
     list_file = work_dir / "concat.txt"
     list_file.write_text(
-        "\n".join(f"file '{clip.resolve()}'" for clip in clips) + "\n", encoding="utf-8"
+        "\n".join(f"file '{clip.resolve()}'" for clip in silent) + "\n", encoding="utf-8"
     )
-    run(["-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", str(out_path)])
+    run(["-f", "concat", "-safe", "0", "-i", str(list_file), "-c:v", "copy", str(out_path)])
     return out_path
 
 

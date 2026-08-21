@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 
-from ..core import ledger
+from ..core import ledger, tuning
 from ..core.logging import get_logger
 from ..schemas import Scene
 from ..tools.tts import TTSTool
@@ -66,8 +66,10 @@ class VoiceSkill(Skill):
 
             # Silence at both ends: the page arrives and settles before the
             # narrator starts, and the last word lands before the next slide.
-            lead = self.ctx.settings.scene_lead_seconds
-            padded = pad_silence(result.path, lead=lead, tail=self.ctx.settings.scene_tail_seconds)
+            lead = tuning.value("voice.lead", self.ctx.settings)
+            padded = pad_silence(
+                result.path, lead=lead, tail=tuning.value("voice.tail", self.ctx.settings)
+            )
 
             scene.audio.path = self.ctx.store.relativize(self.project.project_id, result.path)
             scene.audio.duration = padded or result.duration
@@ -110,8 +112,8 @@ class VoiceSkill(Skill):
                 chosen,
                 f"{intent.speech_rate or self.ctx.settings.tts_speech_rate:.2f}",
                 # Part of the clip, so changing either has to re-synthesise.
-                f"{self.ctx.settings.scene_lead_seconds:.2f}",
-                f"{self.ctx.settings.scene_tail_seconds:.2f}",
+                f'{tuning.value("voice.lead", self.ctx.settings):.2f}',
+                f'{tuning.value("voice.tail", self.ctx.settings):.2f}',
             ]
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]

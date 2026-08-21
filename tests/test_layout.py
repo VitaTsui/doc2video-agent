@@ -85,20 +85,24 @@ def test_build_subtitles_stays_inside_segment_window():
     assert cues[0].start == 0.0
     assert all(cue.end <= 8.0 for cue in cues)
     assert all(cue.start < cue.end for cue in cues)
-    assert all(len(cue.text) <= 32 for cue in cues)
-    # The comma is a cut, not a character: the first clause ends on its own.
-    assert cues[0].text == "这是第一句话"
-    assert not any(c in cue.text for cue in cues for c in "，。！？；、")
-    # Every clause survives its segment's window — none is pushed past the end.
+    assert all(len(cue.text) <= 28 for cue in cues)
+    # The comma is a cut, not a character — and then the pieces are joined back
+    # up to a line's worth, with a space where the comma was. Cutting at every
+    # mark and stopping there gave captions of seven characters that were gone
+    # in two seconds; a line holds a whole thought.
+    assert not any(c in cue.text for cue in cues for c in "，。！？；")
     assert [cue.text for cue in cues] == [
-        "这是第一句话",
-        "它比较长需要拆分成多条字幕",
+        "这是第一句话 它比较长需要拆分成多条字幕",
         "这是第二句",
     ]
 
 
-def test_short_clauses_all_fit_their_segment():
-    """Many small clauses in one window: the floor must not evict the tail."""
+def test_a_list_stays_on_one_line():
+    """`、` separates items inside a clause; a speaker does not stop there.
+
+    Cutting at it produced four-character captions. The hand-written track
+    this was measured against keeps every `、` and never cuts at one.
+    """
     scene = Scene(
         scene_id="scene_01",
         narration="检索、生成、编程、推理、协同，都要靠它。",
@@ -111,6 +115,6 @@ def test_short_clauses_all_fit_their_segment():
     )
     cues = build_subtitles(scene)
 
-    assert [cue.text for cue in cues] == ["检索", "生成", "编程", "推理", "协同", "都要靠它"]
+    assert [cue.text for cue in cues] == ["检索、生成、编程、推理、协同 都要靠它"]
     assert cues[-1].end <= 3.0
     assert all(cue.start < cue.end for cue in cues)
