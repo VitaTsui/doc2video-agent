@@ -193,3 +193,30 @@ def test_the_pace_follows_the_engine_that_will_speak_it(settings, store):
                   pages=4, duration=120.0)
     assert fast._pace() > 0
     assert fast._char_budget(10.0) == int(10.0 * fast._pace())
+
+
+def test_a_script_that_came_up_short_says_so(settings: Settings, store: ProjectStore):
+    """A film a sixth shorter than the one that was ordered is not silent news.
+
+    Trimming can bring an overrun back to length; nothing can fill a shortfall
+    without writing more of the script. So the one thing that can be done is
+    to say it happened — measured at 15% under on a nine-page deck with the
+    prompt this ships with.
+    """
+    from doc2video.core import telemetry
+    from doc2video.skills.narration import PageNarration
+
+    skill = _skill(settings, store, pages=4, duration=240.0)
+    pages = skill._pages()
+    budgets = skill._allocate_budget(pages)
+    thin = {
+        page.index: PageNarration(index=page.index, narration="一句话。", segments=[])
+        for page in pages
+    }
+
+    with telemetry.run("proj_short") as recorder:
+        skill._fit_duration(pages, budgets, thin)
+        record = recorder.finish(status="succeeded")
+
+    said = [d for d in record.degradations if "短" in d.reason]
+    assert said, [d.reason for d in record.degradations]
