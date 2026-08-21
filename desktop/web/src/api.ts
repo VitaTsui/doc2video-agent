@@ -130,31 +130,52 @@ export async function voicePacks() {
   }>('/health/voices')
 }
 
-export interface PipelineStep {
+export interface Plugin {
   id: string
   name: string
-  /** The skill that runs it, by the name it has in the code. Empty when the
-   *  step is plain machinery rather than a skill. */
-  skill: string
+  /** skill | parser | voice | renderer | model | binary */
+  kind: string
+  kind_name: string
+  /** Which step of the pipeline it belongs to — an attribute, not a heading. */
+  stage: string
   what: string
-  /** What this step tells the model, verbatim. Empty when it asks none. */
+  available: boolean
+  /** Why not, when it is not. */
+  reason: string
+  /** What it tells the model, verbatim. Empty when it asks none. */
   prompt: string
-  /** The numbers that decide what comes out, read from the constants. */
-  rules: { name: string; value: string; what: string }[]
-  parts: {
-    id: string
+  /** Anything else worth reading: a path, a size, where it came from. */
+  detail: Record<string, string>
+  /** The numbers that decide what comes out, as they are set right now. */
+  rules: {
     name: string
+    /** As it reads, with its unit: 「0.55 秒」「340 字/分」. */
+    value: string
     what: string
-    available: boolean
-    /** Why not, when it is not. */
-    reason: string
+    /** The knob behind it, when it is one that can be changed. */
+    id: string
+    number: number
+    default: number
+    low: number
+    high: number
+    unit: string
+    integer: boolean
   }[]
 }
 
-/** What this build does, step by step, and what works on this machine. */
+/** Change one of those numbers. `null` puts the measured default back. */
+export async function setRule(id: string, value: number | null) {
+  const body = await request<{ plugins: Plugin[] }>('/health/plugins/rules', {
+    method: 'PUT',
+    body: JSON.stringify({ id, value }),
+  })
+  return body.plugins
+}
+
+/** Everything this build is made of, and what works on this machine. */
 export async function plugins() {
-  const body = await request<{ steps: PipelineStep[] }>('/health/plugins')
-  return body.steps
+  const body = await request<{ plugins: Plugin[] }>('/health/plugins')
+  return body.plugins
 }
 
 export interface PiperVoice {

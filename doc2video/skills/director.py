@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from ..core import tuning
 from ..schemas import (
     ActionType,
     DirectorAction,
@@ -162,7 +163,9 @@ class DirectorSkill(Skill):
         if segment.emphasis or element.kind in ZOOM_KINDS:
             # Unless it is a wall of text: a picture or a number rewards being
             # enlarged, a paragraph does not.
-            wordy = element.kind not in ZOOM_KINDS and len(element.text or "") > MAX_ZOOM_CHARS
+            wordy = element.kind not in ZOOM_KINDS and len(element.text or "") > tuning.value(
+                "shot.max_zoom_chars"
+            )
             if not wordy and _zoom_pays_off(element, page):
                 return ActionType.ZOOM
             return ActionType.HIGHLIGHT
@@ -287,7 +290,7 @@ def _zoom_pays_off(element, page: DocumentPage) -> bool:
     frame. The viewer loses the page and gains nothing.
     """
     coverage = _coverage(element, page)
-    return coverage * RENDER_MAX_SCALE**2 >= MIN_ZOOM_RESULT
+    return coverage * tuning.value("shot.max_scale") ** 2 >= tuning.value("shot.min_result")
 
 
 def _is_banner(element, page: DocumentPage) -> bool:

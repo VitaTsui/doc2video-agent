@@ -1243,6 +1243,44 @@ body {
   border-color: var(--accent);
 }
 
+/* One plugin's own line: a dot for whether it works here, its name, what kind
+   of thing it is, and where in the pipeline it sits. */
+.plugin__head {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+  align-items: baseline;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.plugin__stage {
+  flex: 1;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin__more {
+  flex: none;
+  font-size: 12px;
+}
+
+.plugin__head:hover .plugin__more {
+  color: var(--accent);
+}
+
+.plugin__id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  min-width: 0;
+}
+
 .browse {
   margin-top: 10px;
 }
@@ -1356,6 +1394,42 @@ body {
   flex: none;
   min-width: 86px;
   font-variant-numeric: tabular-nums;
+}
+
+.rule__edit {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  min-width: 86px;
+}
+
+.rule__input {
+  width: 52px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font: inherit;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg);
+  text-align: right;
+}
+
+.rule__unit {
+  font-size: 12px;
+}
+
+/* Only there once a number has been moved, because until then there is
+   nothing to go back to. */
+.rule__reset {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .rule__what {

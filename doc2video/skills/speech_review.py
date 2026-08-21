@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..core import tuning
 from ..schemas import ReviewFinding, VideoProject
 from ..tools.tts.align import find_pauses
 
@@ -60,7 +61,7 @@ def check_speech(
             continue
 
         rate = len(scene.narration) / spoken * 60
-        if rate > TOO_FAST:
+        if rate > tuning.value("review.too_fast"):
             findings.append(
                 ReviewFinding(
                     severity="warning",
@@ -69,7 +70,7 @@ def check_speech(
                     message=f"语速 {rate:.0f} 字/分，偏快，听的人跟不上",
                 )
             )
-        elif rate < TOO_SLOW:
+        elif rate < tuning.value("review.too_slow"):
             findings.append(
                 ReviewFinding(
                     severity="warning",
@@ -79,7 +80,8 @@ def check_speech(
                 )
             )
 
-        if (longest := _longest_unbroken(Path(clip), scene.audio.duration)) > MONOTONE_SECONDS:
+        quiet = tuning.value("review.monotone_seconds")
+        if (longest := _longest_unbroken(Path(clip), scene.audio.duration)) > quiet:
             findings.append(
                 ReviewFinding(
                     severity="warning",

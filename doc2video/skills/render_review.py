@@ -23,6 +23,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from ..core import tuning
 from ..core.logging import get_logger
 from ..schemas import ActionType, BBox, DocumentPage, ReviewFinding, SubtitleCue, VideoProject
 from ..tools import ffmpeg
@@ -354,14 +355,14 @@ def check_actions(project: VideoProject, clip_path) -> list[ReviewFinding]:
         # outline does, which is how the first version came to report the
         # opposite of what a crop of the same frame plainly showed.
         noise = _changed(Path(path), _elsewhere(action.area), before, during)
-        if noise is None or noise > STILL_ENOUGH:
+        if noise is None or noise > tuning.value("review.still_enough"):
             skipped += 1
             continue
         drawn = _changed(Path(path), action.area, before, during)
         if drawn is None:
             continue
         checked += 1
-        if drawn < ACTION_MIN_CHANGE:
+        if drawn < tuning.value("review.action_change"):
             findings.append(
                 ReviewFinding(
                     severity="warning",
