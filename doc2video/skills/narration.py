@@ -229,14 +229,22 @@ class NarrationSkill(Skill):
                 # append nothing — measured on eleven reworked pages, the count
                 # did not move. A sentence each, in page order, is something it
                 # can actually execute, and it is what 「先横向铺开」 means.
+                # Coverage *within* the budget. Asked without the number, the
+                # rework covered the page by reading every card's body as well
+                # — the deck went from 2103 characters to 5973, a 24-minute
+                # film against an 8-minute request. Breadth is the thing worth
+                # having; the words per item are what has to give.
                 want = min(affordable, len(missed) + walked)
+                budget = self._char_budget(budgets[index])
+                each = max(12, budget // max(want, 1))
                 broken[index] = (
                     f"上一稿只讲到这一页的 {walked} 处内容，按字数本可以讲 {affordable} 处——"
                     "一张卡片讲得再透，旁边三张没讲到，观众看着屏幕上的它们听你翻页。\n"
                     f"重写这一页：写成 {want} 句左右，**按页面顺序一处一句**，"
-                    "每句都带上那一处自己的名字和它最要紧的一个信息。"
+                    f"每句 {each} 字上下，带上那一处自己的名字和它最要紧的一个信息。"
+                    f"整页不要超过 {budget} 字。\n"
                     f"漏掉的是：「{'」「'.join(missed[:6])}」。\n"
-                    "宁可每句短一点，也不要只讲一处。"
+                    "每句短一点没关系，讲不全才是问题；细节留给观众自己看屏幕。"
                 )
         if not broken or not self.llm.available:
             return drafts
