@@ -45,11 +45,15 @@ def test_a_pause_where_a_word_begins_is_left_alone():
 
 
 def test_a_gap_too_short_to_hear_is_not_a_defect():
+    """Below the floor nothing is repaired — but the floor is low.
+
+    It was 0.22s while a clip was a whole sentence and the estimate of where a
+    gap fell drifted a couple of characters. A clip is one clause now, and the
+    complaint that lowered it was a 0.14-second break in the middle of 供应链 —
+    a third of a beat, and plainly audible because it was inside a word.
+    """
     assert phrasing.repairs_for(LINE, [(1.79, 0.05)], 6.79) == set()
-    # 0.18s is what this engine leaves at the boundaries it gets right, and the
-    # position estimate is worth about a character either way — repairing at
-    # that scale invents markers rather than fixing anything.
-    assert phrasing.repairs_for(LINE, [(5.4, 0.18)], 6.79) == set()
+    assert phrasing.repairs_for("一是供应链经营风险可控化，", [(0.69, 0.14)], 2.51) == {2}
 
 
 def test_the_guard_marks_where_the_word_starts():

@@ -25,14 +25,18 @@ from ...core.logging import get_logger
 
 log = get_logger(__name__)
 
-# A gap this long inside a line is heard as a pause rather than as articulation.
-# Measured on the same wrong break: `say` leaves 0.27s there and it is plainly
-# audible; the boundaries it gets *right* in the same line run 0.18s, and Edge's
-# version of the same mistake is 0.11s and inaudible. The bar sits above the
-# boundaries an engine takes on purpose, because the position estimate is worth
-# about a character either way — below it, a legitimate break gets 「repaired」
-# into a marker it did not need.
-AUDIBLE_GAP = 0.22
+# A gap this long inside a clause is worth looking at. It used to be 0.22s,
+# which was the right bar when a clip was a whole sentence and the estimate of
+# where a gap fell drifted a couple of characters — below that, legitimate
+# breaks got 「repaired」 into markers they did not need.
+#
+# A clip is one clause now, a dozen characters long, and the estimate lands
+# within a character. What the old bar missed: 「一是供应链经营风险可控化」 broke
+# after 一是供应 by 0.14 seconds — a third of a beat in the middle of 供应链, and
+# the first thing after a full stop's pause, which is exactly where a listener
+# is paying attention. Length is not the same thing as audibility; being inside
+# a word is.
+AUDIBLE_GAP = 0.10
 
 # A gap beside one of these is the gap that character asks for, not a mistake.
 MARKS = "，、；：。！？…—,;:.!?"
@@ -124,6 +128,25 @@ def _char_at(text: str, fraction: float) -> int:
         if spent >= target:
             return index
     return len(text) - 1
+
+
+def split(text: str, starts: set[int]) -> list[str]:
+    """Cut `text` where those words begin.
+
+    The pieces are spoken separately and joined with no gap between them, which
+    is what makes this cheaper than telling the engine where the boundary is:
+    a marker inside one utterance makes `say` re-plan its prosody around it and
+    the clause comes back 19% longer (2.51s → 2.98s), while the same clause cut
+    in two and rejoined runs 2.47s — shorter than the original, because each
+    piece's own quiet edges are trimmed before they meet.
+    """
+    cuts = sorted(start for start in starts if 0 < start < len(text))
+    pieces, previous = [], 0
+    for cut in cuts:
+        pieces.append(text[previous:cut])
+        previous = cut
+    pieces.append(text[previous:])
+    return [piece for piece in pieces if piece.strip()]
 
 
 def repairs_for(text: str, gaps: list[tuple[float, float]], duration: float) -> set[int]:

@@ -116,37 +116,37 @@ class TTSTool:
         """The words as the engine should receive them, before its own markers."""
         return for_speech(text, self._pronunciation if pronunciation is None else pronunciation)
 
-    def _speak_repaired(
-        self, text: str, out_path: Path, *, display: str, voice: str, rate: float
-    ) -> float:
-        """Speak a line, and speak it again if a word came out cut in half.
+    def _speak_unit(
+        self, unit, work: Path, index: int, *, spoken, voice: str, rate: float
+    ) -> list[tuple[Path, float]]:
+        """Speak one clause, and hand back the clips it actually took.
 
-        The engine chooses its own phrase boundaries and gets them wrong on
-        terms it does not know — 「应用中试基地」 comes back with 0.27 seconds of
-        silence after 中. Nothing in the text predicts which words an engine
-        will mishandle, so this listens instead: the clip's silences are
-        measured, any that fall inside a word are repaired by naming that
-        word's start, and the line is spoken once more.
-
-        Only lines that came out wrong pay for the second call, and only on an
-        engine that has somewhere to put the answer.
+        Usually one. When the engine cuts a word in half — 「一是供应链经营风险
+        可控化」 came back with 0.14 seconds of silence after 一是供应 — the clause
+        is cut at that word's start and each piece is spoken on its own, then
+        joined with no gap. Two pieces rejoined run *shorter* than the original
+        (2.47s against 2.51s) because each piece's quiet edges are trimmed,
+        while telling the engine where the boundary is costs 19% more length:
+        `say` re-plans its prosody around a marker and stretches what follows.
         """
-        duration = self._speak_once(text, out_path, voice=voice, rate=rate)
-        if not self._provider.honours_phrase_boundary:
-            return duration
+        clip = work / f"{index:02d}.wav"
+        duration = self._speak_once(spoken(unit.text), clip, voice=voice, rate=rate)
 
-        starts = phrasing.repairs_for(display, silences(out_path), duration)
-        if not starts:
-            return duration
+        starts = phrasing.repairs_for(unit.text, silences(clip), duration)
+        pieces = phrasing.split(unit.text, starts) if starts else []
+        if len(pieces) < 2:
+            return [(clip, unit.pause_before)]
 
-        repaired = phrasing.guard(display, starts)
-        log.debug("断词修复：%s → %s", display, repaired)
-        return self._speak_once(
-            self._provider.phrase_boundary(self._for_engine(repaired)),
-            out_path,
-            voice=voice,
-            rate=rate,
-        )
+        log.debug("断词修复：%s → %s", unit.text, " | ".join(pieces))
+        clip.unlink(missing_ok=True)
+        out: list[tuple[Path, float]] = []
+        for order, piece in enumerate(pieces):
+            part = work / f"{index:02d}_{order}.wav"
+            self._speak_once(spoken(piece), part, voice=voice, rate=rate)
+            # No gap: this is one clause, said in two breaths because the engine
+            # could not be trusted to find the seam itself.
+            out.append((part, unit.pause_before if order == 0 else 0.0))
+        return out
 
     def _speak_once(self, text: str, out_path: Path, *, voice: str, rate: float) -> float:
         """One clip, with a local voice standing by.
@@ -288,32 +288,34 @@ class TTSTool:
         if len(units) <= 1:
             text = "".join(sentences)
             with ledger.call(f"tts:{engine}", f"{len(text)} 字"):
-                duration = self._speak_repaired(
-                    spoken(text), out_path, display=text, voice=voice, rate=rate
-                )
+                duration = self._speak_once(spoken(text), out_path, voice=voice, rate=rate)
             segments, source = self._time(text, out_path, sentences, duration)
             return segments, duration, source
 
         work = out_path.parent / f".{out_path.stem}.units"
         work.mkdir(parents=True, exist_ok=True)
         clips: list[Path] = []
+        pauses: list[float] = []
+        owners: list[int] = []
         try:
             for index, unit in enumerate(units):
-                clip = work / f"{index:02d}.wav"
                 with ledger.call(f"tts:{engine}", f"{len(unit.text)} 字"):
-                    self._speak_repaired(
-                        spoken(unit.text), clip, display=unit.text, voice=voice, rate=rate
+                    spoken_clips = self._speak_unit(
+                        unit, work, index, spoken=spoken, voice=voice, rate=rate
                     )
-                clips.append(clip)
+                for clip, pause in spoken_clips:
+                    clips.append(clip)
+                    pauses.append(pause)
+                    owners.append(unit.sentence)
 
-            windows = join_units(clips, [unit.pause_before for unit in units], out_path)
+            windows = join_units(clips, pauses, out_path)
             # A clause is what gets spoken; a sentence is what gets captioned and
             # what the camera is cut to. So a sentence's window is the first of
             # its clauses to the last — every boundary here was written by
             # `join_units` rather than estimated from the clip afterwards.
             spans: dict[int, list[float]] = {}
-            for unit, (start, end) in zip(units, windows, strict=True):
-                span = spans.setdefault(unit.sentence, [start, end])
+            for sentence, (start, end) in zip(owners, windows, strict=True):
+                span = spans.setdefault(sentence, [start, end])
                 span[0], span[1] = min(span[0], start), max(span[1], end)
             segments = [
                 Segment(text=sentences[index], start=round(span[0], 3), end=round(span[1], 3))
