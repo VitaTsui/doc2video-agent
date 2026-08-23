@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ..core import ledger, telemetry
+from ..core import ledger, telemetry, tuning
 from ..schemas import DocumentPage, ElementKind, PageType, Section
 from ..tools.llm import model_schema
 from .base import Skill, load_prompt
@@ -22,6 +22,13 @@ BATCH_SIZE = 6
 MAX_IMAGES_PER_BATCH = 4
 # Below this much text a page is carrying its meaning visually, not in words.
 TEXT_LIGHT_THRESHOLD = 80
+
+# What a page costs before its items: the sentence that says what the page is.
+PAGE_OPENING_CHARS = 25
+# Bounds on a proposed length. A one-page deck still gets a moment; an
+# eighty-page one does not get to propose an hour without being asked.
+MIN_PROPOSED_SECONDS = 30
+MAX_PROPOSED_SECONDS = 2400
 
 COVER_HINTS = ("公司", "介绍", "简介", "product", "introduction", "overview")
 AGENDA_HINTS = ("目录", "议程", "contents", "agenda", "outline")
@@ -108,6 +115,8 @@ class DocumentSkill(Skill):
             document.presentation_order = [
                 p.index for p in document.pages if p.page_type is not PageType.CONTACT
             ]
+
+        self._propose_duration()
         self.log.info(
             "文档理解完成：%d 页，%d 个章节", len(document.pages), len(document.sections)
         )
@@ -242,6 +251,50 @@ class DocumentSkill(Skill):
         return "\n".join(lines)
 
     # -- heuristic path ------------------------------------------------
+    def _propose_duration(self) -> None:
+        """How long this deck needs, when nobody said how long to make it.
+
+        The intent's 480 seconds is a field default, and a default is not a
+        request. Measured on a 30-page deck: naming each of its 208 blocks of
+        text in one short sentence takes about 17 minutes, so the default was
+        quietly deciding that half of what is on the slides goes unsaid — which
+        is exactly what gets noticed, as 「讲了一半就翻页」.
+
+        So when the brief named no length, the deck names it: a sentence for
+        each block, plus a breath at each page. A stated length is left alone;
+        「做成八分钟」 is a promise, and this is not the place to break it.
+        """
+        intent = self.project.intent
+        if intent.duration_stated:
+            return
+
+        from ..tools.tts import TTSTool
+        from .review import CHARS_PER_ITEM, NAMED_ITEM_CHARS
+
+        pace = TTSTool(self.ctx.settings).chars_per_second or 4.15
+        silence = (
+            tuning.value("voice.lead", self.ctx.settings)
+            + tuning.value("voice.tail", self.ctx.settings)
+        )
+        chars = 0
+        for page in self.project.document.pages:
+            items = sum(
+                1
+                for element in page.elements
+                if element.kind is not ElementKind.TITLE
+                and len((element.text or "").strip()) >= NAMED_ITEM_CHARS
+            )
+            chars += PAGE_OPENING_CHARS + items * CHARS_PER_ITEM
+
+        seconds = chars / pace + silence * len(self.project.document.pages)
+        proposed = int(min(max(seconds, MIN_PROPOSED_SECONDS), MAX_PROPOSED_SECONDS))
+        if proposed == intent.duration:
+            return
+        self.log.info(
+            "没有指定时长，按文档内容估算：%d 秒（默认 %d 秒）", proposed, intent.duration
+        )
+        intent.duration = proposed
+
     def _understand_heuristically(self) -> None:
         document = self.project.document
         total = len(document.pages)

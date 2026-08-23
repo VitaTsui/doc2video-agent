@@ -521,7 +521,7 @@ export function App() {
           // the person thought they had asked for.
           text: prepared.duration_stated
             ? `《${prepared.title}》共 ${prepared.pages.length} 页，按这个要求算下来大约 ${seconds} 秒。`
-            : `《${prepared.title}》共 ${prepared.pages.length} 页。没说要多长，先按默认算下来大约 ${seconds} 秒——想改直接说，比如「七分钟左右」。`,
+            : `《${prepared.title}》共 ${prepared.pages.length} 页。你没说要多长，按这份文档的内容算下来大约 ${seconds} 秒——想要短一点直接说，比如「压到八分钟」。`,
           projectId: prepared.project_id,
           pages: prepared.pages,
           guide,

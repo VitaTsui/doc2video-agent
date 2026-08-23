@@ -22,6 +22,8 @@ def _skill(settings: Settings, store: ProjectStore, *, pages: int, duration: flo
         source=Source(type=SourceType.PPTX, file="demo.pptx", path="source/demo.pptx"),
     )
     project.intent.duration = duration
+    # These tests are about what happens to a length someone asked for.
+    project.intent.duration_stated = True
     project.document.pages = [
         DocumentPage(index=i, title=f"第 {i} 页", width=1920, height=1080)
         for i in range(1, pages + 1)
@@ -268,3 +270,32 @@ def test_shortening_a_page_never_takes_its_last_items_away(
     fitted = skill._fit_duration(pages, budgets, drafts)
 
     assert "技能广场" in fitted[pages[0].index].narration
+
+
+def test_a_script_is_only_cut_to_a_length_someone_asked_for(
+    settings: Settings, store: ProjectStore
+):
+    """480 seconds is a field default, not a request.
+
+    Measured on a 30-page deck: naming each of its 208 blocks in one short
+    sentence takes 17 minutes, so trimming to the default was deciding, on
+    nobody's behalf, that half of what is on the slides goes unsaid.
+    """
+    from doc2video.skills.narration import PageNarration
+
+    skill = _skill(settings, store, pages=2, duration=20.0)
+    pages = skill._pages()
+    budgets = skill._allocate_budget(pages)
+    long_page = "这一句是要被压掉的内容。" * 8
+    drafts = {
+        page.index: PageNarration(index=page.index, narration=long_page, segments=[])
+        for page in pages
+    }
+
+    trimmed = skill._fit_duration(pages, budgets, dict(drafts))
+    assert len(trimmed[pages[0].index].narration) < len(long_page)
+
+    # And with no request behind the number, the script is left alone.
+    skill.project.intent.duration_stated = False
+    kept = skill._fit_duration(pages, budgets, dict(drafts))
+    assert kept[pages[0].index].narration == long_page

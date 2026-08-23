@@ -298,6 +298,12 @@ class NarrationSkill(Skill):
         target = float(self.project.intent.duration)
         if target <= 0 or not drafts:
             return drafts
+        if not self.project.intent.duration_stated:
+            # Nobody asked for a length, so there is nothing here to keep. The
+            # target was proposed from the deck's own content in the first
+            # place; cutting the script to fit a number we invented would be
+            # this function arguing with itself.
+            return drafts
 
         silence = self._page_silence() * len(pages)
         pace = self._pace()

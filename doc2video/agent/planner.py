@@ -446,6 +446,7 @@ def parse_intent_rules(message: str, current: VideoIntent) -> VideoIntent:
 
     if (asked := stated_duration(message)) is not None:
         intent.duration = int(asked)
+        intent.duration_stated = True
 
     for keyword, style in _STYLE_HINTS.items():
         if keyword in message:
@@ -574,6 +575,7 @@ def parse_edit_rules(message: str, project: VideoProject) -> EditPlan:
             target_seconds = minutes * 60
         else:
             intent.duration = int(minutes * 60)
+            intent.duration_stated = True
 
     if mentions_page:
         for page_index in pages:
@@ -589,6 +591,7 @@ def parse_edit_rules(message: str, project: VideoProject) -> EditPlan:
             )
     elif target_seconds and minutes is None:
         intent.duration = int(target_seconds)
+        intent.duration_stated = True
 
     # A term said wrong is noticed *after* hearing it, which means it is said
     # in the second message and every one after — and this path never read the
