@@ -395,6 +395,9 @@ _ONE_WORD = re.compile(
     r"\s*(?:是一个词|是个词|是一个词组|别断开|不要断开|不能断开|连着念|连读)"
 )
 
+# Words a sentence starts with before it gets to the term.
+_LEAD_INS = ("另外", "还有", "而且", "顺便", "对了", "记得", "请把", "请", "帮我", "把", "然后")
+
 _STYLE_HINTS = {
     "专业": "professional",
     "科技": "tech",
@@ -552,7 +555,14 @@ def _pronunciations_in(message: str) -> dict[str, str]:
     """
     learned = {term.strip(): spoken.strip() for term, spoken in _READ_AS.findall(message)}
     for match in _ONE_WORD.findall(message):
-        if term := match.strip():
+        # 「另外中试基地是一个词」 — the sentence's own connective is not part of
+        # the term, and a boundary in front of 「另外」 would be a pause in a
+        # place nobody meant.
+        term = match.strip()
+        for lead in _LEAD_INS:
+            if term.startswith(lead) and len(term) > len(lead) + 1:
+                term = term[len(lead) :]
+        if term:
             learned[term] = f" {term}"
     return learned
 
