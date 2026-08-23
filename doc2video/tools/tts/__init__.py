@@ -229,8 +229,11 @@ class TTSTool:
         # What is spoken, which is not always what is written: a caption reads
         # 「RAG 模块」 and a narrator says "R-A-G 模块". The segments keep the
         # written form, so the subtitles are untouched.
+        # And a space in what comes out of the dictionary is not a space: it is
+        # 「别在这里断开」, which each engine spells differently — see
+        # `TTSProvider.phrase_boundary`.
         def spoken(text: str) -> str:
-            return for_speech(text, pronunciation)
+            return self._engine_for(voice).phrase_boundary(for_speech(text, pronunciation))
 
         units = plan_units(sentences, emphasis=emphasis)
         # Which engine this will be, named before the first call rather than

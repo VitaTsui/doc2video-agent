@@ -77,6 +77,22 @@ class TTSProvider:
     def available(self) -> bool:
         return False
 
+    def phrase_boundary(self, text: str) -> str:
+        """Turn a space in spoken text into whatever this engine reads as 「别在这里断」.
+
+        A synthesiser decides its own phrase boundaries, and it gets them wrong
+        on terms it does not know. Measured on 「国家人工智能应用中试基地」:
+        every engine tried breaks after 中, reading 「应用中」 as a phrase and
+        leaving 「试基地」 stranded — macOS `say` stops 0.27 seconds there, which
+        is long enough to hear as a word being cut in half.
+
+        A space is how a person writes 「这两个字属于下一个词」, and it is what
+        the pronunciation dictionary can carry (「应用中试」 念 「应用 中试」).
+        Engines differ in what they do with it: `say` ignores it outright. So
+        each one renders it in its own terms, and the default is to leave it be.
+        """
+        return text
+
     def synthesize(self, text: str, out_path: Path, *, voice: str = "", rate: float = 1.0) -> float:
         """Write audio for ``text`` to ``out_path`` and return its duration."""
         raise NotImplementedError

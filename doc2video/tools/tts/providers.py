@@ -7,6 +7,7 @@ by subclassing TTSProvider — nothing above this file needs to change.
 
 from __future__ import annotations
 
+import re
 import struct
 import subprocess
 import wave
@@ -62,6 +63,17 @@ class MacOSSayProvider(TTSProvider):
             if name and name not in names:
                 names.append(name)
         return names
+
+    def phrase_boundary(self, text: str) -> str:
+        """`say` ignores spaces in Chinese; `[[slnc N]]` it does obey.
+
+        40 milliseconds is under the ear's threshold for a gap but is enough to
+        make the parser start a new phrase there. Measured on 「国家人工智能应用
+        中试基地」: the break moves off the middle of 中试 (1.79s, 0.27s long)
+        and onto the boundary before it (1.68s, 0.20s), which is where a person
+        reading the line aloud would take it.
+        """
+        return re.sub(r"[ \u3000]+", "[[slnc 40]]", text)
 
     def synthesize(self, text: str, out_path: Path, *, voice: str = "", rate: float = 1.0) -> float:
         out_path.parent.mkdir(parents=True, exist_ok=True)

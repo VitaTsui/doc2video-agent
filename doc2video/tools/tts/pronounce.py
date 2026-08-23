@@ -53,9 +53,22 @@ def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
     if not table:
         return text
 
-    lookup = {key.upper(): value for key, value in table.items()}
+    # Latin terms are matched as whole tokens — 「AI」 must not fire inside
+    # 「MAIL」. Anything else has no token boundaries to speak of, so it is a
+    # plain substring, longest first: a deck that registers both 「中试」 and
+    # 「应用中试」 means the longer one.
+    latin = {k: v for k, v in table.items() if _TOKEN.fullmatch(k)}
+    other = sorted((k for k in table if k not in latin), key=len, reverse=True)
+
+    lookup = {key.upper(): value for key, value in latin.items()}
 
     def swap(match: re.Match[str]) -> str:
         return lookup.get(match.group(0).upper(), match.group(0))
 
-    return _TOKEN.sub(swap, text)
+    spoken = _TOKEN.sub(swap, text)
+    for term in other:
+        spoken = spoken.replace(term, table[term])
+    # A deck that registers both 「中试」 and 「应用中试」 has the shorter entry
+    # fire again inside the longer one's replacement. Two boundaries in a row
+    # are one boundary.
+    return re.sub(r"  +", " ", spoken)

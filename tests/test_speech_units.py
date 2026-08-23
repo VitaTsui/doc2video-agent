@@ -212,3 +212,36 @@ def test_a_unit_is_joined_without_the_engine_s_own_silence(tmp_path: Path):
     # for, not 0.75 plus the four tenths of nothing the clips came with.
     gap = windows[1][0] - windows[0][1]
     assert gap == pytest.approx(0.75, abs=0.05)
+
+
+def test_a_space_in_the_spoken_form_is_a_boundary_the_engine_obeys():
+    """`say` ignores a space in Chinese. It does not ignore `[[slnc 40]]`.
+
+    Measured on 「这是国家人工智能应用中试基地，……」: untouched, the break lands
+    1.79s in and lasts 0.27s — after 中, in the middle of 中试. With the term
+    registered as 「应用 中试」 it lands at 1.68s and lasts 0.21s, which is the
+    boundary before 中试 and the place a person reading aloud would take it.
+
+    40 milliseconds is under the ear's threshold for a gap; the point is not the
+    silence but the phrase boundary it forces.
+    """
+    from doc2video.tools.tts.providers import MacOSSayProvider, SilentProvider
+
+    said = MacOSSayProvider().phrase_boundary("国家人工智能应用 中试基地")
+    assert said == "国家人工智能应用[[slnc 40]]中试基地"
+
+    # Every other engine leaves it alone rather than reading the marker aloud.
+    assert SilentProvider().phrase_boundary("应用 中试基地") == "应用 中试基地"
+
+
+def test_the_dictionary_reaches_chinese_terms_too():
+    """It matched Latin tokens only, so a Chinese entry was silently ignored."""
+    from doc2video.tools.tts.pronounce import for_speech
+
+    assert for_speech("应用中试基地", {"应用中试": "应用 中试"}) == "应用 中试基地"
+    # The longer entry wins, so registering both does not produce 「应用 中 试」.
+    assert for_speech(
+        "应用中试基地", {"中试": " 中试", "应用中试": "应用 中试"}
+    ) == "应用 中试基地"
+    # And a Latin term still has to be a whole token: AI must not fire in MAIL.
+    assert for_speech("MAIL 和 AI", {"AI": "A I"}) == "MAIL 和 A I"
