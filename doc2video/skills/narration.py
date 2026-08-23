@@ -300,12 +300,14 @@ class NarrationSkill(Skill):
         target = float(self.project.intent.duration)
         if target <= 0 or not drafts:
             return drafts
-        if not self.project.intent.duration_stated:
-            # Nobody asked for a length, so there is nothing here to keep. The
-            # target was proposed from the deck's own content in the first
-            # place; cutting the script to fit a number we invented would be
-            # this function arguing with itself.
-            return drafts
+        # Nobody asked for a length: the target came from the deck's own content,
+        # so it is a plan rather than a promise. A plan is still worth keeping —
+        # left alone, the writer ran 2.4× past it (24.4 minutes against the 13.3
+        # its own pages proposed), which is every item said at 46 characters
+        # where the estimate says 18–28. But it is kept only by rewriting, never
+        # by cutting: nothing here may decide on its own that a page loses its
+        # last item to a number nobody asked for.
+        rewrite_only = not self.project.intent.duration_stated
 
         silence = self._page_silence() * len(pages)
         pace = self._pace()
@@ -382,7 +384,7 @@ class NarrationSkill(Skill):
                 costs_content = (
                     missed_items(shorter, page)[0] < missed_items(draft.narration, page)[0]
                 )
-            if costs_content:
+            if costs_content or rewrite_only:
                 # Cutting from the end takes the page's last items with it. Ask
                 # for the same page said in fewer words instead — one call, and
                 # it is the only way to honour both 「十五分钟」 and 「把这一页讲

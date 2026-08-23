@@ -97,6 +97,8 @@ export interface LedgerEntry {
   /** For a call, what it was working on: `page:7`, `scene:scn_x`. Outputs are
    *  collected at the end of the stage; this is how each one finds its call. */
   covers: string[]
+  /** Which run wrote this. The file keeps every run a project ever had. */
+  run_id: string
 }
 
 /** One engine, as something to choose and possibly install. */

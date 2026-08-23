@@ -26,7 +26,15 @@ export type Message = {
       /** Set once generation starts, so the card stops accepting edits. */
       locked?: boolean
     }
-  | { kind: 'job'; job: JobState | null }
+  | {
+      kind: 'job'
+      job: JobState | null
+      /** This run's steps, as they happen. The record used to live only in the
+       *  panel; a chat that says 「正在渲染」 for four minutes and nothing else
+       *  is a chat that has stopped talking. */
+      steps?: LedgerEntry[]
+      projectId?: string
+    }
   | {
       kind: 'video'
       projectId: string

@@ -296,7 +296,10 @@ def test_a_script_is_only_cut_to_a_length_someone_asked_for(
     trimmed = skill._fit_duration(pages, budgets, dict(drafts))
     assert len(trimmed[pages[0].index].narration) < len(long_page)
 
-    # And with no request behind the number, the script is left alone.
+    # With no request behind the number the script is not *cut* — the target
+    # was proposed from the deck, and losing a page's last sentences to a
+    # number nobody asked for is the one thing this must not do. Without a
+    # model to rewrite with, that means leaving it as it is.
     skill.project.intent.duration_stated = False
     kept = skill._fit_duration(pages, budgets, dict(drafts))
     assert kept[pages[0].index].narration == long_page
