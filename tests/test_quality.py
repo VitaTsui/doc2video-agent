@@ -421,3 +421,37 @@ def test_a_target_shorter_than_the_deck_can_be_told_in_is_not_the_film_s_fault(s
     drift = [f for f in project.review if f.kind == "duration"]
     assert not drift or "目标 30 秒" not in drift[0].message
     assert report.score > 0
+
+
+def test_how_much_of_a_page_is_worth_naming_follows_the_page():
+    """内容少的按文稿讲全，内容多的挑重点——而且不是一刀切的上限。
+
+    A 24-block page and an 8-block page are not equally worth six sentences.
+    The share grows with the page and grows more slowly than it: everything up
+    to four, six of eight, ten of twenty-four. Measured across the deck this
+    came from — 185 blocks named unbounded (15.8 minutes), 130 under this rule
+    (12.1), and its twelve sparse pages untouched.
+    """
+    from doc2video.schemas import BBox, DocumentPage, ElementKind, SlideElement
+    from doc2video.skills.review import worth_naming
+
+    def page_of(count: int) -> DocumentPage:
+        return DocumentPage(
+            index=1,
+            elements=[
+                SlideElement(
+                    id=f"e{i}",
+                    kind=ElementKind.PARAGRAPH,
+                    text="这是页面上的一处文字内容。",
+                    bbox=BBox(x=0, y=0, w=9, h=9),
+                )
+                for i in range(count)
+            ],
+        )
+
+    assert worth_naming(page_of(3)) == 3      # read it
+    assert worth_naming(page_of(4)) == 4
+    assert worth_naming(page_of(8)) == 6      # choose from it
+    assert worth_naming(page_of(24)) == 10
+    # Never a flat ceiling: a denser page still earns more than a lighter one.
+    assert worth_naming(page_of(24)) > worth_naming(page_of(12)) > worth_naming(page_of(8))

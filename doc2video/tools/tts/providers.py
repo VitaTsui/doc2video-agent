@@ -30,8 +30,11 @@ class MacOSSayProvider(TTSProvider):
     """Uses the built-in macOS `say` binary, writing 16-bit PCM WAVE."""
 
     name = "macos_say"
-    # Measured over a 30-page deck with Tingting: 4.75 characters a second.
-    chars_per_second = 4.75
+    # Measured end to end on a real page — synthesised in clauses and rejoined
+    # with the pauses its punctuation asks for, which is how a page is spoken
+    # now. 4.50 characters a second at rate 1.0; the older 4.75 was measured
+    # before those pauses existed and budgets came out 5% long.
+    chars_per_second = 4.50
     honours_phrase_boundary = True
 
     def available(self) -> bool:

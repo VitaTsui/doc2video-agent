@@ -238,7 +238,7 @@ class NarrationSkill(Skill):
                 budget = self._char_budget(budgets[index])
                 each = max(12, budget // max(want, 1))
                 broken[index] = (
-                    f"上一稿只讲到这一页的 {walked} 处内容，按字数本可以讲 {affordable} 处——"
+                    f"上一稿只讲到这一页的 {walked} 处内容，这一页值得讲到 {affordable} 处——"
                     "一张卡片讲得再透，旁边三张没讲到，观众看着屏幕上的它们听你翻页。\n"
                     f"重写这一页：写成 {want} 句左右，**按页面顺序一处一句**，"
                     f"每句 {each} 字上下，带上那一处自己的名字和它最要紧的一个信息。"
@@ -739,7 +739,10 @@ class NarrationSkill(Skill):
         the model has done anything wrong. One source now, and it follows the
         voice — `say` says 4.75, Edge's broadcast voice 4.15.
         """
-        return int(seconds * self._pace())
+        # The engine's own pace times what it was asked to do with it: the pace
+        # is measured at 1.0, and a deck spoken 5% quicker fits 5% more script
+        # in the same seconds.
+        return int(seconds * self._pace() * max(self.ctx.settings.tts_speech_rate or 1.0, 0.1))
 
     def _pace(self) -> float:
         from ..tools.tts import TTSTool

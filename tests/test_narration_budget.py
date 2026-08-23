@@ -52,7 +52,8 @@ def test_page_seconds_is_speech_plus_its_own_silence(settings: Settings, store: 
 
 def test_chars_are_budgeted_from_speech_not_screen_time(settings: Settings, store: ProjectStore):
     row = _skill(settings, store, pages=8, duration=300.0).guide()[0]
-    assert row["target_chars"] == int(row["target_seconds"] * 4.6)
+    # The engine's own pace, times the rate it was asked to speak at.
+    assert row["target_chars"] == int(row["target_seconds"] * 4.6 * settings.tts_speech_rate)
 
 
 def test_a_short_target_still_leaves_something_to_say(settings: Settings, store: ProjectStore):
@@ -194,7 +195,7 @@ def test_the_pace_follows_the_engine_that_will_speak_it(settings, store):
     fast = _skill(Settings(**{**settings.model_dump(), "tts_provider": "macos_say"}), store,
                   pages=4, duration=120.0)
     assert fast._pace() > 0
-    assert fast._char_budget(10.0) == int(10.0 * fast._pace())
+    assert fast._char_budget(10.0) == int(10.0 * fast._pace() * settings.tts_speech_rate)
 
 
 def test_a_script_that_came_up_short_says_so(settings: Settings, store: ProjectStore):

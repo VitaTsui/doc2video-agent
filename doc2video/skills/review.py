@@ -8,6 +8,7 @@ reads the slide, broken transitions, factual drift.
 
 from __future__ import annotations
 
+import math
 import re
 
 from pydantic import BaseModel
@@ -66,6 +67,20 @@ NAMED_ITEM_CHARS = 8
 CHARS_PER_ITEM = 18
 # What a page costs before its items: the sentence that says what the page is.
 PAGE_OPENING_CHARS = 25
+# How much of a page a narration should walk, as a share of what is on it.
+#
+# Every block on every page was the rule, and it is right for the half of a
+# deck that carries three or four things — 「页面内容少的就按文稿来」. It is
+# wrong for the other half: this deck's densest page holds 24 blocks, and
+# naming all of them is a page nobody can follow.
+#
+# Not a ceiling either: a 24-block page and an 8-block page are not equally
+# worth six sentences. The share grows with the page and grows more slowly
+# than it — `2√n` names everything up to four, six of eight, ten of
+# twenty-four. Measured across this deck's 30 pages: 185 blocks unbounded
+# (15.8 minutes), 130 under this rule (12.1), and the twelve sparse pages are
+# untouched because their own count is already below it.
+NAMING_SHARE = 2.0
 
 
 def _pace(settings) -> float:
@@ -75,24 +90,43 @@ def _pace(settings) -> float:
     return TTSTool(settings).chars_per_second or 4.15
 
 
-def tellable_seconds(document, pace: float, silence: float) -> float:
-    """How long this deck takes to tell — one short sentence per block of text.
+def blocks_of(page) -> list:
+    """The page's own blocks of text — what a narration can name."""
 
-    The floor under any target. A deck of 208 blocks does not fit in fifteen
+    return [
+        element
+        for element in page.elements
+        if element.kind is not ElementKind.TITLE
+        and len((element.text or "").strip()) >= NAMED_ITEM_CHARS
+    ]
+
+
+def worth_naming(page) -> int:
+    """How many of this page's blocks the script should get through.
+
+    A page with three things on it is read; a page with twenty-four is chosen
+    from, and a page with twelve sits in between. One number, used by
+    everything that has an opinion about length: the per-page writing budget,
+    the check that says a page was walked, and the length proposed for a deck
+    nobody gave a length for.
+    """
+    count = len(blocks_of(page))
+    return min(count, math.ceil(NAMING_SHARE * math.sqrt(count))) if count else 0
+
+
+def page_share_chars(page) -> int:
+    """Roughly what this page costs to say: an opening plus what it names."""
+    return PAGE_OPENING_CHARS + worth_naming(page) * CHARS_PER_ITEM
+
+
+def tellable_seconds(document, pace: float, silence: float) -> float:
+    """How long this deck takes to tell, at one short sentence per named block.
+
+    The floor under any target. A deck this size does not fit in fifteen
     minutes however tightly it is written, and a score that treats that as a
     failure is marking the film down for the length of the document.
     """
-    from ..schemas import ElementKind
-
-    chars = 0
-    for page in document.pages:
-        items = sum(
-            1
-            for element in page.elements
-            if element.kind is not ElementKind.TITLE
-            and len((element.text or "").strip()) >= NAMED_ITEM_CHARS
-        )
-        chars += PAGE_OPENING_CHARS + items * CHARS_PER_ITEM
+    chars = sum(page_share_chars(page) for page in document.pages)
     return chars / max(pace, 0.1) + silence * len(document.pages)
 
 
@@ -107,16 +141,13 @@ def missed_items(narration: str, page) -> tuple[int, int, list[str]]:
     """
     from .director import MENTION_THRESHOLD, _mentioned
 
-    items = [
-        element
-        for element in page.elements
-        if element.kind is not ElementKind.TITLE
-        and len((element.text or "").strip()) >= NAMED_ITEM_CHARS
-    ]
+    items = blocks_of(page)
     if len(items) < 3:
         return (0, 0, [])
     named = [item for item in items if _mentioned(item.text, narration) >= MENTION_THRESHOLD]
-    affordable = max(1, min(len(items), len(narration) // CHARS_PER_ITEM))
+    # Never more than the page is worth walking: a dense page is chosen from,
+    # not read out, so 「讲到 6 处、漏了 18 处」 is the script doing its job.
+    affordable = max(1, min(worth_naming(page), len(narration) // CHARS_PER_ITEM))
     missed = [item.text.strip()[:24] for item in items if item not in named]
     return (len(named), affordable, missed)
 
