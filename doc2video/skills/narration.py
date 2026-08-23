@@ -373,18 +373,83 @@ class NarrationSkill(Skill):
             # announced a list and moved on. A page is only shortened while it
             # still tells the whole page.
             page = by_index.get(index)
-            if _dangling_counts(shorter) and not _dangling_counts(draft.narration):
-                self.log.info("第 %d 页不压：压完会变成报了数不点名", index)
-                continue
-            if page is not None:
-                kept_before = missed_items(draft.narration, page)[0]
-                kept_after = missed_items(shorter, page)[0]
-                if kept_after < kept_before:
-                    self.log.info("第 %d 页不压：压完会少讲 %d 处", index, kept_before - kept_after)
+            costs_content = bool(_dangling_counts(shorter)) and not _dangling_counts(
+                draft.narration
+            )
+            if page is not None and not costs_content:
+                costs_content = (
+                    missed_items(shorter, page)[0] < missed_items(draft.narration, page)[0]
+                )
+            if costs_content:
+                # Cutting from the end takes the page's last items with it. Ask
+                # for the same page said in fewer words instead — one call, and
+                # it is the only way to honour both 「十五分钟」 and 「把这一页讲
+                #全」, which is what the person asked for on the same day.
+                rewritten = self._compress_with_model(page, draft, int(allowed * pace))
+                if rewritten is None:
+                    self.log.info("第 %d 页压不动：剪会少讲内容，改写也没写短", index)
                     continue
+                total -= spoken(draft.narration) - spoken(rewritten.narration)
+                trimmed[index] = rewritten
+                continue
             total -= spoken(draft.narration) - spoken(shorter)
             trimmed[index] = PageNarration(index=index, narration=shorter, segments=[])
         return trimmed
+
+    def _compress_with_model(
+        self, page: DocumentPage | None, draft: PageNarration, allowed: int
+    ) -> PageNarration | None:
+        """The same page, said shorter. None when it could not be done.
+
+        Trimming removes sentences, and a page's last sentences are its last
+        items — 「平台上有三块开放机制。」 is what that looks like from the
+        outside. Rewriting keeps every item and takes the words out of each
+        one, which is the only way a stated length and a fully-told page can
+        both be true.
+
+        Checked rather than trusted: the rewrite has to be shorter *and* still
+        name what the original named, or it is thrown away.
+        """
+        if page is None or not self.llm.available:
+            return None
+
+        from .review import missed_items
+
+        note = (
+            f"这一页现在 {len(draft.narration)} 字，要压到 {allowed} 字以内。\n"
+            "**内容一处都不能少**：现在讲到的每一处，改写后还要讲到。\n"
+            "压的是字，不是信息——删修饰词、合并重复的说法、去掉可有可无的连接词、"
+            "把长句拆成短句。宁可每句只剩七八个字。\n\n"
+            f"现在的讲稿：\n{draft.narration}"
+        )
+        try:
+            with ledger.call(self.llm.source, f"第 {page.index} 页｜压到 {allowed} 字"):
+                result = self.llm.complete_json(
+                    self._prompt([page], {page.index: allowed / self._pace()},
+                                 position=page.index - 1) + f"\n\n# 返工\n{note}",
+                    schema=model_schema(NarrationResult),
+                    system=load_prompt("narration"),
+                    max_tokens=self.ctx.settings.llm_max_tokens,
+                )
+            pages = NarrationResult.model_validate(result).pages
+        except Exception as exc:  # noqa: BLE001 - a failed rewrite keeps the draft
+            self.log.warning("第 %d 页压缩失败，保留原稿：%s", page.index, exc)
+            return None
+
+        for candidate in pages:
+            if candidate.index != page.index or not candidate.narration.strip():
+                continue
+            if len(candidate.narration) >= len(draft.narration):
+                continue
+            if missed_items(candidate.narration, page)[0] < missed_items(draft.narration, page)[0]:
+                self.log.info("第 %d 页改写后少讲了内容，不采用", page.index)
+                continue
+            self.log.info(
+                "第 %d 页改写压缩：%d → %d 字", page.index,
+                len(draft.narration), len(candidate.narration),
+            )
+            return candidate
+        return None
 
     def _placeholder(
         self,

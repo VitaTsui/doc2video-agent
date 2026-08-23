@@ -437,6 +437,51 @@ def test_a_long_page_can_carry_more_than_four_shots():
         _action_budget,
     )
 
-    assert _action_budget(Scene(scene_id="s", duration=6.0)) == MIN_ACTIONS_PER_SCENE
-    assert _action_budget(Scene(scene_id="s", duration=30.0)) == 5
+    # What limits this is how long a box has to stay up to be read, not a
+    # rate: a 19-second contents page names five sections, and 「one every six
+    # seconds」 gave it three boxes — two sections were read out with the camera
+    # sitting on somebody else.
+    assert _action_budget(Scene(scene_id="s", duration=2.0)) == MIN_ACTIONS_PER_SCENE
+    assert _action_budget(Scene(scene_id="s", duration=19.0)) >= 5
     assert _action_budget(Scene(scene_id="s", duration=600.0)) == MAX_ACTIONS_PER_SCENE
+
+
+def test_a_sentence_that_names_two_things_gets_two_boxes(
+    settings: Settings, store: ProjectStore
+):
+    """「第一部分是背景及技术牵头方，第二部分是核心市场痛点分析。」
+
+    One box per sentence sat on whichever half matched better and stayed there
+    through the other half — the narration said 第一部分 while the box was on
+    (二). The clause is what walks the page, so the clause is what the camera
+    follows, timed by where it falls in the sentence.
+    """
+    page = _page(
+        [
+            SlideElement(
+                id="e1",
+                kind=ElementKind.PARAGRAPH,
+                text="(一)背景及技术牵头方",
+                bbox=BBox(x=600, y=200, w=300, h=60),
+                importance=0.8,
+            ),
+            SlideElement(
+                id="e2",
+                kind=ElementKind.PARAGRAPH,
+                text="(二)核心市场痛点分析",
+                bbox=BBox(x=600, y=400, w=300, h=60),
+                importance=0.8,
+            ),
+        ]
+    )
+    segment = NarrationSegment(
+        id="scene_01_s01",
+        text="第一部分是背景及技术牵头方，第二部分是核心市场痛点分析。",
+        start=0.0,
+        end=10.0,
+    )
+    scene = _run(page, _scene([segment]), settings, store)
+
+    boxes = [a for a in scene.actions if a.target]
+    assert [a.target for a in boxes] == ["e1", "e2"]
+    assert boxes[0].at < boxes[1].at

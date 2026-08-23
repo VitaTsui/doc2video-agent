@@ -9,6 +9,8 @@ actions automatically.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel
 
 from ..core import tuning
@@ -36,6 +38,9 @@ from .base import Skill
 # rephrasing still counts; 0.35 keeps a card apart from its neighbour on a
 # four-card page, where the headings share their shape but not their nouns.
 MENTION_THRESHOLD = 0.35
+
+# Where a sentence changes what it is talking about.
+_CLAUSE_SPLIT = re.compile(r"[，、；：]")
 
 SECONDS_PER_ACTION = 6.0
 MIN_ACTIONS_PER_SCENE = 2
@@ -99,6 +104,10 @@ class ActionChoice(BaseModel):
     segment_id: str
     type: ActionType
     target: str
+    #: Where in the sentence this one is talked about, 0–1. A sentence can walk
+    #: two items — 「第一部分是背景及技术牵头方，第二部分是核心市场痛点分析。」 —
+    #: and one box for the pair sits on the wrong half of it for half the time.
+    at_fraction: float = 0.0
 
 
 class SceneDirection(BaseModel):
@@ -133,21 +142,26 @@ class DirectorSkill(Skill):
 
         scored: list[tuple[float, ActionChoice]] = []
         for segment in scene.segments:
-            target_id = self._resolve_target(segment, page)
-            if target_id is None:
-                continue
-            element = page.element(target_id)
-            if element is None or not _worth_pointing_at(element) or _is_banner(element, page):
-                continue
-            score = element.importance + (0.5 if segment.emphasis else 0.0)
-            # A node in a declared flow is worth more than a box that happens
-            # to be on the page: the arrows say this one is part of the thing
-            # being explained.
-            if page.diagram is not None and target_id in page.diagram.nodes:
-                score += 0.3
-            action_type = self._pick_action(segment, element, page)
-            choice = ActionChoice(segment_id=segment.id, type=action_type, target=target_id)
-            scored.append((score, choice))
+            for target_id, fraction in self._targets_in(segment, page):
+                element = page.element(target_id)
+                if element is None or not _worth_pointing_at(element) or _is_banner(element, page):
+                    continue
+                score = element.importance + (0.5 if segment.emphasis else 0.0)
+                # A node in a declared flow is worth more than a box that happens
+                # to be on the page: the arrows say this one is part of the thing
+                # being explained.
+                if page.diagram is not None and target_id in page.diagram.nodes:
+                    score += 0.3
+                action_type = self._pick_action(segment, element, page)
+                scored.append((
+                    score,
+                    ActionChoice(
+                        segment_id=segment.id,
+                        type=action_type,
+                        target=target_id,
+                        at_fraction=fraction,
+                    ),
+                ))
 
         scored.sort(key=lambda item: -item[0])
         chosen: list[ActionChoice] = []
@@ -157,7 +171,7 @@ class DirectorSkill(Skill):
                 break
         # Keep narrative order — ranking was only for selection.
         order = {s.id: i for i, s in enumerate(scene.segments)}
-        chosen.sort(key=lambda c: order.get(c.segment_id, 0))
+        chosen.sort(key=lambda c: (order.get(c.segment_id, 0), c.at_fraction))
         # Never the same box twice *in a row* — that reads as a stutter. Twice
         # with something else in between is not a stutter but a return, and
         # refusing it left the picture still while the narration came back to
@@ -197,6 +211,38 @@ class DirectorSkill(Skill):
         if span and span <= MAX_POINTER_SPAN and _coverage(element, page) <= MAX_POINTER_COVERAGE:
             return ActionType.POINTER
         return ActionType.HIGHLIGHT
+
+    def _targets_in(
+        self, segment: NarrationSegment, page: DocumentPage
+    ) -> list[tuple[str, float]]:
+        """Everything this sentence talks about, and roughly when it gets there.
+
+        One box per sentence was wrong the moment a sentence covered two items:
+        「第一部分是背景及技术牵头方，第二部分是核心市场痛点分析。」 got a single
+        box, on whichever half matched better, and it sat there through the
+        other half. The clause is what walks the page, so the clause is what the
+        camera follows — timed by where it falls in the sentence, because the
+        sentence's own start and end are measured.
+        """
+        pieces = [piece for piece in _CLAUSE_SPLIT.split(segment.text) if piece.strip()]
+        if len(pieces) < 2:
+            bound = self._resolve_target(segment, page)
+            return [(bound, 0.0)] if bound else []
+
+        found: list[tuple[str, float]] = []
+        spent = 0
+        for piece in pieces:
+            fraction = spent / max(len(segment.text), 1)
+            spent += len(piece)
+            target = self._resolve_target(
+                NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis), page
+            )
+            if target and (not found or found[-1][0] != target):
+                found.append((target, fraction))
+        if not found:
+            bound = self._resolve_target(segment, page)
+            return [(bound, 0.0)] if bound else []
+        return found
 
     def _resolve_target(self, segment: NarrationSegment, page: DocumentPage) -> str | None:
         for ref in segment.element_refs:
@@ -285,7 +331,7 @@ class DirectorSkill(Skill):
                     duration = min(POINTER_DURATION, max(MIN_KEEP_DURATION, span - 0.2))
                 else:
                     duration = max(MIN_ACTION_DURATION, min(MAX_ACTION_DURATION, span - 0.2))
-                at = max(0.0, segment.start + AUDIO_LEAD)
+                at = max(0.0, segment.start + span * choice.at_fraction + AUDIO_LEAD)
 
             # An action must fit inside its own scene, and be long enough to read.
             duration = min(duration, scene.duration - at)
@@ -440,9 +486,16 @@ def _mentioned(element_text: str, sentence: str) -> float:
 
 
 def _action_budget(scene: Scene) -> int:
-    """How many camera moves this page's own length can carry."""
-    by_time = round(scene.duration / SECONDS_PER_ACTION)
-    return max(MIN_ACTIONS_PER_SCENE, min(MAX_ACTIONS_PER_SCENE, by_time))
+    """How many camera moves this page can carry.
+
+    One every six seconds was the rule, and it is the wrong question now that
+    the script walks a page item by item: a 19-second contents page names five
+    sections and got three boxes, so two of them were read out with the camera
+    sitting on somebody else. What actually limits this is how long a box has
+    to stay up to be read — anything more often than that is a flicker.
+    """
+    room = int(scene.duration // (MIN_ACTION_DURATION + AUDIO_LEAD))
+    return max(MIN_ACTIONS_PER_SCENE, min(MAX_ACTIONS_PER_SCENE, room))
 
 
 def _zoom_pays_off(element, page: DocumentPage) -> bool:
