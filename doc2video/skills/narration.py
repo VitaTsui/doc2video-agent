@@ -716,6 +716,8 @@ class NarrationSkill(Skill):
                 f"这一页页面文字 {len(page.raw_text())} 字，预算是按它算的。"
                 "写少了通常是漏讲了页面上的内容——回去把具体的条目、数字、名称补上；"
                 "写多了通常是在发挥——删掉页面支撑不了的话。"
+                "报了数就要点名：说了「三块」「四类」，就要把这几项的名字说出来，"
+                "装不下就别报数。"
             )
             # The page's own words come first and are named as the material.
             # They used to come last, under 「元素：」, after a summary and a

@@ -315,3 +315,27 @@ def test_a_flat_rhythm_is_reported_and_a_varied_one_is_not():
     assert _length_spread(varied) is None
     # Too few sentences to say anything about rhythm.
     assert _length_spread("只有一句话。") is None
+
+
+def test_a_script_that_announces_a_list_and_walks_away_is_incomplete(score):
+    """「平台上有三块开放机制。」 and then the page ends.
+
+    The three are on the slide, in front of the viewer. Announcing them and
+    not naming them sets up an expectation the film never pays — measured
+    twice on one 30-page deck, and it is what gets noticed.
+    """
+    from doc2video.skills.review import _dangling_counts
+
+    assert _dangling_counts("平台上有三块开放机制。") == [("三块", 3, 1)]
+    # Named in the same breath: nothing dangling.
+    assert _dangling_counts("平台上有三块开放机制：技能广场、MCP 工具库、插件集市。") == []
+    # Pointing back at two things already named is not an announcement.
+    assert _dangling_counts("这两块都是与本项目高匹配的资源。") == []
+    # 「第三部分」 is a section number, not a count.
+    assert _dangling_counts("第三部分，石化商业情报智能体。") == []
+
+    scenes = [_scene(i, narration="平台上有三块开放机制。") for i in range(1, 6)]
+    completeness = next(
+        d for d in score(_project(scenes)).dimensions if d.name == "completeness"
+    )
+    assert completeness.score < 100

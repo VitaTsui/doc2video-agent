@@ -39,6 +39,39 @@ UNGROUNDED_THRESHOLD = 0.45
 # the page does. Judging those would flag every divider in the deck.
 GROUNDABLE_PAGE_CHARS = 40
 
+# 「平台上有三块开放机制。」 and then the page ends. The three are on the slide,
+# in front of the viewer, and the narration announced them and walked away —
+# measured on one 30-page film, twice, and it is the thing that gets noticed
+# because the sentence sets up an expectation the film never pays.
+#
+# Anaphora is not an announcement: 「这两块都是……」 points back at two things
+# already named. Neither is an ordinal — 「第三部分」 is a section number.
+_COUNTED = re.compile(
+    r"(?<!第)([两二三四五六七八九]|[2-9])\s*(个|块|类|项|条|种|大|步|方面|部分|层)"
+)
+_ANAPHORA = ("这", "那", "上述", "以上", "其中", "前面")
+_ITEM_SPLIT = re.compile(r"[，、；：]|以及|和|及")
+_COUNT_VALUE = {"两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _dangling_counts(narration: str) -> list[tuple[str, int, int]]:
+    """Counts the script announces and then does not name: `(phrase, said, named)`."""
+    sentences = [part for part in re.split(r"(?<=[。！？])", narration) if part.strip()]
+    found: list[tuple[str, int, int]] = []
+    for index, sentence in enumerate(sentences):
+        match = _COUNTED.search(sentence)
+        if match is None:
+            continue
+        head = sentence[: match.start()]
+        if any(head.endswith(word) for word in _ANAPHORA):
+            continue
+        said = _COUNT_VALUE.get(match.group(1)) or int(match.group(1))
+        span = sentence + "".join(sentences[index + 1 :])
+        named = len([piece for piece in _ITEM_SPLIT.split(span) if piece.strip()])
+        if named < said:
+            found.append((match.group(0), said, named))
+    return found
+
 # A page whose sentences are all about the same length reads as a machine
 # reporting, however accurate it is — speech carries emphasis by breaking
 # rhythm, and a flat rhythm has nowhere to put it. Measured as the spread of
@@ -157,7 +190,12 @@ class ReviewSkill(Skill):
         # Counted from the deck rather than from the findings — those collapse
         # into one readable line, and one line must not read as one page.
         uncovered = len(self._uncovered_pages())
-        broken = by_kind.get("missing_visual", 0) + by_kind.get("missing_audio", 0) + uncovered
+        broken = (
+            by_kind.get("missing_visual", 0)
+            + by_kind.get("missing_audio", 0)
+            + by_kind.get("dangling_list", 0)
+            + uncovered
+        )
         # Against what the video should have had, not what it has — otherwise
         # dropping most of the deck improves the denominator.
         expected = len(scenes) + uncovered
@@ -388,6 +426,17 @@ class ReviewSkill(Skill):
                             message=f"动作 {action.type} 超出场景时长",
                         )
                     )
+
+            for phrase, _said, named in _dangling_counts(scene.narration):
+                findings.append(
+                    ReviewFinding(
+                        severity="warning", kind="dangling_list", scene_id=scene.scene_id,
+                        message=(
+                            f"讲稿说了「{phrase}」却只点到 {named} 项，"
+                            "剩下的观众在屏幕上看得见、听不到"
+                        ),
+                    )
+                )
 
             if page is not None and len(page.raw_text().strip()) >= GROUNDABLE_PAGE_CHARS:
                 overlap = _overlap_ratio(scene.narration, page.raw_text())
