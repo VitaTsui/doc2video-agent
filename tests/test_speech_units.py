@@ -16,8 +16,10 @@ import pytest
 
 from doc2video.tools.tts.base import join_units
 from doc2video.tools.tts.units import (
-    MAX_UNIT_SECONDS,
+    PAUSE_COLON,
     PAUSE_EMPHASIS,
+    PAUSE_EXCLAIM,
+    PAUSE_SEMICOLON,
     PAUSE_SENTENCE,
     PAUSE_TURN,
     plan_units,
@@ -34,15 +36,33 @@ def test_a_page_is_spoken_in_several_units_not_one():
         assert unit.texts
 
 
-def test_no_unit_runs_past_the_ceiling():
-    """A long unit is a long stretch of unbroken machine, which is the problem."""
-    from doc2video.tools.tts.base import estimate_duration
+def test_the_mark_says_how_long_the_pause_is():
+    """A written line already says where it breathes; the marks are the answer.
 
-    sentences = ["很长很长的一句话，" * 6] * 6
-    for unit in plan_units(sentences):
-        # One sentence can exceed it on its own; two must not.
-        if len(unit.texts) > 1:
-            assert estimate_duration(unit.text) <= MAX_UNIT_SECONDS * 1.2
+    ；holds two halves of one thought together and ：leans into what follows,
+    so neither may pause as long as the full stop that ends the thought.
+    """
+    sentences = ["先看结论。", "分成两半：", "一半是量，一半是质；", "再看代价。"]
+    beats = [unit.pause_before for unit in plan_units(sentences)]
+
+    assert beats[0] == 0.0  # the scene's own lead silence is already there
+    assert beats[1] == PAUSE_SENTENCE
+    assert beats[2] == PAUSE_COLON
+    assert beats[3] == PAUSE_SEMICOLON
+    assert PAUSE_COLON < PAUSE_SEMICOLON < PAUSE_SENTENCE < PAUSE_EXCLAIM
+
+
+def test_a_closing_quote_does_not_hide_the_mark():
+    """「他说：『走。』」 ends on a full stop, whatever its last character is."""
+    beats = [unit.pause_before for unit in plan_units(["他说：「走。」", "然后就走了。"])]
+    assert beats[1] == PAUSE_SENTENCE
+
+
+def test_a_line_with_no_mark_at_all_still_gets_a_beat():
+    """Titles and fragments arrive unpunctuated; silence is not the answer."""
+    lines = ["石化AI商业情报中心", "先说这个平台的分量。"]
+    beats = [unit.pause_before for unit in plan_units(lines)]
+    assert beats[1] == PAUSE_SENTENCE
 
 
 def test_the_emphasised_sentence_gets_the_longest_beat():
@@ -62,9 +82,21 @@ def test_the_emphasised_sentence_gets_the_longest_beat():
 
 
 def test_a_turn_in_the_script_gets_its_own_beat():
+    """A mark decides where; 「但是」 decides that this one is worth longer."""
     sentences = ["先讲清楚现在的做法。", "但是这样有个代价，得说明白。"]
-    units = plan_units(sentences, emphasis=[False, False], weight=lambda _: 6.0)
+    units = plan_units(sentences, emphasis=[False, False])
     assert units[-1].pause_before == PAUSE_TURN
+
+
+def test_a_turn_never_invents_a_pause_where_the_writing_has_none():
+    """It lengthens the mark's beat. It is not a mark of its own.
+
+    A comma inside a sentence stays inside the unit even when the clause after
+    it turns — cutting there is the fault the punctuation rule exists to end:
+    a pause in the middle of a sentence nobody wrote a break into.
+    """
+    units = plan_units(["现在的做法是这样，不过这样有个代价。"])
+    assert len(units) == 1
 
 
 def test_joining_units_gives_exact_windows(tmp_path: Path):
@@ -115,10 +147,12 @@ def test_where_a_unit_ends_is_a_question_about_the_language():
     units = plan_units(sentences)
     assert len(units) == len(sentences)
 
-    # A sentence too short to stand alone keeps the next one company rather
-    # than being spoken between two breaths.
+    # Including the short ones. 「先说背景。」 is a full stop like any other, and
+    # the length of what precedes a mark is not the mark's business — that test
+    # (「上一句不足 2.2 秒就并进来」) was the last piece of clock in here.
     units = plan_units(["先说背景。", "这个揭榜为什么来，我们凭什么接，都在这一部分。"])
-    assert len(units) == 1
+    assert len(units) == 2
+    assert units[1].pause_before == PAUSE_SENTENCE
 
 
 def test_the_beats_are_a_ladder_a_listener_can_hear():

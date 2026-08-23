@@ -52,7 +52,23 @@ TYPE_WEIGHT = {
     PageType.OTHER: 0.9,
 }
 EMPHASIS_MULTIPLIER = 1.9
+# A page with no text of its own still takes a moment; a page with a wall of it
+# does not get to eat the whole film.
+BASE_VOLUME = 60
+MAX_VOLUME = 900
+# The page type still counts, but it no longer decides: reading a dense chart
+# page takes as long as its labels take to read, whatever a table says a chart
+# page is usually worth. As an exponent, 0.5 keeps the ordering and halves the
+# spread (1.35 → 1.16, 0.35 → 0.59).
+TYPE_INFLUENCE = 0.5
 MIN_SCENE_SECONDS = 4.0
+# The most a page's own text can claim as a floor. Past this the page is dense
+# enough that some of it will have to go unread whatever the deck's length.
+MAX_FLOOR_SECONDS = 20.0
+# How much of the film the floors may claim between them before they are all
+# scaled down. The rest is divided by weight, which is what gives a dense page
+# more than its own floor.
+FLOOR_SHARE = 0.6
 MAX_SCENE_SECONDS = 75.0
 
 SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?；;])\s*|\n+")
@@ -429,19 +445,95 @@ class NarrationSkill(Skill):
         speech_total = max(intent.duration - silence, intent.duration * 0.4)
         weights: dict[int, float] = {}
         for page in pages:
-            weight = TYPE_WEIGHT.get(page.page_type, 1.0)
-            # More real content on a page deserves proportionally more airtime.
-            content_factor = 1.0 + min(len(page.raw_text()), 600) / 600
-            weight *= content_factor
+            # How much there is to say, which is now mostly how much the page
+            # says: the script reads the deck rather than commenting on it, so
+            # a page's share of the film should track its own text. The old
+            # factor (1.0–2.0 over the first 600 characters) left the type
+            # weight in charge, and it showed — a 1122-character page and a
+            # 112-character cover were budgeted 78 and 19 characters, so the
+            # dense page could not be read out and the cover had four times
+            # its own text to fill. Measured on that deck: pages ran from 7%
+            # to 405% of their budget.
+            #
+            # `BASE_VOLUME` is what a page with no text at all is worth —
+            # a section divider still gets its couple of seconds.
+            volume = BASE_VOLUME + min(len(page.raw_text()), MAX_VOLUME)
+            weight = TYPE_WEIGHT.get(page.page_type, 1.0) ** TYPE_INFLUENCE * volume
             if page.index in intent.emphasis_pages:
                 weight *= EMPHASIS_MULTIPLIER
             weights[page.index] = weight
 
-        total_weight = sum(weights.values()) or 1.0
+        # A page's floor is what reading its own words costs. A cover carrying
+        # 112 characters was budgeted 19 and came back with 80 — the model was
+        # right and the budget was wrong, and the same happened on every sparse
+        # page: 2–4× over, measured across seven of them. Proportional shares
+        # alone cannot fix it, because these pages are small in proportion and
+        # still have a floor of their own text.
+        pace = self._pace()
+        floors = {
+            page.index: min(
+                max(len(page.raw_text()) / pace, MIN_SCENE_SECONDS), MAX_FLOOR_SECONDS
+            )
+            for page in pages
+        }
+        # The floors are a claim on the film, and thirty pages' worth of them
+        # can exceed the whole thing — this deck's came to 625 seconds against
+        # a 360-second target, which would have made the length the user asked
+        # for meaningless. Above their share they are scaled down together, so
+        # they stay in proportion to each other and the target still holds. On
+        # a deck that dense some of the text goes unread whatever we do; §三 of
+        # the writing prompt says to drop whole items rather than compress them
+        # all into summary.
+        claimed = sum(floors.values())
+        cap = speech_total * FLOOR_SHARE
+        if claimed > cap:
+            # Only the part above the minimum is scaled. Scaling the whole
+            # floor put a 20-character page at 1.4 seconds of speech — a scene
+            # shorter than the silence around it, which is not a scene.
+            base = MIN_SCENE_SECONDS * len(pages)
+            room = max(claimed - base, 1e-6)
+            scale = max(cap - base, 0.0) / room
+            floors = {
+                index: MIN_SCENE_SECONDS + (seconds - MIN_SCENE_SECONDS) * scale
+                for index, seconds in floors.items()
+            }
+        return self._share(speech_total, weights, floors)
+
+    @staticmethod
+    def _share(
+        total: float, weights: dict[int, float], floors: dict[int, float]
+    ) -> dict[int, float]:
+        """Split `total` by weight, but never below a page's floor.
+
+        Pages that would fall under their floor are fixed at it and taken out
+        of the pool; the rest re-divide what remains, which can push another
+        page under its own floor — hence the loop. It ends because each pass
+        fixes at least one page, and if every page is fixed there is nothing
+        left to divide.
+        """
         budgets: dict[int, float] = {}
-        for index, weight in weights.items():
-            seconds = speech_total * weight / total_weight
-            budgets[index] = max(MIN_SCENE_SECONDS, min(MAX_SCENE_SECONDS, seconds))
+        pool, open_pages = total, dict(weights)
+        while open_pages:
+            weight_sum = sum(open_pages.values()) or 1.0
+            under = {
+                index: floors[index]
+                for index, weight in open_pages.items()
+                if pool * weight / weight_sum < floors[index]
+            }
+            if not under:
+                for index, weight in open_pages.items():
+                    budgets[index] = min(MAX_SCENE_SECONDS, pool * weight / weight_sum)
+                break
+            budgets.update(under)
+            pool -= sum(under.values())
+            for index in under:
+                open_pages.pop(index)
+            if pool <= 0:
+                # The floors alone spend the whole target. Everyone left gets
+                # theirs anyway — a page still has to say its own title — and
+                # the film runs long, which the run reports.
+                budgets.update({index: floors[index] for index in open_pages})
+                break
         return budgets
 
     def _char_budget(self, seconds: float) -> int:
@@ -592,18 +684,15 @@ class NarrationSkill(Skill):
                 # not talking about is worse than crossing the diagram out of
                 # order (方案 §20).
                 lines.append(f"这一页画的是一条流程，按箭头走是：{flow}")
-            # Said with the remedy attached, because the budget loses on its
-            # own. A prompt that (rightly) warns against padding and says
-            # 「每页只抓一个讲解重点」 pulls the other way, and the model
-            # resolves the tension toward brevity: measured at 30% under
-            # budget on nine pages out of nine, which is a video a third
-            # shorter than the one that was asked for. Trimming can fix an
-            # overrun after the fact; nothing can fill a shortfall.
+            # A ceiling, said as one. It used to be a target with a remedy
+            # attached — 「不够时补原因、影响、数字背后的含义」 — which is the
+            # right instruction for a script that explains the deck and the
+            # wrong one for a script that reads it: the only way to reach a
+            # number the page has no words for is to invent some.
             budget = self._char_budget(budgets[page.index])
-            low, high = int(budget * 0.85), int(budget * 1.15)
             lines.append(
-                f"字数预算：{budget} 字，必须落在 {low}–{high} 字。不够时补的是原因、影响、"
-                "与上下页的关系、数字背后的含义，不是把结论换个说法再说一遍。"
+                f"字数预算：{budget} 字上限（超了先删重复表述，别删信息点）。"
+                "页面上的内容讲完就停，短了不要补解释。"
             )
             if page.summary:
                 lines.append(f"页面摘要：{page.summary}")
@@ -614,8 +703,13 @@ class NarrationSkill(Skill):
             elements = [e for e in page.elements if e.text]
             if elements:
                 lines.append("元素：")
+                # Longer than it was: this is the source text now, not a hint
+                # about what the page is roughly about. A body paragraph cut at
+                # 120 characters is a paragraph the narration cannot read out,
+                # and the model fills the gap the only way it can — by making
+                # something up.
                 lines.extend(
-                    f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 120)}" for e in elements
+                    f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 400)}" for e in elements
                 )
         return "\n".join(lines)
 

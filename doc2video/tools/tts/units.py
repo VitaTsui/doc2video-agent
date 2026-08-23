@@ -7,29 +7,27 @@ to make — the same length at every comma, the same length at every full stop.
 That is most of what people hear as "machine reading".
 
 So a page is spoken as several units, and the gaps between them are ours to
-choose rather than the engine's. Two things follow:
+choose rather than the engine's. Each unit's duration is also measured as it
+is written, so the sentence boundaries inside a scene are known exactly rather
+than inferred from the pauses in one long clip.
 
-* **The pause carries meaning.** A beat before a sentence the model marked as
-  the important one is emphasis; the beat at the start of a new idea is a
-  paragraph. Both come out of what the narration already records — nobody has
-  to annotate anything by hand.
-* **The timing stops being a guess.** Each unit's duration is measured when it
-  is written, so the sentence boundaries inside a scene are known exactly
-  rather than inferred from the pauses in a single long clip.
+**The punctuation decides.** Two earlier rules did not. The first broke a unit
+whenever nine seconds had gone by, which put the long pause wherever the
+stopwatch happened to land — mid-sentence, mid-name. The second read the
+sentence for turns and emphasis, which was better and still left the ordinary
+sentences to a leftover length test (「上一句不足 2.2 秒就并进来」), so whether
+two sentences ran together depended on an estimate of how long they took to
+say. Both produced the same complaint: a pause inside a complete sentence, and
+no pause where the writing plainly asked for one.
 
-**Where a unit ends is a question about the language, not about the clock.**
-The first version broke whenever nine seconds had gone by, which put the long
-pause wherever the stopwatch happened to land. Measured on a thirty-page film:
-the gaps we chose ran a median of 1.44 seconds and the ones we left to the
-engine ran 0.79 — so which sentence got a beat, and which two ran together,
-was decided by arithmetic on a duration estimate. A listener hears that as a
-narrator pausing in odd places and hurrying past the ones that mattered.
+A written line already says where it breathes. 。 ends a thought; ； separates
+two that belong together; ： leans forward into what follows; ，is a beat the
+engine already takes inside the unit. Reading the mark is not an approximation
+of the intent — it *is* the intent, written down by whoever wrote the line.
 
-So a sentence begins a new unit when the sentence itself says so: it turns
-（不过、所以、再看）, it is the one the writer marked, it opens an item in a
-list. Sentences that say nothing of the kind are spoken together, which is
-also what keeps a synthesiser from taking a breath after every full stop.
-Length is a backstop now, not the rule.
+Turns and emphasis still lengthen a gap, because 「不过」 after a full stop is a
+longer beat than the same full stop elsewhere. They never create one: a beat
+only ever falls where the punctuation already put it.
 """
 
 from __future__ import annotations
@@ -38,41 +36,60 @@ from dataclasses import dataclass, field
 
 from ...core import tuning
 
-# A backstop, not the rule: a unit that runs this long has stopped being a
-# phrase whatever the words are doing. Measured in the text's own estimated
-# seconds, because nothing has been spoken yet when the grouping happens.
-TARGET_UNIT_SECONDS = 9.0
-MAX_UNIT_SECONDS = 15.0
-
-# A sentence shorter than this is not left to stand alone: 「先说背景。」 spoken
-# as its own utterance comes out clipped, with a breath on either side of four
-# words. It joins the next one unless that one starts something.
-SHORT_SENTENCE_SECONDS = 2.2
-
-# What the silence between two units says. A person does not pause the same
-# length everywhere; these are the differences a listener reads as meaning
-# rather than as a gap.
+# How long to wait after each mark. Sized against what the engine does inside
+# a unit, which is the rhythm the listener is already hearing: measured at
+# 0.77s between two sentences `say` speaks in one breath. A full stop we chose
+# sits level with that; the marks that hold a thought open are shorter, and
+# the ones that end it harder are longer.
 #
-# Sized against what the engine already does, which is the part that is easy
-# to get wrong. Measured on a real page: `say` leaves 0.28–0.51s at its own
-# punctuation, clustering near 0.4. A "semantic" beat of 0.42 added to that
-# comes out indistinguishable from an ordinary comma — the intent was there
-# and the listener could not hear it. These are *additional* silence, so the
-# emphasis beat has to clear the engine's own pause to read as one.
-# Each unit clip has its own edge silence trimmed before the units are joined,
-# so these are the whole gap rather than something added to whatever the
-# engine left behind. Re-based on what the engine does *inside* a unit, which
-# is the rhythm a listener is already hearing: measured at 0.79s between two
-# sentences it speaks in one breath. A plain full stop we control should sit
-# just under that; a beat that means something has to clear it.
-# Level with what the engine leaves between two sentences it speaks in one
-# breath — measured at 0.77s. Shorter and the rhythm inverts: a boundary we
-# chose on purpose would pass quicker than one nobody decided anything about.
-PAUSE_SENTENCE = 0.75
+# 、 and ，are deliberately absent: they stay inside the unit and the engine
+# takes them at its own pace. Cutting a clip at every comma makes a page of
+# two-second utterances, and a synthesiser reading a two-second fragment
+# gives it the falling tone of a finished sentence.
+PAUSE_SENTENCE = 0.75   # 。 and a line that ends with no mark at all
+PAUSE_EXCLAIM = 0.85    # ！？ — the sentence lands, then a beat
+PAUSE_SEMICOLON = 0.55  # ；— two halves of one thought
+PAUSE_COLON = 0.35      # ：— leans into what comes next
+PAUSE_ELLIPSIS = 0.90   # …… — trailing off is the point
+PAUSE_DASH = 0.50       # —— — an aside
+
 # Before the sentence the writer marked as the point of the page.
 PAUSE_EMPHASIS = 1.20
 # Between one idea and the next, where the script turns.
 PAUSE_TURN = 0.95
+
+# Written with the mark last, so 「。」 does not match a line ending in 「……。」
+# before the ellipsis rule gets to it.
+MARKS: tuple[tuple[str, str], ...] = (
+    ("……", "ellipsis"),
+    ("...", "ellipsis"),
+    ("——", "dash"),
+    ("！", "exclaim"),
+    ("？", "exclaim"),
+    ("!", "exclaim"),
+    ("?", "exclaim"),
+    ("；", "semicolon"),
+    (";", "semicolon"),
+    ("：", "colon"),
+    (":", "colon"),
+    ("。", "sentence"),
+    (".", "sentence"),
+)
+
+# The knob each mark reads. One per kind rather than one per character: 「?」 and
+# 「？」 are the same pause to a listener.
+KNOBS = {
+    "sentence": "voice.pause_sentence",
+    "exclaim": "voice.pause_exclaim",
+    "semicolon": "voice.pause_semicolon",
+    "colon": "voice.pause_colon",
+    "ellipsis": "voice.pause_ellipsis",
+    "dash": "voice.pause_dash",
+}
+
+# Closing quotes and brackets sit *after* the mark that matters: 「他说：『走。』」
+# ends on a full stop even though its last character is a quote.
+TRAILING = "\"'』」》）)】”’…"
 
 # The words a script turns on. Not an exhaustive list of connectives — only
 # the ones that begin a new movement rather than continue the current one.
@@ -94,49 +111,44 @@ class Unit:
         return "".join(self.texts)
 
 
+def mark_of(text: str) -> str:
+    """Which kind of mark this line ends on. Unmarked lines read as a full stop."""
+    stripped = text.rstrip().rstrip(TRAILING).rstrip()
+    for mark, kind in MARKS:
+        if stripped.endswith(mark):
+            return kind
+    return "sentence"
+
+
+def pause_after(text: str) -> float:
+    """The silence this line's own punctuation asks for."""
+    return tuning.value(KNOBS[mark_of(text)])
+
+
 def plan_units(
-    sentences: list[str], *, emphasis: list[bool] | None = None, weight=None
+    sentences: list[str], *, emphasis: list[bool] | None = None, weight=None  # noqa: ARG001
 ) -> list[Unit]:
     """Group `sentences` into utterances, and decide the beat before each.
 
-    `emphasis` is the writer's own mark on the sentence that matters — the
-    narration skill sets it, and it is the only semantic signal here that
-    nobody had to invent.
-    """
-    from .base import estimate_duration
+    One sentence, one utterance — the split that produced this list already cut
+    at the marks, so every boundary here is a mark somebody wrote. The gap is
+    the one that mark asks for, made longer where the sentence that follows
+    turns or was marked as the point of the page.
 
-    measure = weight or estimate_duration
+    `weight` is accepted and unused: it measured how long a sentence took to
+    say, back when that decided where the units broke.
+    """
     flags = list(emphasis or [])
     flags += [False] * (len(sentences) - len(flags))
 
-    # Read once per page rather than per sentence: these are the numbers as
-    # they are set right now, and someone may have set them.
-    target = tuning.value("voice.unit_seconds")
-    longest = max(MAX_UNIT_SECONDS, target * MAX_UNIT_SECONDS / TARGET_UNIT_SECONDS)
-    sentence_pause = tuning.value("voice.pause_sentence")
-
     units: list[Unit] = []
-    current = Unit()
-    spent = 0.0
     for index, sentence in enumerate(sentences):
-        length = max(measure(sentence), 0.05)
-        starts_here = _breaks_before(sentence, flags[index])
-        # A sentence begins a new unit when the sentence says so. What it says
-        # is: it turns, it is the marked one, or the one before it was too
-        # short to stand alone — that last is the only length still in this
-        # decision, and it is about the *previous* sentence, not the clock.
-        breaks = bool(current.texts) and (
-            starts_here > 0 or spent >= SHORT_SENTENCE_SECONDS or spent + length > longest
-        )
-        if breaks:
-            units.append(current)
-            current = Unit(pause_before=starts_here or sentence_pause)
-            spent = 0.0
-        current.texts.append(sentence)
-        spent += length
+        text = sentence.strip()
+        if not text:
+            continue
+        gap = pause_after(sentences[index - 1]) if index else 0.0
+        units.append(Unit(texts=[text], pause_before=max(gap, _emphasis_of(text, flags[index]))))
 
-    if current.texts:
-        units.append(current)
     if units:
         # Nothing to pause before at the start; the scene's own lead silence
         # is already there.
@@ -144,8 +156,8 @@ def plan_units(
     return units
 
 
-def _breaks_before(sentence: str, emphasised: bool) -> float:
-    """The beat this sentence deserves in front of it, or 0 for none."""
+def _emphasis_of(sentence: str, emphasised: bool) -> float:
+    """The longer beat this sentence earns, or 0 to leave the mark's own."""
     if emphasised:
         return tuning.value("voice.pause_emphasis")
     head = sentence.lstrip("　 \t")[:4]

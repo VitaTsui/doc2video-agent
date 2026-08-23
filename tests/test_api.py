@@ -430,15 +430,15 @@ def test_a_rule_can_be_changed_and_put_back(client, tmp_path, monkeypatch):
     """
     from doc2video.core import prefs, tuning
     from doc2video.core.config import get_settings
-    from doc2video.tools.tts.units import _breaks_before
+    from doc2video.tools.tts.units import _emphasis_of
 
     monkeypatch.setattr(get_settings(), "storage_dir", tmp_path)
     prefs.save(prefs.Preferences())
 
-    assert _breaks_before("这一句是重点。", True) == tuning.value("voice.pause_emphasis")
+    assert _emphasis_of("这一句是重点。", True) == tuning.value("voice.pause_emphasis")
 
     client.put("/health/plugins/rules", json={"id": "voice.pause_emphasis", "value": 0.9})
-    assert _breaks_before("这一句是重点。", True) == 0.9
+    assert _emphasis_of("这一句是重点。", True) == 0.9
 
     # Out of range is clamped rather than refused: a stored file is not a form.
     client.put("/health/plugins/rules", json={"id": "shot.max_scale", "value": 99})
@@ -448,7 +448,7 @@ def test_a_rule_can_be_changed_and_put_back(client, tmp_path, monkeypatch):
     client.put("/health/plugins/rules", json={"id": "voice.pause_emphasis"})
     from doc2video.tools.tts import units
 
-    assert _breaks_before("这一句是重点。", True) == units.PAUSE_EMPHASIS
+    assert _emphasis_of("这一句是重点。", True) == units.PAUSE_EMPHASIS
 
 
 def test_an_edited_prompt_is_what_gets_sent_and_survives_an_update(client, tmp_path, monkeypatch):
