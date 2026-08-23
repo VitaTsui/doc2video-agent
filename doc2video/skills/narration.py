@@ -28,6 +28,7 @@ from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisu
 from ..tools.llm import model_schema
 from ..tools.tts import estimate_duration
 from .base import ProgressFn, Skill, load_prompt
+from .review import page_share_chars
 
 # Pages per model call. Small enough that a long deck cannot overrun the
 # output budget, large enough that each page can see its neighbours.
@@ -649,10 +650,16 @@ class NarrationSkill(Skill):
             # its own text to fill. Measured on that deck: pages ran from 7%
             # to 405% of their budget.
             #
-            # `BASE_VOLUME` is what a page with no text at all is worth —
-            # a section divider still gets its couple of seconds.
-            volume = BASE_VOLUME + min(len(page.raw_text()), MAX_VOLUME)
-            weight = TYPE_WEIGHT.get(page.page_type, 1.0) ** TYPE_INFLUENCE * volume
+            # What this page is worth saying, which is not the same as how much
+            # text it carries: a 24-block page is chosen from rather than read
+            # out, so its share is the share of the blocks that get named.
+            # Weighting by raw characters instead left the writer a budget the
+            # size of the page and it filled it — 46 characters an item where
+            # the estimate says 18, and a film 20.7 minutes long against the
+            # 12.5 the same estimate had proposed.
+            weight = TYPE_WEIGHT.get(page.page_type, 1.0) ** TYPE_INFLUENCE * page_share_chars(
+                page
+            )
             if page.index in intent.emphasis_pages:
                 weight *= EMPHASIS_MULTIPLIER
             weights[page.index] = weight
