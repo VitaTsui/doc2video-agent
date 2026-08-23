@@ -32,6 +32,7 @@ only ever falls where the punctuation already put it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from ...core import tuning
@@ -42,10 +43,15 @@ from ...core import tuning
 # sits level with that; the marks that hold a thought open are shorter, and
 # the ones that end it harder are longer.
 #
-# 、 and ，are deliberately absent: they stay inside the unit and the engine
-# takes them at its own pace. Cutting a clip at every comma makes a page of
-# two-second utterances, and a synthesiser reading a two-second fragment
-# gives it the falling tone of a finished sentence.
+# 、 and ，are here too, because 「the engine takes them at its own pace」 turned
+# out to mean 「as long as a full stop」. Measured on a finished page: one
+# sentence of 143 characters came back with commas of 0.33, 0.42, 0.43 and 0.33
+# seconds against the 0.75 we had chosen for the sentence boundary — so the
+# rhythm inside a sentence was nearly the rhythm between two. Cutting at every
+# mark costs more clips and buys the only thing that makes this predictable:
+# every silence in the film is one somebody chose.
+PAUSE_COMMA = 0.28      # ，— a breath, not a stop
+PAUSE_ENUM = 0.16       # 、— the shortest thing that is still a gap
 PAUSE_SENTENCE = 0.75   # 。 and a line that ends with no mark at all
 PAUSE_EXCLAIM = 0.85    # ！？ — the sentence lands, then a beat
 PAUSE_SEMICOLON = 0.55  # ；— two halves of one thought
@@ -62,6 +68,9 @@ PAUSE_TURN = 0.95
 # before the ellipsis rule gets to it.
 MARKS: tuple[tuple[str, str], ...] = (
     ("……", "ellipsis"),
+    ("，", "comma"),
+    (",", "comma"),
+    ("、", "enum"),
     ("...", "ellipsis"),
     ("——", "dash"),
     ("！", "exclaim"),
@@ -79,6 +88,8 @@ MARKS: tuple[tuple[str, str], ...] = (
 # The knob each mark reads. One per kind rather than one per character: 「?」 and
 # 「？」 are the same pause to a listener.
 KNOBS = {
+    "comma": "voice.pause_comma",
+    "enum": "voice.pause_enum",
     "sentence": "voice.pause_sentence",
     "exclaim": "voice.pause_exclaim",
     "semicolon": "voice.pause_semicolon",
@@ -89,7 +100,11 @@ KNOBS = {
 
 # Closing quotes and brackets sit *after* the mark that matters: 「他说：『走。』」
 # ends on a full stop even though its last character is a quote.
-TRAILING = "\"'』」》）)】”’…"
+TRAILING = "\"'』」》）)】”’"
+
+# The characters a clause may end on, and therefore where one is cut.
+_MARK_CHARS = "，,、；;：:。.！!？?…—"
+_CLAUSE = re.compile(rf"[^{_MARK_CHARS}]*[{_MARK_CHARS}]+|[^{_MARK_CHARS}]+")
 
 # The words a script turns on. Not an exhaustive list of connectives — only
 # the ones that begin a new movement rather than continue the current one.
@@ -101,10 +116,13 @@ TURNS = (
 
 @dataclass
 class Unit:
-    """A run of sentences spoken as one utterance, and the beat before it."""
+    """One clause, spoken on its own, and the beat that precedes it."""
 
     texts: list[str] = field(default_factory=list)
     pause_before: float = 0.0
+    #: Which of the caller's sentences this clause came out of. The captions and
+    #: the camera are still cut by sentence; only the speaking is by clause.
+    sentence: int = 0
 
     @property
     def text(self) -> str:
@@ -112,7 +130,7 @@ class Unit:
 
 
 def mark_of(text: str) -> str:
-    """Which kind of mark this line ends on. Unmarked lines read as a full stop."""
+    """Which kind of mark this piece ends on. Unmarked pieces read as a full stop."""
     stripped = text.rstrip().rstrip(TRAILING).rstrip()
     for mark, kind in MARKS:
         if stripped.endswith(mark):
@@ -121,19 +139,36 @@ def mark_of(text: str) -> str:
 
 
 def pause_after(text: str) -> float:
-    """The silence this line's own punctuation asks for."""
+    """The silence this piece's own punctuation asks for."""
     return tuning.value(KNOBS[mark_of(text)])
+
+
+def clauses(sentence: str) -> list[str]:
+    """Cut a sentence at its marks, keeping each mark with the piece it ends.
+
+    A piece with nothing but a mark in it (「……」 on its own, a stray comma) is
+    joined to the one before: it is punctuation, not something to say.
+    """
+    pieces: list[str] = []
+    for piece in _CLAUSE.findall(sentence):
+        if not piece.strip():
+            continue
+        if pieces and not any(ch not in _MARK_CHARS + TRAILING + " 　" for ch in piece):
+            pieces[-1] += piece
+        else:
+            pieces.append(piece)
+    return pieces or ([sentence] if sentence.strip() else [])
 
 
 def plan_units(
     sentences: list[str], *, emphasis: list[bool] | None = None, weight=None  # noqa: ARG001
 ) -> list[Unit]:
-    """Group `sentences` into utterances, and decide the beat before each.
+    """Cut `sentences` into clauses, and decide the beat before each.
 
-    One sentence, one utterance — the split that produced this list already cut
-    at the marks, so every boundary here is a mark somebody wrote. The gap is
-    the one that mark asks for, made longer where the sentence that follows
-    turns or was marked as the point of the page.
+    Every silence in the finished audio comes from here. A clause is spoken on
+    its own, so the engine has no mark left inside it to pause at on its own
+    schedule, and the gap that follows is the one its mark asks for — 、 shorter
+    than ，, ，shorter than 。, and a turn or an emphasis longer still.
 
     `weight` is accepted and unused: it measured how long a sentence took to
     say, back when that decided where the units broke.
@@ -142,12 +177,18 @@ def plan_units(
     flags += [False] * (len(sentences) - len(flags))
 
     units: list[Unit] = []
+    previous = ""
     for index, sentence in enumerate(sentences):
-        text = sentence.strip()
-        if not text:
-            continue
-        gap = pause_after(sentences[index - 1]) if index else 0.0
-        units.append(Unit(texts=[text], pause_before=max(gap, _emphasis_of(text, flags[index]))))
+        pieces = clauses(sentence.strip())
+        for position, piece in enumerate(pieces):
+            gap = pause_after(previous) if previous else 0.0
+            # The sentence's own beat — a turn, or the writer's mark — belongs
+            # to the sentence, not to every clause inside it.
+            own = _emphasis_of(piece, flags[index]) if position == 0 else 0.0
+            units.append(
+                Unit(texts=[piece], pause_before=max(gap, own), sentence=index)
+            )
+            previous = piece
 
     if units:
         # Nothing to pause before at the start; the scene's own lead silence

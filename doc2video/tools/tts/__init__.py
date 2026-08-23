@@ -307,17 +307,19 @@ class TTSTool:
                 clips.append(clip)
 
             windows = join_units(clips, [unit.pause_before for unit in units], out_path)
-            segments: list[Segment] = []
-            for unit, clip, (start, end) in zip(units, clips, windows, strict=True):
-                inner, _ = self._time(unit.text, clip, unit.texts, end - start)
-                segments.extend(
-                    Segment(
-                        text=part.text,
-                        start=round(start + part.start, 3),
-                        end=round(start + part.end, 3),
-                    )
-                    for part in inner
-                )
+            # A clause is what gets spoken; a sentence is what gets captioned and
+            # what the camera is cut to. So a sentence's window is the first of
+            # its clauses to the last — every boundary here was written by
+            # `join_units` rather than estimated from the clip afterwards.
+            spans: dict[int, list[float]] = {}
+            for unit, (start, end) in zip(units, windows, strict=True):
+                span = spans.setdefault(unit.sentence, [start, end])
+                span[0], span[1] = min(span[0], start), max(span[1], end)
+            segments = [
+                Segment(text=sentences[index], start=round(span[0], 3), end=round(span[1], 3))
+                for index, span in sorted(spans.items())
+                if index < len(sentences)
+            ]
             duration = windows[-1][1] if windows else 0.0
             return segments, duration, "units"
         finally:
