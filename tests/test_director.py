@@ -485,3 +485,32 @@ def test_a_sentence_that_names_two_things_gets_two_boxes(
     boxes = [a for a in scene.actions if a.target]
     assert [a.target for a in boxes] == ["e1", "e2"]
     assert boxes[0].at < boxes[1].at
+
+
+def test_a_box_the_sentence_never_mentions_is_dropped(
+    settings: Settings, store: ProjectStore
+):
+    """The camera is bound by what the sentence says.
+
+    A sentence that mentions nothing on the page used to fall through to the
+    best-scoring element — a box on a card the narrator is not talking about,
+    which is what 「框选跟讲稿对不上」 looks like from the sofa.
+    """
+    page = _page(
+        [
+            SlideElement(
+                id="e1", kind=ElementKind.PARAGRAPH, text="供应链经营风险可控化",
+                bbox=BBox(x=100, y=100, w=300, h=60), importance=0.9,
+            ),
+            SlideElement(
+                id="e2", kind=ElementKind.PARAGRAPH, text="外贸市场拓展精准赋能",
+                bbox=BBox(x=100, y=300, w=300, h=60), importance=0.9,
+            ),
+        ]
+    )
+    segment = NarrationSegment(
+        id="scene_01_s01", text="这一页我们换个角度，先把整体思路说清楚。", start=0.0, end=8.0
+    )
+    scene = _run(page, _scene([segment]), settings, store)
+
+    assert not [a for a in scene.actions if a.target]

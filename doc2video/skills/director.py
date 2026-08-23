@@ -39,6 +39,10 @@ from .base import Skill
 # four-card page, where the headings share their shape but not their nouns.
 MENTION_THRESHOLD = 0.35
 
+# When a page would otherwise get no camera at all, half a match is better than
+# a motionless page.
+LOOSE_MENTION = 0.2
+
 # Where a sentence changes what it is talking about.
 _CLAUSE_SPLIT = re.compile(r"[，、；：]")
 
@@ -135,12 +139,54 @@ class DirectorSkill(Skill):
             ):
                 choices = self._choose_heuristically(scene, page)
                 scene.actions = self._to_actions(scene, page, choices)
+                scene.actions = self._check_and_redo(scene, page)
             total_actions += len(scene.actions)
 
         self.log.info("镜头设计完成：共 %d 个动作", total_actions)
 
+    def _check_and_redo(self, scene: Scene, page: DocumentPage) -> list[DirectorAction]:
+        """Look at what was chosen, and choose again where it does not hold.
+
+        The same shape as the script step's own check: a deterministic rule,
+        applied before the render spends minutes drawing the result.
+
+        * **A box on something the sentence never mentions.** The camera is
+          bound by what the sentence says, and a sentence that mentions nothing
+          used to fall through to the best-scoring element on the page — a box
+          on a card the narrator is not talking about, which is what 「框选跟
+          讲稿对不上」 looks like.
+        * **A page with nothing to look at.** A page that names things and gets
+          no camera at all is a page the viewer watches sit still. Tried again
+          with a looser bar before giving up: half a match is better than a
+          motionless page, and 0.35 was measured on cards that share a shape.
+        """
+        segments = {segment.id: segment for segment in scene.segments}
+        kept: list[DirectorAction] = []
+        dropped = 0
+        for action in scene.actions:
+            segment_id = action.params.get("segment_id") if action.params else None
+            segment = segments.get(segment_id or "")
+            element = page.element(action.target) if action.target else None
+            if action.target and element is not None and segment is not None:
+                if _mentioned(element.text, segment.text) < MENTION_THRESHOLD:
+                    dropped += 1
+                    continue
+            kept.append(action)
+        if dropped:
+            self.log.info("第 %s 页去掉 %d 个讲稿没提到的镜头", scene.source_page, dropped)
+
+        has_box = any(action.target for action in kept)
+        if not has_box and _worth_looking_at(page):
+            retry = self._choose_heuristically(scene, page, threshold=LOOSE_MENTION)
+            if retry:
+                self.log.info("第 %s 页原本没有镜头，放宽匹配后补上", scene.source_page)
+                return self._to_actions(scene, page, retry)
+        return kept
+
     # -- choosing what to look at ---------------------------------------
-    def _choose_heuristically(self, scene: Scene, page: DocumentPage) -> list[ActionChoice]:
+    def _choose_heuristically(
+        self, scene: Scene, page: DocumentPage, *, threshold: float = MENTION_THRESHOLD
+    ) -> list[ActionChoice]:
         """Rank segments by how much they deserve a camera move, then take the top few."""
         # A signpost page gets its transition and nothing else.
         if page.page_type in SIGNPOST_PAGES:
@@ -148,7 +194,7 @@ class DirectorSkill(Skill):
 
         scored: list[tuple[float, ActionChoice]] = []
         for segment in scene.segments:
-            for target_id, fraction in self._targets_in(segment, page):
+            for target_id, fraction in self._targets_in(segment, page, threshold=threshold):
                 element = page.element(target_id)
                 if element is None or not _worth_pointing_at(element) or _is_banner(element, page):
                     continue
@@ -219,7 +265,7 @@ class DirectorSkill(Skill):
         return ActionType.HIGHLIGHT
 
     def _targets_in(
-        self, segment: NarrationSegment, page: DocumentPage
+        self, segment: NarrationSegment, page: DocumentPage, *, threshold: float = MENTION_THRESHOLD
     ) -> list[tuple[str, float]]:
         """Everything this sentence talks about, and roughly when it gets there.
 
@@ -232,7 +278,7 @@ class DirectorSkill(Skill):
         """
         pieces = [piece for piece in _CLAUSE_SPLIT.split(segment.text) if piece.strip()]
         if len(pieces) < 2:
-            bound = self._resolve_target(segment, page)
+            bound = self._resolve_target(segment, page, threshold=threshold)
             return [(bound, 0.0)] if bound else []
 
         found: list[tuple[str, float]] = []
@@ -241,16 +287,20 @@ class DirectorSkill(Skill):
             fraction = spent / max(len(segment.text), 1)
             spent += len(piece)
             target = self._resolve_target(
-                NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis), page
+                NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis),
+                page,
+                threshold=threshold,
             )
             if target and (not found or found[-1][0] != target):
                 found.append((target, fraction))
         if not found:
-            bound = self._resolve_target(segment, page)
+            bound = self._resolve_target(segment, page, threshold=threshold)
             return [(bound, 0.0)] if bound else []
         return found
 
-    def _resolve_target(self, segment: NarrationSegment, page: DocumentPage) -> str | None:
+    def _resolve_target(
+        self, segment: NarrationSegment, page: DocumentPage, *, threshold: float = MENTION_THRESHOLD
+    ) -> str | None:
         for ref in segment.element_refs:
             element = page.element(ref)
             if element is None or not _worth_pointing_at(element):
@@ -276,7 +326,7 @@ class DirectorSkill(Skill):
             if element.kind is ElementKind.TITLE or not _worth_pointing_at(element):
                 continue
             share = _mentioned(element.text, segment.text)
-            if share < MENTION_THRESHOLD:
+            if share < threshold:
                 continue
             score = share + element.importance / 10
             if best is None or score > best[0]:
@@ -479,6 +529,11 @@ def _union(a: BBox, b: BBox) -> BBox:
     return BBox(
         x=x, y=y, w=max(a.x + a.w, b.x + b.w) - x, h=max(a.y + a.h, b.y + b.h) - y
     )
+
+
+def _worth_looking_at(page: DocumentPage) -> bool:
+    """Whether this page has anything a camera could usefully point at."""
+    return sum(1 for element in page.elements if _worth_pointing_at(element)) >= 2
 
 
 def _mentioned(element_text: str, sentence: str) -> float:
