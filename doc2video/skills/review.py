@@ -58,13 +58,15 @@ _COUNT_VALUE = {"两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七
 # A block of text on the page worth naming. Shorter than this is a label, a
 # page number, or a stray bullet character.
 NAMED_ITEM_CHARS = 8
-# Roughly what naming one item costs: its own words plus the句子 around them.
-# Used to ask a fair question — a script of 80 characters that named one block
-# out of ten spent its words going around the page instead of across it
-# (「讲了一半就翻页」), while a script of 20 characters could not have named more
-# than one whatever it did. At 30 the question was too easy to pass: the page
-# that started this, four cards and one of them named, came out even.
-CHARS_PER_ITEM = 18
+# What naming one block costs, as a share of the block's own size. A heading of
+# eight characters is one short sentence; a 200-character paragraph is not read
+# out but it is not one sentence either. Sub-linear for the same reason the
+# per-page share is: `3.5√n` gives 10 characters to a label, 18 to a line, 28
+# to a sentence, 50 to a paragraph. Measured across this deck's 185 blocks
+# (8–342 characters each): 3304 characters of script, about 12.4 minutes.
+ITEM_SHARE = 3.5
+# Nothing is worth fewer words than this — below it a mention is not a sentence.
+MIN_ITEM_CHARS = 10
 # What a page costs before its items: the sentence that says what the page is.
 PAGE_OPENING_CHARS = 25
 # How much of a page a narration should walk, as a share of what is on it.
@@ -114,9 +116,24 @@ def worth_naming(page) -> int:
     return min(count, math.ceil(NAMING_SHARE * math.sqrt(count))) if count else 0
 
 
+def item_share_chars(text: str) -> int:
+    """What naming this one block costs, by its own size."""
+    return max(MIN_ITEM_CHARS, math.ceil(ITEM_SHARE * math.sqrt(len(text.strip()))))
+
+
 def page_share_chars(page) -> int:
-    """Roughly what this page costs to say: an opening plus what it names."""
-    return PAGE_OPENING_CHARS + worth_naming(page) * CHARS_PER_ITEM
+    """Roughly what this page costs to say: an opening plus what it names.
+
+    The blocks it will name are not known in advance — the writer chooses them
+    — so the average block on this page stands in for them. A page of labels
+    costs less than a page of paragraphs even when both name six things, which
+    is the point.
+    """
+    blocks = blocks_of(page)
+    if not blocks:
+        return PAGE_OPENING_CHARS
+    average = sum(item_share_chars(block.text) for block in blocks) / len(blocks)
+    return PAGE_OPENING_CHARS + round(average * worth_naming(page))
 
 
 def tellable_seconds(document, pace: float, silence: float) -> float:
@@ -147,7 +164,13 @@ def missed_items(narration: str, page) -> tuple[int, int, list[str]]:
     named = [item for item in items if _mentioned(item.text, narration) >= MENTION_THRESHOLD]
     # Never more than the page is worth walking: a dense page is chosen from,
     # not read out, so 「讲到 6 处、漏了 18 处」 is the script doing its job.
-    affordable = max(1, min(worth_naming(page), len(narration) // CHARS_PER_ITEM))
+    # What the script's own length could have named, at this page's own cost
+    # per block — a page of paragraphs affords fewer mentions than a page of
+    # labels for the same number of characters.
+    per_item = max(
+        MIN_ITEM_CHARS, round(sum(item_share_chars(item.text) for item in items) / len(items))
+    )
+    affordable = max(1, min(worth_naming(page), len(narration) // per_item))
     missed = [item.text.strip()[:24] for item in items if item not in named]
     return (len(named), affordable, missed)
 

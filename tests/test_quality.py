@@ -455,3 +455,20 @@ def test_how_much_of_a_page_is_worth_naming_follows_the_page():
     assert worth_naming(page_of(24)) == 10
     # Never a flat ceiling: a denser page still earns more than a lighter one.
     assert worth_naming(page_of(24)) > worth_naming(page_of(12)) > worth_naming(page_of(8))
+
+
+def test_what_one_block_is_worth_follows_the_block():
+    """每处也不设固定值：八个字的小标题和两百字的段落不该一样。
+
+    Sub-linear like the per-page share: a label is one short sentence, a
+    paragraph is not read out but is not one sentence either.
+    """
+    from doc2video.skills.review import MIN_ITEM_CHARS, item_share_chars
+
+    assert item_share_chars("多智能体协同") == MIN_ITEM_CHARS
+    assert item_share_chars("一" * 24) == 18
+    assert item_share_chars("一" * 60) == 28
+    assert item_share_chars("一" * 200) == 50
+    # Always more for more, never proportionally more.
+    assert item_share_chars("一" * 200) > item_share_chars("一" * 60)
+    assert item_share_chars("一" * 200) < 200 / 2
