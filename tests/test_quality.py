@@ -472,3 +472,24 @@ def test_what_one_block_is_worth_follows_the_block():
     # Always more for more, never proportionally more.
     assert item_share_chars("一" * 200) > item_share_chars("一" * 60)
     assert item_share_chars("一" * 200) < 200 / 2
+
+
+def test_too_fast_means_faster_than_asked_for():
+    """The band moves with the speed the machine was told to speak at.
+
+    Raising the default 5% put eight ordinary pages over the 340-a-minute line
+    on one deck — pages speaking exactly as fast as they had been told to.
+    """
+    from doc2video.schemas import Scene, SceneAudio
+    from doc2video.skills.speech_review import TOO_FAST
+
+    project = _project([_scene(1)])
+    scene = project.scenes[0]
+    scene.narration = "一" * 350
+    scene.audio = SceneAudio(path="audio/scene_01.wav", duration=61.4)
+    assert isinstance(scene, Scene)
+
+    # 350 characters in 60 seconds is 350 a minute — over the line at 1.0×…
+    assert 350 > TOO_FAST
+    # …and inside it once the machine was asked to speak 5% quicker.
+    assert 350 < TOO_FAST * 1.05

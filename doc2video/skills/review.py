@@ -282,6 +282,7 @@ class ReviewSkill(Skill):
                     self.ctx.asset_path,
                     lead=tuning.value("voice.lead", self.ctx.settings),
                     tail=tuning.value("voice.tail", self.ctx.settings),
+                    speed=self.ctx.settings.tts_speech_rate,
                 )
             )
         if self.project.render.scene_clips:
