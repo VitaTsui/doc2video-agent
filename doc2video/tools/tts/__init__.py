@@ -8,7 +8,7 @@ from pathlib import Path
 from ...core import ledger, telemetry
 from ...core.config import Settings, get_settings
 from ...core.logging import get_logger
-from . import align
+from . import align, phrasing
 from .base import (
     Segment,
     TTSProvider,
@@ -16,6 +16,7 @@ from .base import (
     allocate_segments,
     estimate_duration,
     join_units,
+    silences,
     weight_of,
 )
 from .edge import EdgeProvider
@@ -87,6 +88,9 @@ class TTSTool:
         self._settings = settings or get_settings()
         self._provider: TTSProvider = resolve_provider(self._settings.tts_provider)
         self._fallback: TTSProvider | None = None
+        # The project's own dictionary, for the second pass over a line that
+        # came out with a word cut in half.
+        self._pronunciation: dict[str, str] = {}
         log.info("TTS provider: %s", self._provider.name)
 
     def _engine_for(self, voice: str) -> TTSProvider:
@@ -107,6 +111,42 @@ class TTSTool:
                     log.info("按音色 %s 切到 %s", voice, candidate.name)
                 return candidate
         return self._provider
+
+    def _for_engine(self, text: str, pronunciation: dict[str, str] | None = None) -> str:
+        """The words as the engine should receive them, before its own markers."""
+        return for_speech(text, self._pronunciation if pronunciation is None else pronunciation)
+
+    def _speak_repaired(
+        self, text: str, out_path: Path, *, display: str, voice: str, rate: float
+    ) -> float:
+        """Speak a line, and speak it again if a word came out cut in half.
+
+        The engine chooses its own phrase boundaries and gets them wrong on
+        terms it does not know — 「应用中试基地」 comes back with 0.27 seconds of
+        silence after 中. Nothing in the text predicts which words an engine
+        will mishandle, so this listens instead: the clip's silences are
+        measured, any that fall inside a word are repaired by naming that
+        word's start, and the line is spoken once more.
+
+        Only lines that came out wrong pay for the second call, and only on an
+        engine that has somewhere to put the answer.
+        """
+        duration = self._speak_once(text, out_path, voice=voice, rate=rate)
+        if not self._provider.honours_phrase_boundary:
+            return duration
+
+        starts = phrasing.repairs_for(display, silences(out_path), duration)
+        if not starts:
+            return duration
+
+        repaired = phrasing.guard(display, starts)
+        log.debug("断词修复：%s → %s", display, repaired)
+        return self._speak_once(
+            self._provider.phrase_boundary(self._for_engine(repaired)),
+            out_path,
+            voice=voice,
+            rate=rate,
+        )
 
     def _speak_once(self, text: str, out_path: Path, *, voice: str, rate: float) -> float:
         """One clip, with a local voice standing by.
@@ -233,7 +273,9 @@ class TTSTool:
         # 「别在这里断开」, which each engine spells differently — see
         # `TTSProvider.phrase_boundary`.
         def spoken(text: str) -> str:
-            return self._engine_for(voice).phrase_boundary(for_speech(text, pronunciation))
+            return self._engine_for(voice).phrase_boundary(self._for_engine(text, pronunciation))
+
+        self._pronunciation = pronunciation
 
         units = plan_units(sentences, emphasis=emphasis)
         # Which engine this will be, named before the first call rather than
@@ -246,7 +288,9 @@ class TTSTool:
         if len(units) <= 1:
             text = "".join(sentences)
             with ledger.call(f"tts:{engine}", f"{len(text)} 字"):
-                duration = self._speak_once(spoken(text), out_path, voice=voice, rate=rate)
+                duration = self._speak_repaired(
+                    spoken(text), out_path, display=text, voice=voice, rate=rate
+                )
             segments, source = self._time(text, out_path, sentences, duration)
             return segments, duration, source
 
@@ -257,7 +301,9 @@ class TTSTool:
             for index, unit in enumerate(units):
                 clip = work / f"{index:02d}.wav"
                 with ledger.call(f"tts:{engine}", f"{len(unit.text)} 字"):
-                    self._speak_once(spoken(unit.text), clip, voice=voice, rate=rate)
+                    self._speak_repaired(
+                        spoken(unit.text), clip, display=unit.text, voice=voice, rate=rate
+                    )
                 clips.append(clip)
 
             windows = join_units(clips, [unit.pause_before for unit in units], out_path)

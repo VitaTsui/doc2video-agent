@@ -32,6 +32,7 @@ class MacOSSayProvider(TTSProvider):
     name = "macos_say"
     # Measured over a 30-page deck with Tingting: 4.75 characters a second.
     chars_per_second = 4.75
+    honours_phrase_boundary = True
 
     def available(self) -> bool:
         return which("say") is not None

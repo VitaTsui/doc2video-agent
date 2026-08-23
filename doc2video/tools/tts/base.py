@@ -8,6 +8,8 @@ director binds narration to on-screen elements.
 from __future__ import annotations
 
 import contextlib
+import re
+import subprocess
 import sys
 import wave
 from array import array
@@ -76,6 +78,11 @@ class TTSProvider:
 
     def available(self) -> bool:
         return False
+
+    #: Whether this engine has anywhere to put 「a word starts here」. When it
+    #: does not, measuring a clip for cut words buys nothing — there would be
+    #: no way to act on the answer.
+    honours_phrase_boundary = False
 
     def phrase_boundary(self, text: str) -> str:
         """Turn a space in spoken text into whatever this engine reads as 「别在这里断」.
@@ -286,6 +293,30 @@ def audio_duration(path: Path) -> float | None:
     from ..media_binaries import probe_duration
 
     return probe_duration(path)
+
+
+def silences(path: Path, *, floor: float = 0.06) -> list[tuple[float, float]]:
+    """Every quiet stretch in a clip, as `(start, length)` in seconds.
+
+    Used to hear what the engine did rather than assume it: a gap the script
+    did not ask for is either a mark being read or a word being cut in half,
+    and only the clip can say which one happened where.
+    """
+    from ...core import programs
+
+    ffmpeg = programs.find("ffmpeg")
+    if ffmpeg is None:
+        return []
+    try:
+        proc = subprocess.run(  # noqa: S603 - argv built here
+            [ffmpeg, "-i", str(path), "-af", f"silencedetect=noise=-40dB:d={floor}",
+             "-f", "null", "-"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+    pattern = re.compile(r"silence_start: ([\d.]+)[\s\S]*?silence_duration: ([\d.]+)")
+    return [(float(at), float(length)) for at, length in pattern.findall(proc.stderr)]
 
 
 def join_units(clips: list[Path], pauses: list[float], out_path: Path) -> list[tuple[float, float]]:
