@@ -12,7 +12,7 @@ import re
 
 from pydantic import BaseModel
 
-from ..core import tuning
+from ..core import ledger, tuning
 from ..schemas import ElementKind, PageType, ReviewFinding
 from ..schemas.telemetry import QualityDimension, QualityReport
 from ..tools.renderer.base import SUBTITLE_BOTTOM_MARGIN
@@ -64,6 +64,36 @@ NAMED_ITEM_CHARS = 8
 # than one whatever it did. At 30 the question was too easy to pass: the page
 # that started this, four cards and one of them named, came out even.
 CHARS_PER_ITEM = 18
+# What a page costs before its items: the sentence that says what the page is.
+PAGE_OPENING_CHARS = 25
+
+
+def _pace(settings) -> float:
+    """Characters a second, from the engine that will actually speak them."""
+    from ..tools.tts import TTSTool
+
+    return TTSTool(settings).chars_per_second or 4.15
+
+
+def tellable_seconds(document, pace: float, silence: float) -> float:
+    """How long this deck takes to tell — one short sentence per block of text.
+
+    The floor under any target. A deck of 208 blocks does not fit in fifteen
+    minutes however tightly it is written, and a score that treats that as a
+    failure is marking the film down for the length of the document.
+    """
+    from ..schemas import ElementKind
+
+    chars = 0
+    for page in document.pages:
+        items = sum(
+            1
+            for element in page.elements
+            if element.kind is not ElementKind.TITLE
+            and len((element.text or "").strip()) >= NAMED_ITEM_CHARS
+        )
+        chars += PAGE_OPENING_CHARS + items * CHARS_PER_ITEM
+    return chars / max(pace, 0.1) + silence * len(document.pages)
 
 
 def missed_items(narration: str, page) -> tuple[int, int, list[str]]:
@@ -168,33 +198,43 @@ class ReviewSkill(Skill):
     description = "检测事实、节奏、字幕、音画同步和视觉质量"
 
     def run(self) -> None:
-        findings = self._structural_checks()
+        # Each check is its own entry, with what it found. A single 「质检」 line
+        # for six different kinds of looking says only that something was
+        # checked — not that the captions were measured against the page's
+        # geometry, or that the audio was listened to for the pauses.
+        with ledger.call("check:结构与讲稿", "页面、时长、讲稿内容"):
+            findings = self._structural_checks()
+        found = len(findings)
         # What the viewer sees, which the checks above cannot reach: a caption
         # can be perfectly timed, correctly split and sitting on top of the
         # number it is describing. Geometry, not pixels — the renderer's layout
         # is ours, so the answer is arithmetic.
-        findings.extend(
-            render_review.check_subtitles(
-                self.project,
-                self.ctx.settings.video_width,
-                self.ctx.settings.video_height,
-                SUBTITLE_BOTTOM_MARGIN,
+        with ledger.call("check:字幕", "出界、遮挡页面文字"):
+            findings.extend(
+                render_review.check_subtitles(
+                    self.project,
+                    self.ctx.settings.video_width,
+                    self.ctx.settings.video_height,
+                    SUBTITLE_BOTTOM_MARGIN,
+                )
             )
-        )
         # And whether anything was actually drawn. Only once there are clips to
         # look at: before a render there is no picture to have an opinion about.
         # And how it sounds, which neither of the others can hear.
-        findings.extend(
-            speech_review.check_speech(
-                self.project,
-                self.ctx.asset_path,
-                lead=tuning.value("voice.lead", self.ctx.settings),
-                tail=tuning.value("voice.tail", self.ctx.settings),
+        with ledger.call("check:配音", "语速、停顿、平铺直叙"):
+            findings.extend(
+                speech_review.check_speech(
+                    self.project,
+                    self.ctx.asset_path,
+                    lead=tuning.value("voice.lead", self.ctx.settings),
+                    tail=tuning.value("voice.tail", self.ctx.settings),
+                )
             )
-        )
         if self.project.render.scene_clips:
-            findings.extend(render_review.check_frames(self.project, self.ctx.asset_path))
-            findings.extend(render_review.check_actions(self.project, self.ctx.asset_path))
+            with ledger.call("check:画面", "空画面、动作有没有画出来"):
+                findings.extend(render_review.check_frames(self.project, self.ctx.asset_path))
+                findings.extend(render_review.check_actions(self.project, self.ctx.asset_path))
+        self.log.info("质检各项：结构 %d 条，其余 %d 条", found, len(findings) - found)
         self.project.review = findings
         self.project.quality = self._score(findings)
 
@@ -370,13 +410,38 @@ class ReviewSkill(Skill):
 
         total = project.total_duration()
         target = project.intent.duration
+        # A target shorter than the deck can be told in is not a defect in the
+        # film. Measured on a 30-page deck: 208 blocks of text, about 22 minutes
+        # to name them all once — asked for fifteen, the script was compressed
+        # by every means that keeps the content (14%, no item lost) and still
+        # ran 22. Scoring that against fifteen marks the film down for the
+        # length of the document.
+        floor = tellable_seconds(
+            document,
+            _pace(self.ctx.settings),
+            tuning.value("voice.lead", self.ctx.settings)
+            + tuning.value("voice.tail", self.ctx.settings),
+        )
+        if target and floor > target * (1 + DURATION_TOLERANCE):
+            findings.append(
+                ReviewFinding(
+                    severity="warning",
+                    kind="undertellable",
+                    message=(
+                        f"这份文档把每处内容各讲一句就要约 {floor / 60:.0f} 分钟，"
+                        f"而目标是 {target / 60:.0f} 分钟——讲稿已经压到不丢内容的极限，"
+                        "要更短就得明确说哪些页不讲"
+                    ),
+                )
+            )
+            target = floor
         if target and abs(total - target) / target > DURATION_TOLERANCE:
             findings.append(
                 ReviewFinding(
                     severity="warning",
                     kind="duration",
                     message=(
-                        f"实际时长 {total:.0f} 秒与目标 {target} 秒偏差超过 "
+                        f"实际时长 {total:.0f} 秒与目标 {target:.0f} 秒偏差超过 "
                         f"{DURATION_TOLERANCE:.0%}，可要求压缩或展开讲稿"
                     ),
                 )

@@ -388,3 +388,36 @@ def test_a_page_walked_only_a_quarter_of_the_way_is_flagged(score):
         page,
     )
     assert walked >= affordable
+
+
+def test_a_target_shorter_than_the_deck_can_be_told_in_is_not_the_film_s_fault(score):
+    """208 blocks do not fit in fifteen minutes however tightly they are written.
+
+    Measured on the deck this came from: naming every block once takes about
+    22 minutes, the script was compressed by every means that keeps the content
+    (14% shorter, not one item lost) and still ran 22. Scoring that against
+    fifteen marks the film down for the length of the document.
+    """
+    from doc2video.skills.review import tellable_seconds
+
+    project = _project([_scene(i) for i in range(1, 6)], duration=30)
+    for page in project.document.pages:
+        page.elements = page.elements + [
+            page.elements[0].model_copy(update={"id": f"{page.elements[0].id}_{n}"})
+            for n in range(4)
+        ]
+        for element in page.elements:
+            element.text = "这一处是页面上的一段文字，长到值得单独讲一句。"
+
+    floor = tellable_seconds(project.document, 4.15, 1.4)
+    assert floor > 30  # the deck cannot be told in half a minute
+
+    report = score(project)
+    said = [f for f in project.review if f.kind == "undertellable"]
+    assert said, [f.kind for f in project.review]
+    assert "分钟" in said[0].message
+    # And the length is judged against what the deck needs, not against the
+    # number that was asked for: 「偏差超过」 must be measured from the floor.
+    drift = [f for f in project.review if f.kind == "duration"]
+    assert not drift or "目标 30 秒" not in drift[0].message
+    assert report.score > 0

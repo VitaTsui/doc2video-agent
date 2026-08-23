@@ -269,24 +269,14 @@ class DocumentSkill(Skill):
             return
 
         from ..tools.tts import TTSTool
-        from .review import CHARS_PER_ITEM, NAMED_ITEM_CHARS
+        from .review import tellable_seconds
 
         pace = TTSTool(self.ctx.settings).chars_per_second or 4.15
         silence = (
             tuning.value("voice.lead", self.ctx.settings)
             + tuning.value("voice.tail", self.ctx.settings)
         )
-        chars = 0
-        for page in self.project.document.pages:
-            items = sum(
-                1
-                for element in page.elements
-                if element.kind is not ElementKind.TITLE
-                and len((element.text or "").strip()) >= NAMED_ITEM_CHARS
-            )
-            chars += PAGE_OPENING_CHARS + items * CHARS_PER_ITEM
-
-        seconds = chars / pace + silence * len(self.project.document.pages)
+        seconds = tellable_seconds(self.project.document, pace, silence)
         proposed = int(min(max(seconds, MIN_PROPOSED_SECONDS), MAX_PROPOSED_SECONDS))
         if proposed == intent.duration:
             return

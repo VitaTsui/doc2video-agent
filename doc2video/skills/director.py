@@ -13,7 +13,7 @@ import re
 
 from pydantic import BaseModel
 
-from ..core import tuning
+from ..core import ledger, tuning
 from ..schemas import (
     ActionType,
     BBox,
@@ -127,8 +127,14 @@ class DirectorSkill(Skill):
             if page is None:
                 scene.actions = []
                 continue
-            choices = self._choose_heuristically(scene, page)
-            scene.actions = self._to_actions(scene, page, choices)
+            # One entry per page, like every other stage that works page by
+            # page. A single line for thirty pages of camera work says nothing
+            # about the page whose box went to the wrong card.
+            with ledger.call(
+                "director", f"第 {scene.source_page} 页", covers=[ledger.scene_key(scene.scene_id)]
+            ):
+                choices = self._choose_heuristically(scene, page)
+                scene.actions = self._to_actions(scene, page, choices)
             total_actions += len(scene.actions)
 
         self.log.info("镜头设计完成：共 %d 个动作", total_actions)

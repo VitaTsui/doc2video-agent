@@ -108,6 +108,30 @@ STAGE_STATUS = {
 }
 
 
+# Which dimension a finding belongs to, so the record can group them the way
+# the score does. Anything unmapped lands in 「其他」 rather than disappearing.
+_DIMENSION_OF = {
+    "blank_frame": "画面",
+    "action_not_visible": "画面",
+    "missing_visual": "完整度",
+    "missing_audio": "完整度",
+    "uncovered_page": "完整度",
+    "dangling_list": "完整度",
+    "thin_coverage": "完整度",
+    "pacing": "节奏",
+    "speech_rate": "节奏",
+    "monotone": "节奏",
+    "ungrounded": "贴合文档",
+    "ai_tic": "贴合文档",
+    "dangling_action": "镜头",
+    "action_overflow": "镜头",
+    "subtitle_overflow": "字幕",
+    "subtitle_cover": "字幕",
+    "subtitle": "字幕",
+    "duration": "节奏",
+}
+
+
 class Executor:
     def __init__(self, ctx: SkillContext, *, progress: ProgressFn | None = None) -> None:
         self.ctx = ctx
@@ -248,12 +272,26 @@ class Executor:
             ]
         if stage is Stage.MOTION:
             timeline = project.timeline
+            by_scene: dict[str, list[str]] = {}
+            for cue in timeline.subtitles:
+                by_scene.setdefault(cue.scene_id, []).append(cue.text)
+            # The whole film first, then each page's own captions — the thing
+            # someone opens when a caption looks wrong is that page's captions,
+            # not a count of all of them.
             return [
                 ledger.text_artifact(
                     "时间轴",
                     f"{len(timeline.video)} 段画面、{len(timeline.subtitles)} 条字幕、"
                     f"共 {timeline.duration:.1f} 秒",
                 )
+            ] + [
+                ledger.text_artifact(
+                    f"第 {scene.source_page} 页字幕（{len(by_scene.get(scene.scene_id, []))} 条）",
+                    "\n".join(by_scene.get(scene.scene_id, [])) or "（这一页没有字幕）",
+                    scene.scene_id,
+                    page=scene.source_page,
+                )
+                for scene in project.scenes
             ]
         if stage is Stage.RENDER:
             artifacts = [
@@ -274,15 +312,30 @@ class Executor:
             return artifacts
         if stage is Stage.REVIEW:
             quality = project.quality
-            findings = "\n".join(
-                f"[{f.severity}] {f.scene_id or '整体'}：{f.message}" for f in project.review
-            )
-            return [
+            # The score, then one entry per dimension carrying its own findings.
+            # A single list of everything found is the thing nobody reads: the
+            # question is always 「字幕这一项为什么扣分」, and that answer was
+            # buried among thirty lines about something else.
+            groups: dict[str, list[str]] = {}
+            for finding in project.review:
+                groups.setdefault(_DIMENSION_OF.get(finding.kind, "其他"), []).append(
+                    f"[{finding.severity}] {finding.scene_id or '整体'}：{finding.message}"
+                )
+            artifacts = [
                 ledger.text_artifact(
                     f"质量分 {quality.score}" if quality else "质检",
-                    findings or "没有发现问题",
+                    "\n".join(
+                        f"{row.name}：{row.score:.1f}（{row.detail}）"
+                        for row in (quality.dimensions if quality else [])
+                    )
+                    or "没有发现问题",
                 )
             ]
+            artifacts += [
+                ledger.text_artifact(f"{name}｜{len(lines)} 条", "\n".join(lines))
+                for name, lines in sorted(groups.items())
+            ]
+            return artifacts
         return []
 
     def _run_stage(self, stage: Stage, plan: ExecutionPlan) -> None:
