@@ -297,10 +297,22 @@ class NarrationSkill(Skill):
             return []
 
         budgets = self._allocate_budget(pages)
+        # What this project already has. A page the caller did not mention is
+        # not a page with nothing on it: the script may have been written last
+        # week, or by 「生成讲稿」 five minutes ago. Overwriting it with
+        # placeholder text threw away thirty pages of finished writing on a
+        # call that said nothing about them — and the video that came out
+        # opened with 「这一期我们来讲……」 over a script the model had already
+        # written properly.
+        existing = {
+            scene.source_page: scene.narration
+            for scene in self.project.scenes
+            if scene.source_page and scene.narration.strip()
+        }
         drafts: dict[int, PageNarration] = {}
         missing: list[int] = []
         for page in pages:
-            text = (narrations.get(page.index) or "").strip()
+            text = (narrations.get(page.index) or existing.get(page.index) or "").strip()
             if text:
                 drafts[page.index] = PageNarration(
                     index=page.index, narration=text, segments=[]

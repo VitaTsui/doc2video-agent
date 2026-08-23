@@ -220,3 +220,26 @@ def test_a_script_that_came_up_short_says_so(settings: Settings, store: ProjectS
 
     said = [d for d in record.degradations if "短" in d.reason]
     assert said, [d.reason for d in record.degradations]
+
+
+def test_adopting_a_script_does_not_throw_away_the_one_already_written(
+    settings: Settings, store: ProjectStore
+):
+    """A page the caller did not mention is not a page with nothing on it.
+
+    「开始生成」 sends the boxes; a page whose box was never opened arrives as
+    nothing. Treating that as 「没有讲稿」 replaced a finished script with
+    placeholder text — measured on a 30-page deck: all thirty pages of model
+    writing gone, and the film opened with the heuristic's 「这一期我们来讲……」.
+    """
+    skill = _skill(settings, store, pages=3, duration=120.0)
+    skill.apply({1: "第一页是人写的。", 2: "第二页也是。", 3: "第三页同样。"})
+    written = {scene.source_page: scene.narration for scene in skill.project.scenes}
+
+    # A second pass that mentions one page only.
+    skill.apply({2: "第二页改了。"})
+    now = {scene.source_page: scene.narration for scene in skill.project.scenes}
+
+    assert now[2] == "第二页改了。"
+    assert now[1] == written[1]
+    assert now[3] == written[3]
