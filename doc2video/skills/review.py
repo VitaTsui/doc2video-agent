@@ -13,7 +13,7 @@ import re
 from pydantic import BaseModel
 
 from ..core import tuning
-from ..schemas import PageType, ReviewFinding
+from ..schemas import ElementKind, PageType, ReviewFinding
 from ..schemas.telemetry import QualityDimension, QualityReport
 from ..tools.renderer.base import SUBTITLE_BOTTOM_MARGIN
 from . import render_review, speech_review
@@ -52,6 +52,43 @@ _COUNTED = re.compile(
 _ANAPHORA = ("这", "那", "上述", "以上", "其中", "前面")
 _ITEM_SPLIT = re.compile(r"[，、；：]|以及|和|及")
 _COUNT_VALUE = {"两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+# A block of text on the page worth naming. Shorter than this is a label, a
+# page number, or a stray bullet character.
+NAMED_ITEM_CHARS = 8
+# Roughly what naming one item costs: its own words plus the句子 around them.
+# Used to ask a fair question — a script of 80 characters that named one block
+# out of ten spent its words going around the page instead of across it
+# (「讲了一半就翻页」), while a script of 20 characters could not have named more
+# than one whatever it did. At 30 the question was too easy to pass: the page
+# that started this, four cards and one of them named, came out even.
+CHARS_PER_ITEM = 18
+
+
+def missed_items(narration: str, page) -> tuple[int, int, list[str]]:
+    """`(named, affordable, missed)` — how much of the page the script walked.
+
+    Measured on a 30-page film: sixteen pages named fewer than half of their
+    own blocks, and the ones that hurt are the pages that had the words to
+    spare — a four-card layout where the script names the first card, and the
+    camera then has nothing to point at for the other three, so the film moves
+    on while three-quarters of what is on screen goes unsaid.
+    """
+    from .director import MENTION_THRESHOLD, _mentioned
+
+    items = [
+        element
+        for element in page.elements
+        if element.kind is not ElementKind.TITLE
+        and len((element.text or "").strip()) >= NAMED_ITEM_CHARS
+    ]
+    if len(items) < 3:
+        return (0, 0, [])
+    named = [item for item in items if _mentioned(item.text, narration) >= MENTION_THRESHOLD]
+    affordable = max(1, min(len(items), len(narration) // CHARS_PER_ITEM))
+    missed = [item.text.strip()[:24] for item in items if item not in named]
+    return (len(named), affordable, missed)
 
 
 def _dangling_counts(narration: str) -> list[tuple[str, int, int]]:
@@ -194,6 +231,7 @@ class ReviewSkill(Skill):
             by_kind.get("missing_visual", 0)
             + by_kind.get("missing_audio", 0)
             + by_kind.get("dangling_list", 0)
+            + by_kind.get("thin_coverage", 0)
             + uncovered
         )
         # Against what the video should have had, not what it has — otherwise
@@ -424,6 +462,20 @@ class ReviewSkill(Skill):
                         ReviewFinding(
                             severity="warning", kind="action_overflow", scene_id=scene.scene_id,
                             message=f"动作 {action.type} 超出场景时长",
+                        )
+                    )
+
+            if page is not None:
+                walked, affordable, missed = missed_items(scene.narration, page)
+                if affordable and walked < affordable:
+                    findings.append(
+                        ReviewFinding(
+                            severity="warning", kind="thin_coverage", scene_id=scene.scene_id,
+                            message=(
+                                f"这一页讲到了 {walked} 处内容，"
+                                f"按讲稿长度本可以讲 {affordable} 处；"
+                                f"没讲到的有「{'」「'.join(missed[:2])}」"
+                            ),
                         )
                     )
 

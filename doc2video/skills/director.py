@@ -31,6 +31,12 @@ from .base import Skill
 # says 「再看这一块」 and the picture does not move. So the budget is time: one
 # move per stretch of speech, floored so a short page still gets a gesture and
 # capped so a long one does not turn into a slideshow of boxes.
+# How much of an element's own text has to turn up in a sentence before the
+# camera will point at it. Bigrams, so word order does not matter and a
+# rephrasing still counts; 0.35 keeps a card apart from its neighbour on a
+# four-card page, where the headings share their shape but not their nouns.
+MENTION_THRESHOLD = 0.35
+
 SECONDS_PER_ACTION = 6.0
 MIN_ACTIONS_PER_SCENE = 2
 MAX_ACTIONS_PER_SCENE = 8
@@ -199,17 +205,30 @@ class DirectorSkill(Skill):
                 continue
             if not _is_banner(element, page):
                 return ref
-        # Nothing bound: fall back to the most distinctive element whose text the
-        # sentence actually mentions, so we never point at an unrelated box.
+        # Nothing bound: find the element this sentence is talking about.
+        #
+        # The model fills `element_refs` when it feels like it — measured on a
+        # 30-page deck, 30 of 70 sentences came back with none, and seven pages
+        # had not one — so the camera cannot depend on them. It used to fall
+        # back on the element's first six characters appearing verbatim in the
+        # sentence, which is a coin flip: the script says 「供应链经营风险可控化」
+        # for a card headed 「01 供应链经营风险可控化」 and the six characters
+        # matched, but 「持续监控原料的供需和价格」 for one headed 「实现原料供需、
+        # 价格持续监控」 shares every word and not the first six.
+        #
+        # The script reads the page now — measured at 73–85% character overlap
+        # — so asking how much of an element's own text turns up in the sentence
+        # is both cheap and decisive.
         best: tuple[float, str] | None = None
         for element in page.elements:
             if element.kind is ElementKind.TITLE or not _worth_pointing_at(element):
                 continue
-            key = element.text.strip()[:6]
-            if len(key) >= 2 and key in segment.text:
-                score = element.importance
-                if best is None or score > best[0]:
-                    best = (score, element.id)
+            share = _mentioned(element.text, segment.text)
+            if share < MENTION_THRESHOLD:
+                continue
+            score = share + element.importance / 10
+            if best is None or score > best[0]:
+                best = (score, element.id)
         return best[1] if best else None
 
     @staticmethod
@@ -408,6 +427,16 @@ def _union(a: BBox, b: BBox) -> BBox:
     return BBox(
         x=x, y=y, w=max(a.x + a.w, b.x + b.w) - x, h=max(a.y + a.h, b.y + b.h) - y
     )
+
+
+def _mentioned(element_text: str, sentence: str) -> float:
+    """How much of `element_text` turns up in `sentence`, by character bigram."""
+    element_text, sentence = element_text.strip(), sentence.strip()
+    if len(element_text) < 3 or len(sentence) < 3:
+        return 0.0
+    grams = {element_text[i : i + 2] for i in range(len(element_text) - 1)}
+    said = {sentence[i : i + 2] for i in range(len(sentence) - 1)}
+    return len(grams & said) / len(grams)
 
 
 def _action_budget(scene: Scene) -> int:

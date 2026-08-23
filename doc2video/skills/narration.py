@@ -163,6 +163,7 @@ class NarrationSkill(Skill):
                 lambda: self._placeholder(pages, budgets, kept),
                 what="讲稿",
             )
+        drafts = self._repair_drafts(pages, budgets, drafts, frozen=set(kept))
         drafts = self._fit_duration(pages, budgets, drafts, frozen=set(kept))
         self._build_scenes(pages, drafts)
         self.log.info(
@@ -178,6 +179,81 @@ class NarrationSkill(Skill):
             for index, text in sorted((written or {}).items())
             if index in indexes and text and text.strip()
         }
+
+    # -- repair ---------------------------------------------------------
+    def _repair_drafts(
+        self,
+        pages: list[DocumentPage],
+        budgets: dict[int, float],
+        drafts: dict[int, PageNarration],
+        frozen: set[int] | None = None,
+    ) -> dict[int, PageNarration]:
+        """Rewrite the pages that did not finish what they started.
+
+        Two faults, one repair — both are 「讲了一半就翻页」 and both are decided
+        by the same deterministic rules the quality report uses, so a page is
+        judged the same way before it is spoken as after.
+
+        「平台上有三块开放机制。」 and the page ends — the three are on the slide
+        in front of the viewer, and the sentence set up an expectation the film
+        never pays. Saying so in the writing prompt helped and did not settle
+        it: two pages in thirty before, one after. So the draft is checked
+        against the same deterministic rule the quality report uses, and the
+        pages that fail are written again, once, with the specific sentence
+        quoted back.
+
+        Only those pages, and only once: a page that comes back dangling twice
+        is a page the model cannot do better on, and re-asking forever costs
+        minutes for nothing.
+        """
+        from .review import _dangling_counts, missed_items
+
+        frozen = frozen or set()
+        by_index = {page.index: page for page in pages}
+        broken: dict[int, str] = {}
+        for index, draft in drafts.items():
+            if index in frozen or (page := by_index.get(index)) is None:
+                continue
+            if found := _dangling_counts(draft.narration):
+                phrase, said, named = found[0]
+                broken[index] = (
+                    f"上一稿在这一页写了「{phrase}」，却只点到 {named} 项。"
+                    f"请把这 {said} 项的名字按页面上的写法都说出来；"
+                    "如果字数装不下，就不要报数，直接讲其中最重要的一两项。"
+                )
+                continue
+            walked, affordable, missed = missed_items(draft.narration, page)
+            if affordable and walked < affordable and missed:
+                broken[index] = (
+                    f"上一稿只讲到这一页的 {walked} 处内容，按字数本可以讲 {affordable} 处。"
+                    f"没讲到的有：「{'」「'.join(missed[:4])}」。"
+                    "请把它们按页面顺序补进去，每处一句，用页面自己的说法；"
+                    "字数不够就压缩已有的句子，不要删掉信息点。"
+                )
+        if not broken or not self.llm.available:
+            return drafts
+
+        self.log.info("需要返工的页面：%s", sorted(broken))
+        for index, note in broken.items():
+            page = by_index.get(index)
+            if page is None:
+                continue
+            try:
+                with ledger.call(self.llm.source, f"第 {index} 页｜返工"):
+                    result = self.llm.complete_json(
+                        self._prompt([page], budgets, position=index - 1) + f"\n\n# 返工\n{note}",
+                        schema=model_schema(NarrationResult),
+                        system=load_prompt("narration"),
+                        max_tokens=self.ctx.settings.llm_max_tokens,
+                    )
+                rewritten = NarrationResult.model_validate(result).pages
+            except Exception as exc:  # noqa: BLE001 - a failed repair keeps the draft
+                self.log.warning("第 %d 页返工失败，保留原稿：%s", index, exc)
+                continue
+            for candidate in rewritten:
+                if candidate.index == index and candidate.narration.strip():
+                    drafts[index] = candidate
+        return drafts
 
     # -- fitting --------------------------------------------------------
     def _fit_duration(

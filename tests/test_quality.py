@@ -339,3 +339,42 @@ def test_a_script_that_announces_a_list_and_walks_away_is_incomplete(score):
         d for d in score(_project(scenes)).dimensions if d.name == "completeness"
     )
     assert completeness.score < 100
+
+
+def test_a_page_walked_only_a_quarter_of_the_way_is_flagged(score):
+    """「讲了一半就翻页」, measured rather than felt.
+
+    A four-card layout where the script names the first card: the camera then
+    has nothing to point at for the other three, and the film moves on while
+    three quarters of what is on screen goes unsaid. Sixteen pages of one
+    30-page deck named fewer than half of their own blocks.
+    """
+    from doc2video.schemas import DocumentPage, SlideElement
+    from doc2video.skills.review import missed_items
+
+    page = DocumentPage(
+        index=1,
+        title="市场研判情报",
+        elements=[
+            SlideElement(id=f"e{i}", kind=ElementKind.PARAGRAPH, text=text, bbox=BBox(x=0, y=0, w=9, h=9))
+            for i, text in enumerate(
+                ["供应链经营风险可控化", "外贸市场拓展精准赋能", "项目招投标竞争优势打造", "产销策略动态优化调整"],
+                start=1,
+            )
+        ],
+    )
+
+    walked, affordable, missed = missed_items(
+        "一是供应链经营风险可控化，持续监控原料的供需和价格，支撑采购议价，提前识别风险。", page
+    )
+    assert walked == 1
+    assert affordable > walked  # the script had the words for more
+    assert "外贸市场拓展精准赋能" in missed
+
+    # And a script that walks the whole page is not flagged.
+    walked, affordable, _ = missed_items(
+        "一是供应链经营风险可控化。二是外贸市场拓展精准赋能。"
+        "三是项目招投标竞争优势打造。四是产销策略动态优化调整。",
+        page,
+    )
+    assert walked >= affordable
