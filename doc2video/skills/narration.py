@@ -690,19 +690,30 @@ class NarrationSkill(Skill):
             # wrong one for a script that reads it: the only way to reach a
             # number the page has no words for is to invent some.
             budget = self._char_budget(budgets[page.index])
+            # Stated as a target with both failure modes named, because a
+            # ceiling alone does not work: the model writes about one paragraph
+            # a page whatever the number says. Measured across 30 pages — dense
+            # pages came in at 38–60% of budget while sparse ones ran 200–286%,
+            # so the page with 582 characters on it and the page with 79 got
+            # narration of the same length. Each direction has one likely
+            # cause, and saying which is what makes the number actionable.
+            budget = self._char_budget(budgets[page.index])
+            low, high = int(budget * 0.8), int(budget * 1.3)
             lines.append(
-                f"字数预算：{budget} 字上限（超了先删重复表述，别删信息点）。"
-                "页面上的内容讲完就停，短了不要补解释。"
+                f"字数预算：{budget} 字（{low}–{high} 字）。"
+                f"这一页页面文字 {len(page.raw_text())} 字，预算是按它算的。"
+                "写少了通常是漏讲了页面上的内容——回去把具体的条目、数字、名称补上；"
+                "写多了通常是在发挥——删掉页面支撑不了的话。"
             )
-            if page.summary:
-                lines.append(f"页面摘要：{page.summary}")
-            if page.key_points:
-                lines.append("关键点：" + "；".join(page.key_points))
-            if page.speaker_notes:
-                lines.append(f"演讲者备注：{_truncate(page.speaker_notes, 300)}")
+            # The page's own words come first and are named as the material.
+            # They used to come last, under 「元素：」, after a summary and a
+            # key-point list the understanding step had written — so the first
+            # thing the writer read was already a summary of the page, and it
+            # wrote a summary of that. 「之前的讲稿太总结了」 has a cause, and
+            # this is most of it.
             elements = [e for e in page.elements if e.text]
             if elements:
-                lines.append("元素：")
+                lines.append(f"页面原文（{len(elements)} 处，讲稿的主要材料，按这个顺序讲）：")
                 # Longer than it was: this is the source text now, not a hint
                 # about what the page is roughly about. A body paragraph cut at
                 # 120 characters is a paragraph the narration cannot read out,
@@ -711,6 +722,14 @@ class NarrationSkill(Skill):
                 lines.extend(
                     f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 400)}" for e in elements
                 )
+            if page.speaker_notes:
+                lines.append(f"演讲者备注：{_truncate(page.speaker_notes, 300)}")
+            if page.summary or page.key_points:
+                lines.append("（以下是这一页的理解笔记，帮你判断轻重，不要照着它写——它已经是概括了）")
+            if page.summary:
+                lines.append(f"页面摘要：{page.summary}")
+            if page.key_points:
+                lines.append("关键点：" + "；".join(page.key_points))
         return "\n".join(lines)
 
     @staticmethod
