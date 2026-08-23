@@ -22,8 +22,22 @@ from .base import Skill
 DURATION_TOLERANCE = 0.25
 LONG_SCENE_SECONDS = 90.0
 SHORT_SCENE_SECONDS = 3.0
-# Above this overlap the script is essentially reading the page aloud.
-READALOUD_THRESHOLD = 0.72
+# Below this overlap the script has stopped being about the page in front of
+# it. The check used to run the other way — anything *above* 0.72 was flagged as
+# 「接近照读」 — and that was right while the script's job was to explain what the
+# page could not say for itself. It is not the job any more: the script reads
+# the deck, in the deck's own words and order, and a high overlap is the thing
+# working. What is left worth catching is the opposite failure, the one that
+# actually gets complained about: a page of specifics summarised into 「围绕六大
+# 方向展开」, which shares almost nothing with the page it is standing in front
+# of. Measured on this deck: pages written to the current prompt overlap the
+# page 73–85%, and the summary-style ones ran 28–37%.
+UNGROUNDED_THRESHOLD = 0.45
+
+# Below this much text a page cannot ground anything: a cover carries a title
+# and a date, and the narration that introduces it necessarily says more than
+# the page does. Judging those would flag every divider in the deck.
+GROUNDABLE_PAGE_CHARS = 40
 
 # A page whose sentences are all about the same length reads as a machine
 # reporting, however accurate it is — speech carries emphasis by breaking
@@ -184,16 +198,17 @@ class ReviewSkill(Skill):
                 ),
             ),
             QualityDimension(
-                name="originality",
-                # Two ways a script fails to be worth listening to: it reads the
-                # page aloud, or it writes like a machine. Same dimension
-                # because the fix is the same one — write it again, properly.
+                name="grounding",
+                # Two ways a script fails the page it is standing in front of:
+                # it summarises the page away, or it writes like a machine.
+                # Same dimension because the fix is the same one — write it
+                # again, against what is actually on the page.
                 score=_ratio_score(
-                    by_kind.get("read_aloud", 0) + by_kind.get("ai_tic", 0), len(scenes)
+                    by_kind.get("ungrounded", 0) + by_kind.get("ai_tic", 0), len(scenes)
                 ),
                 weight=0.15,
                 detail=(
-                    f"{by_kind.get('read_aloud', 0)} 个场景接近照读，"
+                    f"{by_kind.get('ungrounded', 0)} 个场景脱离了页面内容，"
                     f"{by_kind.get('ai_tic', 0)} 个场景有 AI 腔句式"
                 ),
             ),
@@ -374,13 +389,16 @@ class ReviewSkill(Skill):
                         )
                     )
 
-            if page is not None:
+            if page is not None and len(page.raw_text().strip()) >= GROUNDABLE_PAGE_CHARS:
                 overlap = _overlap_ratio(scene.narration, page.raw_text())
-                if overlap > READALOUD_THRESHOLD:
+                if overlap < UNGROUNDED_THRESHOLD:
                     findings.append(
                         ReviewFinding(
-                            severity="warning", kind="read_aloud", scene_id=scene.scene_id,
-                            message=f"讲稿与页面文字重合度 {overlap:.0%}，接近照读，缺少解释增量",
+                            severity="warning", kind="ungrounded", scene_id=scene.scene_id,
+                            message=(
+                                f"讲稿与页面文字重合度只有 {overlap:.0%}，"
+                                "多半是把页面上的具体内容概括掉了，或者讲了页面没有的东西"
+                            ),
                         )
                     )
 

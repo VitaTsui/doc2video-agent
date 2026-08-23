@@ -146,13 +146,37 @@ def test_the_score_does_not_drift_with_deck_length(score):
     assert large_score > small_score
 
 
-def test_read_aloud_narration_costs_originality(score):
-    scenes = [_scene(i, narration="系统架构说明") for i in range(1, 6)]
+def test_a_script_that_left_the_page_behind_costs_grounding(score):
+    """The check runs the other way now.
 
-    report = score(_project(scenes))
+    A high overlap with the page used to be the defect — 「接近照读」 — back when
+    the script's job was to explain what the page could not say for itself. The
+    script reads the deck now, so overlap is the thing working, and what is
+    worth catching is a page of specifics summarised into a sentence that
+    shares almost nothing with it.
+    """
+    page_text = (
+        "系统架构说明：请求先进网关，再交给模型，最后落到检索这一层，"
+        "三层各管一件事，出了问题也好定位。"
+    )
 
-    originality = next(d for d in report.dimensions if d.name == "originality")
-    assert originality.score < 100
+    def deck(narration: str):
+        project = _project([_scene(i, narration=narration) for i in range(1, 6)])
+        for page in project.document.pages:
+            page.elements[0].text = page_text
+        return project
+
+    kept = next(
+        d for d in score(deck("请求先进网关，再交给模型，最后落到检索这一层。")).dimensions
+        if d.name == "grounding"
+    )
+    lost = next(
+        d for d in score(deck("这一部分讲的东西挺重要的，值得关注。")).dimensions
+        if d.name == "grounding"
+    )
+
+    assert kept.score == 100
+    assert lost.score < 100
 
 
 def test_a_deck_with_no_camera_work_scores_lower_on_direction(score):
@@ -179,7 +203,7 @@ def test_dimensions_carry_their_own_evidence(score):
     assert {d.name for d in report.dimensions} == {
         "completeness",
         "pacing",
-        "originality",
+        "grounding",
         "direction",
         "subtitles",
         # What the viewer sees, which none of the others can reach: a scene

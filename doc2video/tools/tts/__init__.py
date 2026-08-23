@@ -27,6 +27,11 @@ from .units import plan_units
 
 log = get_logger(__name__)
 
+# How many times to measure a clause and cut it again. Cutting one silence can
+# leave the engine free to take another somewhere else; three passes was enough
+# to settle every clause measured on a 30-page deck.
+REPHRASE_ROUNDS = 3
+
 
 # Which of the built-in voices is which. macOS reports no gender, and asking
 # for 「女声」 is how people ask — so the mapping is stated once, here, for the
@@ -121,31 +126,51 @@ class TTSTool:
     ) -> list[tuple[Path, float]]:
         """Speak one clause, and hand back the clips it actually took.
 
-        Usually one. When the engine cuts a word in half — 「一是供应链经营风险
-        可控化」 came back with 0.14 seconds of silence after 一是供应 — the clause
-        is cut at that word's start and each piece is spoken on its own, then
-        joined with no gap. Two pieces rejoined run *shorter* than the original
-        (2.47s against 2.51s) because each piece's quiet edges are trimmed,
-        while telling the engine where the boundary is costs 19% more length:
-        `say` re-plans its prosody around a marker and stretches what follows.
+        A clause has no punctuation inside it, so every silence in its clip is
+        one nobody asked for — the engine deciding on its own where a phrase
+        ends, and getting it wrong on any term it does not know: 「一是供应链经营
+        风险可控化」 came back with 0.14 seconds after 一是供应.
+
+        So the clip is measured, cut at the nearest word boundary to each
+        silence, and each piece spoken on its own. Rejoined with their quiet
+        edges trimmed, the silence is gone rather than moved — two pieces run
+        *shorter* than the original (2.47s against 2.51s), while telling the
+        engine where the boundary is costs 19% more length, because `say`
+        re-plans its prosody around a marker.
+
+        Repeated until the pieces come back clean, because cutting one silence
+        can leave the engine free to invent another somewhere else.
         """
-        clip = work / f"{index:02d}.wav"
-        duration = self._speak_once(spoken(unit.text), clip, voice=voice, rate=rate)
+        pieces = [unit.text]
+        for _round in range(REPHRASE_ROUNDS):
+            clips, again = [], False
+            for order, piece in enumerate(pieces):
+                clip = work / f"{index:02d}_{order}.wav"
+                duration = self._speak_once(spoken(piece), clip, voice=voice, rate=rate)
+                clips.append((piece, clip, duration))
+            rewritten: list[str] = []
+            for piece, clip, duration in clips:
+                cuts = phrasing.cuts_for(piece, silences(clip), duration)
+                parts = phrasing.split(piece, cuts) if cuts else [piece]
+                if len(parts) > 1:
+                    log.debug("断词修复：%s → %s", piece, " | ".join(parts))
+                    again = True
+                rewritten.extend(parts)
+            if not again:
+                return [
+                    (clip, unit.pause_before if order == 0 else 0.0)
+                    for order, (_piece, clip, _duration) in enumerate(clips)
+                ]
+            for _piece, clip, _duration in clips:
+                clip.unlink(missing_ok=True)
+            pieces = rewritten
 
-        starts = phrasing.repairs_for(unit.text, silences(clip), duration)
-        pieces = phrasing.split(unit.text, starts) if starts else []
-        if len(pieces) < 2:
-            return [(clip, unit.pause_before)]
-
-        log.debug("断词修复：%s → %s", unit.text, " | ".join(pieces))
-        clip.unlink(missing_ok=True)
+        # Out of rounds: speak what we have and let the last measurement stand.
         out: list[tuple[Path, float]] = []
         for order, piece in enumerate(pieces):
-            part = work / f"{index:02d}_{order}.wav"
-            self._speak_once(spoken(piece), part, voice=voice, rate=rate)
-            # No gap: this is one clause, said in two breaths because the engine
-            # could not be trusted to find the seam itself.
-            out.append((part, unit.pause_before if order == 0 else 0.0))
+            clip = work / f"{index:02d}_{order}.wav"
+            self._speak_once(spoken(piece), clip, voice=voice, rate=rate)
+            out.append((clip, unit.pause_before if order == 0 else 0.0))
         return out
 
     def _speak_once(self, text: str, out_path: Path, *, voice: str, rate: float) -> float:
