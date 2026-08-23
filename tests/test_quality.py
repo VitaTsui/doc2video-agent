@@ -356,9 +356,19 @@ def test_a_page_walked_only_a_quarter_of_the_way_is_flagged(score):
         index=1,
         title="市场研判情报",
         elements=[
-            SlideElement(id=f"e{i}", kind=ElementKind.PARAGRAPH, text=text, bbox=BBox(x=0, y=0, w=9, h=9))
+            SlideElement(
+                id=f"e{i}",
+                kind=ElementKind.PARAGRAPH,
+                text=text,
+                bbox=BBox(x=0, y=0, w=9, h=9),
+            )
             for i, text in enumerate(
-                ["供应链经营风险可控化", "外贸市场拓展精准赋能", "项目招投标竞争优势打造", "产销策略动态优化调整"],
+                [
+                    "供应链经营风险可控化",
+                    "外贸市场拓展精准赋能",
+                    "项目招投标竞争优势打造",
+                    "产销策略动态优化调整",
+                ],
                 start=1,
             )
         ],
