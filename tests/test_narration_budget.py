@@ -243,3 +243,28 @@ def test_adopting_a_script_does_not_throw_away_the_one_already_written(
     assert now[2] == "第二页改了。"
     assert now[1] == written[1]
     assert now[3] == written[3]
+
+
+def test_shortening_a_page_never_takes_its_last_items_away(
+    settings: Settings, store: ProjectStore
+):
+    """Trimming cuts from the end, and the end of a page is where its list is.
+
+    「平台上有三块开放机制。」 is what a trim looks like from the outside: the
+    script named all three, the trimmer removed the naming, and the film
+    announced a list and moved on. Length is worth less than that.
+    """
+    from doc2video.skills.narration import PageNarration
+
+    skill = _skill(settings, store, pages=2, duration=20.0)
+    pages = skill._pages()
+    budgets = skill._allocate_budget(pages)
+    whole = "平台上有三块开放机制：技能广场、MCP 工具库、插件集市。" + "补充说明的一句话。" * 6
+    drafts = {
+        pages[0].index: PageNarration(index=pages[0].index, narration=whole, segments=[]),
+        pages[1].index: PageNarration(index=pages[1].index, narration="第二页。", segments=[]),
+    }
+
+    fitted = skill._fit_duration(pages, budgets, drafts)
+
+    assert "技能广场" in fitted[pages[0].index].narration

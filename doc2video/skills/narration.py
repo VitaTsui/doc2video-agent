@@ -224,11 +224,19 @@ class NarrationSkill(Skill):
                 continue
             walked, affordable, missed = missed_items(draft.narration, page)
             if affordable and walked < affordable and missed:
+                # Told as a shape, not as a complaint. 「补进去」 left the model
+                # free to keep the paragraph it had written about one card and
+                # append nothing — measured on eleven reworked pages, the count
+                # did not move. A sentence each, in page order, is something it
+                # can actually execute, and it is what 「先横向铺开」 means.
+                want = min(affordable, len(missed) + walked)
                 broken[index] = (
-                    f"上一稿只讲到这一页的 {walked} 处内容，按字数本可以讲 {affordable} 处。"
-                    f"没讲到的有：「{'」「'.join(missed[:4])}」。"
-                    "请把它们按页面顺序补进去，每处一句，用页面自己的说法；"
-                    "字数不够就压缩已有的句子，不要删掉信息点。"
+                    f"上一稿只讲到这一页的 {walked} 处内容，按字数本可以讲 {affordable} 处——"
+                    "一张卡片讲得再透，旁边三张没讲到，观众看着屏幕上的它们听你翻页。\n"
+                    f"重写这一页：写成 {want} 句左右，**按页面顺序一处一句**，"
+                    "每句都带上那一处自己的名字和它最要紧的一个信息。"
+                    f"漏掉的是：「{'」「'.join(missed[:6])}」。\n"
+                    "宁可每句短一点，也不要只讲一处。"
                 )
         if not broken or not self.llm.available:
             return drafts
@@ -333,6 +341,9 @@ class NarrationSkill(Skill):
             "讲稿", f"超出目标时长 {total - target:.0f} 秒，压缩 {len(over)} 页"
         )
 
+        from .review import _dangling_counts, missed_items
+
+        by_index = {page.index: page for page in pages}
         trimmed = dict(drafts)
         for _, index, allowed in over:
             if total <= target * (1 + DURATION_TOLERANCE):
@@ -341,6 +352,22 @@ class NarrationSkill(Skill):
             shorter = _trim_to(draft.narration, int(allowed * pace))
             if len(shorter) >= len(draft.narration):
                 continue
+            # Trimming takes sentences off the end, and the end of a page is
+            # where its last items are. 「平台上有三块开放机制。」 — the page that
+            # started this — is what a trim looks like from the outside: the
+            # script named three, the trimmer removed the naming, and the film
+            # announced a list and moved on. A page is only shortened while it
+            # still tells the whole page.
+            page = by_index.get(index)
+            if _dangling_counts(shorter) and not _dangling_counts(draft.narration):
+                self.log.info("第 %d 页不压：压完会变成报了数不点名", index)
+                continue
+            if page is not None:
+                kept_before = missed_items(draft.narration, page)[0]
+                kept_after = missed_items(shorter, page)[0]
+                if kept_after < kept_before:
+                    self.log.info("第 %d 页不压：压完会少讲 %d 处", index, kept_before - kept_after)
+                    continue
             total -= spoken(draft.narration) - spoken(shorter)
             trimmed[index] = PageNarration(index=index, narration=shorter, segments=[])
         return trimmed
