@@ -82,7 +82,7 @@ claude mcp add --transport http doc2video https://your-host/mcp \
   --header "Authorization: Bearer $D2V_API_TOKEN"
 ```
 
-DeepSeek Harness（dsh）接入见 [integrations/dsh](integrations/dsh/README.md)：一段配置，模型就能自己投文档、写讲稿、出片。
+DeepSeek Harness（dsh）接入见 [integrations/dsh](integrations/dsh/README.md)：一段配置就能连上，或者装 [dsh 插件](integrations/dsh/plugin/README.md)——后者按本机路径投文档，后端也由它自己拉起来。
 
 ### 工具
 

@@ -26,6 +26,12 @@ class SceneNarrationIn(BaseModel):
     narration: str
 
 
+class SceneNarrationsIn(BaseModel):
+    """Scene id -> script, for changing several scenes in one pass."""
+
+    scenes: dict[str, str] = Field(default_factory=dict)
+
+
 class ChatIn(BaseModel):
     message: str
 
@@ -127,6 +133,37 @@ def revise_scene(project_id: str, scene_id: str, body: SceneNarrationIn) -> dict
             message="按调用方讲稿修改场景",
             project_id=project_id,
             scene_narrations={scene_id: body.narration},
+        )
+    )
+    return {"job_id": job.id, "status": job.status}
+
+
+@router.post("/{project_id}/scenes/narrations")
+def revise_scenes(project_id: str, body: SceneNarrationsIn) -> dict:
+    """Replace several scenes' scripts and re-render exactly those.
+
+    The same work ``revise_scenes`` does over MCP. One job for the whole set
+    rather than one per scene: each job re-runs voicing, direction, timeline
+    and the concat, so three separate jobs would rebuild the film three times
+    and leave the first two runs' output to be overwritten by the third.
+    """
+    project = _load(project_id)
+    unknown = [scene_id for scene_id in body.scenes if project.scene(scene_id) is None]
+    if unknown:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "scene_not_found", "message": f"场景不存在：{'、'.join(unknown)}"},
+        )
+    if not body.scenes:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_request", "message": "scenes 不能为空"},
+        )
+    job = get_jobs().submit(
+        JobRequest(
+            message="按调用方讲稿修改场景",
+            project_id=project_id,
+            scene_narrations=dict(body.scenes),
         )
     )
     return {"job_id": job.id, "status": job.status}
