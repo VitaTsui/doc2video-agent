@@ -49,17 +49,12 @@ _TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+]*")
 # name, not S-K-I-L-L.
 SPELL_LIMIT = 4
 
-# What each letter is called, written so a Chinese voice says the letter's
-# English name. Spelling 「AI」 as 「A I」 handed the engine two lone Latin
-# characters and it read the first one as 啊 — a Chinese interjection, not a
-# letter. These are the syllables a Chinese speaker uses for the letter names.
-LETTER_SOUNDS = {
-    "A": "诶", "B": "比", "C": "西", "D": "迪", "E": "伊", "F": "艾弗",
-    "G": "记", "H": "艾曲", "I": "艾", "J": "杰", "K": "开", "L": "艾勒",
-    "M": "艾姆", "N": "恩", "O": "欧", "P": "皮", "Q": "克尤", "R": "阿",
-    "S": "艾斯", "T": "提", "U": "尤", "V": "维", "W": "达波留", "X": "艾克斯",
-    "Y": "歪", "Z": "贼",
-}
+# The letters a Chinese voice mis-reads on their own, written as the syllable
+# that is the letter's name. A lone 「A」 came back as 啊 — an interjection —
+# and 「I」 fares no better. The consonants do not need this and are worse for
+# it: 「C」 read as a Latin letter is the letter, and 「西」 is a Chinese word
+# that happens to sound near it.
+LETTER_SOUNDS = {"A": "诶", "E": "伊", "I": "艾", "O": "欧", "U": "尤"}
 # Read as words by people, so reading them as letters would be the mistake.
 # Two kinds: acronyms that became words, and ordinary words a slide happens to
 # set in capitals — a deck's 「MAIL」 is mail, not M-A-I-L.
@@ -104,7 +99,7 @@ def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
         if (named := lookup.get(token.upper())) is not None:
             return named
         if _is_initialism(token):
-            return "".join(LETTER_SOUNDS.get(ch, ch) for ch in token)
+            return " ".join(LETTER_SOUNDS.get(ch, ch) for ch in token)
         return token
 
     spoken = _TOKEN.sub(swap, text)
