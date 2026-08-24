@@ -133,6 +133,10 @@ class Unit:
 
     texts: list[str] = field(default_factory=list)
     pause_before: float = 0.0
+    #: True when the gap before this piece is a breath inside a clause rather
+    #: than a beat the punctuation asked for. An engine that speaks a whole
+    #: sentence in one call phrases it itself and does not want ours.
+    breath: bool = False
     #: Which of the caller's sentences this clause came out of. The captions and
     #: the camera are still cut by sentence; only the speaking is by clause.
     sentence: int = 0
@@ -242,7 +246,12 @@ def plan_units(
             # to the sentence, not to every clause inside it.
             own = _emphasis_of(piece, flags[index]) if position == 0 else 0.0
             units.append(
-                Unit(texts=[piece], pause_before=max(gap, own), sentence=index)
+                Unit(
+                    texts=[piece],
+                    pause_before=max(gap, own),
+                    sentence=index,
+                    breath=previous_mid and own <= 0.0,
+                )
             )
             previous, previous_mid = piece, _mid
 

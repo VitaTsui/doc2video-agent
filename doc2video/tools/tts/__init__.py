@@ -236,7 +236,7 @@ class TTSTool:
             if unit.sentence != sentence:
                 flush()
                 sentence, gap = unit.sentence, unit.pause_before
-            elif parts:
+            elif parts and not unit.breath:
                 marks.append((said, unit.pause_before))
                 parts.append(engine.pause_markup(unit.pause_before))
             parts.append(spoken(unit.text))

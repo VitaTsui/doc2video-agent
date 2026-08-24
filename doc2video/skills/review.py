@@ -124,6 +124,11 @@ def worth_naming(page) -> int:
     return min(count, math.ceil(NAMING_SHARE * math.sqrt(count))) if count else 0
 
 
+#: Past this, a page holds more than it can say and summarising it is the
+#: honest answer; below it, a page that runs long is padded rather than full.
+DENSE_ENOUGH_TO_SUMMARISE = 2.0
+
+
 def density(page, budget: int) -> float:
     """How much of this page's text the script can afford. Above 1 it cannot.
 

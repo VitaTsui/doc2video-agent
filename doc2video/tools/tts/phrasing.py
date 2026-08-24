@@ -206,7 +206,7 @@ def breaths(text: str) -> list[str]:
 
     pieces: list[str] = []
     current = ""
-    for index, (word, _flag) in enumerate(tagged):
+    for index, (word, flag) in enumerate(tagged):
         nxt = tagged[index + 1] if index + 1 < len(tagged) else None
         current += word
         if len(current) < BREATH_EVERY or nxt is None:
@@ -214,6 +214,13 @@ def breaths(text: str) -> list[str]:
         next_word, next_flag = nxt
         if next_flag.startswith(_PARTICLES) or next_word in _BINDING:
             continue  # a breath never starts on 「的」
+        # A numeral opens a phrase — 「三类支撑」, 「12个方向」 — but only when it
+        # opens one. jieba tags every part of 「2018年12月」 as a numeral, so the
+        # rule put a breath after 2018 and again after 年: 「2018 ｜ 年12 ｜ 月由
+        # 教育部批复」, which is a date read as three things. Inside a run of
+        # numerals there is no seam.
+        if next_flag.startswith("m") and flag.startswith("m"):
+            continue
         if next_flag.startswith(_PHRASE_STARTS) or len(current) >= BREATH_LIMIT:
             pieces.append(current)
             current = ""

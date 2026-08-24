@@ -38,6 +38,10 @@ BATCH_SIZE = 4
 # percent long is not worth a sentence.
 DURATION_TOLERANCE = 0.10
 
+#: Roughly what naming one thing costs, when working out how many things a
+#: shortened page can still afford to name.
+MIN_ITEM_CHARS_FOR_FLOOR = 18
+
 # Per-page-type weights for splitting the total duration budget.
 TYPE_WEIGHT = {
     PageType.COVER: 0.35,
@@ -142,6 +146,12 @@ def _density_note(page, budget: int) -> str:
     a script that was finally following the document starts summarising it
     again.
     """
+    # Cover, contents and section pages are not told by volume — they have
+    # their own rule, and it is the opposite of this one. A cover at 1.7× was
+    # handed 「每一处都要点到」 and read its four lines out one at a time,
+    # date included, which is precisely what its own instruction forbids.
+    if page.page_type in (PageType.COVER, PageType.AGENDA, PageType.SECTION):
+        return ""
     ratio = density(page, budget)
     if ratio <= 1.2:
         return (
@@ -449,13 +459,35 @@ class NarrationSkill(Skill):
         if page is None or not self.llm.available:
             return None
 
-        from .review import missed_items
+        # How much of the page this rewrite still has to walk. A page whose
+        # own volume is far past what it can say is a page to summarise: told
+        # 「一处都不能少」 it has nothing left to give up and comes back the same
+        # length — six pages 「压不动」 on a real deck, the worst of them 2.6×
+        # over. A page that nearly fits keeps everything, because there the
+        # words are the fat.
+        from .review import (
+            DENSE_ENOUGH_TO_SUMMARISE,
+            density,
+            missed_items,
+            page_share_chars,
+            worth_naming,
+        )
 
+        may_summarise = density(page, page_share_chars(page)) > DENSE_ENOUGH_TO_SUMMARISE
+        if may_summarise:
+            keep = worth_naming(page)
+            give_up = (
+                f"这一页内容装不下，可以少讲——讲到 {keep} 处就够，"
+                "留骨架（小标题、每一栏的名称、数字和结论），"
+                "举例、括号里的补充、同一条里的展开可以整条不讲。\n"
+                "但**报了数就要点名**：说了「五部分」就得点出五个，装不下就别报数。\n"
+            )
+        else:
+            give_up = "**内容一处都不能少**：现在讲到的每一处，改写后还要讲到。\n"
         note = (
             f"这一页现在 {len(draft.narration)} 字，要压到 {allowed} 字以内。\n"
-            "**内容一处都不能少**：现在讲到的每一处，改写后还要讲到。\n"
-            "压的是字，不是信息——删修饰词、合并重复的说法、去掉可有可无的连接词、"
-            "报了数的地方，几项的名字一个都不能少（说了「五部分」就得点出五个）、"
+            + give_up
+            + "压的是字，也可以是句——删修饰词、合并重复的说法、去掉可有可无的连接词、"
             "把长句拆成短句。宁可每句只剩七八个字。\n\n"
             f"现在的讲稿：\n{draft.narration}"
         )
@@ -483,9 +515,14 @@ class NarrationSkill(Skill):
             # nine of its ten blocks where the rule says seven — and requiring
             # 「不比原来少」 rejected every rewrite of exactly the pages that
             # needed one: 2–2.5× over budget, and left alone.
-            from .review import _dangling_counts, worth_naming
+            from .review import _dangling_counts
 
             floor = min(missed_items(draft.narration, page)[0], worth_naming(page))
+            # A page allowed to summarise is allowed to name fewer things. The
+            # floor is what the page is worth walking at *this* length, not at
+            # the length it overran to.
+            if may_summarise:
+                floor = min(floor, max(1, allowed // MIN_ITEM_CHARS_FOR_FLOOR))
             if missed_items(candidate.narration, page)[0] < floor:
                 self.log.info("第 %d 页改写后少讲了内容，不采用", page.index)
                 continue
@@ -962,7 +999,8 @@ class NarrationSkill(Skill):
                 "报了数就要点名：说了「三块」「四类」，就要把这几项的名字说出来，"
                 "装不下就别报数。"
             )
-            lines.append(_density_note(page, budget))
+            if note := _density_note(page, budget):
+                lines.append(note)
             # The page's own words come first and are named as the material.
             # They used to come last, under 「元素：」, after a summary and a
             # key-point list the understanding step had written — so the first

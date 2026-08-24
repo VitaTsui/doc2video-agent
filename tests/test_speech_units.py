@@ -476,3 +476,69 @@ def test_a_gap_nobody_asked_for_is_shortened_rather_than_closed(tmp_path):
 
     gaps = [length for start, length in silences(clip, floor=0.05) if start > 0.05]
     assert gaps and gaps[0] == pytest.approx(INVENTED_GAP, abs=0.02)
+
+
+def test_a_number_is_not_a_place_to_breathe():
+    """「2018年12月」 is a date, not three things.
+
+    A numeral opens a phrase — 「三类支撑」, 「12个方向」 — so a breath is taken in
+    front of one. jieba tags every part of a date as a numeral, so the rule fired
+    between each: 「2018 ｜ 年12 ｜ 月由教育部批复」. Inside a run of numerals there
+    is no seam.
+    """
+    from doc2video.tools.tts.units import plan_units
+
+    units = plan_units(["CCAI在2018年12月由教育部批复建设。"])
+    joined = " | ".join(u.text for u in units)
+    assert "2018年12月" in joined, f"日期被切开了：{joined}"
+
+
+def test_the_engine_phrases_its_own_sentence():
+    """Our breaths are for engines that speak a clause at a time.
+
+    Once a whole sentence is one call, the engine phrases it across the whole
+    sentence — and our `[[slnc]]` on top of that is a second set of breaks in
+    the same sentence. Reported as 「句子中间的停顿太多了，断的还很碎」.
+    Punctuation still gets its beat; the breaths do not.
+    """
+    import struct
+    import wave
+
+    from doc2video.core.config import Settings
+    from doc2video.tools.tts import TTSTool
+    from doc2video.tools.tts.base import TTSProvider
+
+    spoken: list[str] = []
+
+    class Marked(TTSProvider):
+        name = "marked"
+        honours_phrase_boundary = True
+
+        def available(self) -> bool:
+            return True
+
+        def pause_markup(self, seconds: float) -> str:
+            return f"<{int(seconds * 1000)}>"
+
+        def synthesize(self, text, out_path, *, voice="", rate=1.0):
+            spoken.append(text)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with wave.open(str(out_path), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(22050)
+                handle.writeframes(struct.pack("<h", 1000) * 22050)
+            return 1.0
+
+    import tempfile
+
+    tool = TTSTool(Settings())
+    tool._engine_for = lambda voice: Marked()  # type: ignore[method-assign]
+    line = "它是全国石化化工领域唯一一个国家级的AI应用中试平台，覆盖六大方向。"
+    with tempfile.TemporaryDirectory() as tmp:
+        tool.synthesize(line, Path(tmp) / "o.wav", sentences=[line])
+
+    assert len(spoken) == 1
+    # The comma is a beat and keeps its marker; the breaths inside each clause
+    # do not get one.
+    assert spoken[0].count("<") == 1, f"句内只该有标点那一个停顿：{spoken[0]}"
