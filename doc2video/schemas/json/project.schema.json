@@ -1287,6 +1287,12 @@
           "title": "Duration",
           "type": "integer"
         },
+        "duration_stated": {
+          "default": false,
+          "description": "True when the requested duration came from the user",
+          "title": "Duration Stated",
+          "type": "boolean"
+        },
         "emphasis_pages": {
           "items": {
             "type": "integer"
