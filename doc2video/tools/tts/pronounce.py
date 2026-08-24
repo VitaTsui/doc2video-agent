@@ -99,7 +99,12 @@ def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
         if (named := lookup.get(token.upper())) is not None:
             return named
         if _is_initialism(token):
-            return " ".join(LETTER_SOUNDS.get(ch, ch) for ch in token)
+            # Joined, not spaced. A space here becomes a phrase boundary on
+            # the way to the engine, and the letters came out with a stop
+            # between each of them. Measured: 「CC诶艾」 and 「C C 诶 艾」 take the
+            # same 2.29 seconds to say, so the space was buying nothing and
+            # costing the pauses.
+            return "".join(LETTER_SOUNDS.get(ch, ch) for ch in token)
         return token
 
     spoken = _TOKEN.sub(swap, text)
