@@ -42,6 +42,11 @@ DURATION_TOLERANCE = 0.10
 #: shortened page can still afford to name.
 MIN_ITEM_CHARS_FOR_FLOOR = 18
 
+#: How many times one page is asked to say itself shorter. One pass answers a
+#: 92-character budget with 159 — a real cut that is still nearly twice the
+#: number.
+COMPRESSION_ROUNDS = 3
+
 # Per-page-type weights for splitting the total duration budget.
 TYPE_WEIGHT = {
     PageType.COVER: 0.35,
@@ -431,12 +436,25 @@ class NarrationSkill(Skill):
                 # for the same page said in fewer words instead — one call, and
                 # it is the only way to honour both 「十五分钟」 and 「把这一页讲
                 #全」, which is what the person asked for on the same day.
-                rewritten = self._compress_with_model(page, draft, int(allowed * pace))
-                if rewritten is None:
+                # More than once, because one pass does not reach the number.
+                # Asked to bring 300 characters down to 92 the model answers
+                # with 159 — a real cut, and still 1.7× the budget. Measured
+                # across a 30-page deck: one round each took the film from 24
+                # minutes to 18.4 and left 14 pages over their ceiling.
+                ceiling = int(allowed * pace)
+                current = draft
+                for _round in range(COMPRESSION_ROUNDS):
+                    rewritten = self._compress_with_model(page, current, ceiling)
+                    if rewritten is None:
+                        break
+                    current = rewritten
+                    if len(current.narration) <= ceiling * (1 + DURATION_TOLERANCE):
+                        break
+                if current is draft:
                     self.log.info("第 %d 页压不动：剪会少讲内容，改写也没写短", index)
                     continue
-                total -= spoken(draft.narration) - spoken(rewritten.narration)
-                trimmed[index] = rewritten
+                total -= spoken(draft.narration) - spoken(current.narration)
+                trimmed[index] = current
                 continue
             total -= spoken(draft.narration) - spoken(shorter)
             trimmed[index] = PageNarration(index=index, narration=shorter, segments=[])
@@ -1009,7 +1027,20 @@ class NarrationSkill(Skill):
             # this is most of it.
             elements = [e for e in page.elements if e.text]
             if elements:
-                lines.append(f"页面原文（{len(elements)} 处，讲稿的主要材料，按这个顺序讲）：")
+                # 「按这个顺序讲」 is right for a content page and wrong for a
+                # cover: it is the line that made a cover read its four lines
+                # out one at a time, date included, over the top of its own
+                # instruction not to. A cover's lines are typesetting.
+                if page.page_type is PageType.COVER:
+                    lines.append(
+                        f"页面原文（{len(elements)} 处）——这是排版不是句子，"
+                        "说成一到两句话：谁做的、做的是什么。"
+                        "日期、联系方式、单位后缀这类不用念出来："
+                    )
+                else:
+                    lines.append(
+                        f"页面原文（{len(elements)} 处，讲稿的主要材料，按这个顺序讲）："
+                    )
                 # Longer than it was: this is the source text now, not a hint
                 # about what the page is roughly about. A body paragraph cut at
                 # 120 characters is a paragraph the narration cannot read out,
