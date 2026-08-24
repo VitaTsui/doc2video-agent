@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react'
 
 import { JobCard } from './JobCard'
-import { LedgerCard } from './LedgerCard'
+import { Thinking } from './Thinking'
 import type { Message } from './types'
 
 export function MessageList({
@@ -92,17 +92,12 @@ export function MessageList({
                     job={message.job}
                     onStop={message.job ? () => onStop(message.job!.job_id) : undefined}
                   />
-                  {/* What it is doing, as it does it. The record existed and
-                      lived in a panel nobody had open: a chat that says
-                      「正在渲染」 for four minutes and nothing else has stopped
-                      talking. Each step lists what it produced, and each of
-                      those opens. */}
-                  {message.projectId && (message.steps?.length ?? 0) > 0 && (
-                    <LedgerCard
-                      projectId={message.projectId}
-                      entries={message.steps!}
-                      startOpen
-                    />
+                  {/* What it is thinking, as it thinks it — the chain, not
+                      the filing cabinet. The full account, with every page
+                      render and audio clip openable, stays in the panel: a
+                      conversation is a place for sentences. */}
+                  {(message.steps?.length ?? 0) > 0 && (
+                    <Thinking entries={message.steps!} job={message.job} />
                   )}
                 </>
               )}

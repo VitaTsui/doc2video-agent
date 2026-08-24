@@ -29,9 +29,11 @@ export type Message = {
   | {
       kind: 'job'
       job: JobState | null
-      /** This run's steps, as they happen. The record used to live only in the
-       *  panel; a chat that says 「正在渲染」 for four minutes and nothing else
-       *  is a chat that has stopped talking. */
+      /** This run's steps, as they happen — read out as a chain of thought
+       *  under the card. The record itself stays in the panel; a chat that
+       *  says 「正在渲染」 for four minutes and nothing else has stopped
+       *  talking, and a chat that answers with a filing cabinet is not much
+       *  better. */
       steps?: LedgerEntry[]
       projectId?: string
     }

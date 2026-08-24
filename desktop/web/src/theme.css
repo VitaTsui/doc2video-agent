@@ -1883,3 +1883,114 @@ body {
 .sidebar__delete:hover {
   color: #b0562f;
 }
+
+/* -- the chain of thought ------------------------------------------------ */
+
+/* One line per thing it did, in the conversation, while it does it.
+   Deliberately not a card: a card in the transcript is an object you look at,
+   and this is meant to be read past. It is set smaller and softer than the
+   reply it belongs to, indented under one rule, and it folds itself away when
+   the run ends. */
+.chain {
+  margin-top: 6px;
+}
+
+.chain__head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.chain__head:hover {
+  color: var(--ink);
+}
+
+/* Moving while it thinks. A still line of grey text and a finished one look
+   the same, and the run can sit inside a single step for minutes. */
+.chain__live {
+  background: linear-gradient(
+    90deg,
+    var(--ink-soft) 0%,
+    var(--ink-soft) 40%,
+    var(--ink) 50%,
+    var(--ink-soft) 60%,
+    var(--ink-soft) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.6s linear infinite;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 30rem;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -220% 0;
+  }
+}
+
+.chain__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 4px 0 2px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+/* While it runs, only the tail — with the top edge faded out, so the lines
+   look like they are scrolling past rather than being cut off. The list
+   follows itself down; the bar is hidden because this is not something to
+   scroll by hand while it moves. */
+.chain__body--live {
+  max-height: 8.3em;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 2.4em);
+  mask-image: linear-gradient(180deg, transparent 0, #000 2.4em);
+}
+
+.chain__body--live::-webkit-scrollbar {
+  display: none;
+}
+
+.chain__line {
+  animation: chain-in 0.3s ease-out both;
+  white-space: pre-wrap;
+}
+
+/* The end of a step, in the transcript's own colour: the sentences above it
+   are how it got there. */
+.chain__line--lead {
+  color: var(--ink);
+  margin-top: 3px;
+}
+
+@keyframes chain-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.chain__time {
+  font-variant-numeric: tabular-nums;
+}
