@@ -43,6 +43,10 @@ from ...core import tuning
 # sits level with that; the marks that hold a thought open are shorter, and
 # the ones that end it harder are longer.
 #
+# Lengthened after listening: the film at 0.28 and 0.75 was heard as hurried
+# even at a speaking rate barely above the engine's own. The gaps are half of
+# what 「快」 means, and they are the half we control exactly.
+#
 # 、 and ，are here too, because 「the engine takes them at its own pace」 turned
 # out to mean 「as long as a full stop」. Measured on a finished page: one
 # sentence of 143 characters came back with commas of 0.33, 0.42, 0.43 and 0.33
@@ -50,9 +54,9 @@ from ...core import tuning
 # rhythm inside a sentence was nearly the rhythm between two. Cutting at every
 # mark costs more clips and buys the only thing that makes this predictable:
 # every silence in the film is one somebody chose.
-PAUSE_COMMA = 0.28      # ，— a breath, not a stop
+PAUSE_COMMA = 0.32      # ，— a breath, not a stop
 PAUSE_ENUM = 0.16       # 、— the shortest thing that is still a gap
-PAUSE_SENTENCE = 0.75   # 。 and a line that ends with no mark at all
+PAUSE_SENTENCE = 0.82   # 。 and a line that ends with no mark at all
 PAUSE_EXCLAIM = 0.85    # ！？ — the sentence lands, then a beat
 PAUSE_SEMICOLON = 0.55  # ；— two halves of one thought
 PAUSE_COLON = 0.35      # ：— leans into what comes next

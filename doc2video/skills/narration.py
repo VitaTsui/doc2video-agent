@@ -445,7 +445,14 @@ class NarrationSkill(Skill):
                 continue
             if len(candidate.narration) >= len(draft.narration):
                 continue
-            if missed_items(candidate.narration, page)[0] < missed_items(draft.narration, page)[0]:
+            # Judged against what the page is worth walking, not against what
+            # the draft happened to walk. The draft over-names — page 10 named
+            # nine of its ten blocks where the rule says seven — and requiring
+            # 「不比原来少」 rejected every rewrite of exactly the pages that
+            # needed one: 2–2.5× over budget, and left alone.
+            from .review import worth_naming
+            floor = min(missed_items(draft.narration, page)[0], worth_naming(page))
+            if missed_items(candidate.narration, page)[0] < floor:
                 self.log.info("第 %d 页改写后少讲了内容，不采用", page.index)
                 continue
             self.log.info(

@@ -62,11 +62,13 @@ class Settings(BaseSettings):
     # --- TTS ---
     tts_provider: str = "auto"
     tts_voice: str = ""
-    # A touch quicker than the engine's own idea of comfortable. Measured on a
-    # real page through the whole path: rate 1.00 speaks 270 characters a
-    # minute, 1.05 speaks 297, 1.10 speaks 306 — and the reference script this
-    # project is calibrated against is written for 「约 300 字/分钟」.
-    tts_speech_rate: float = 1.05
+    # A touch quicker than the engine's own idea of comfortable, and only a
+    # touch. `say -r` is words a minute and quantises coarsely: measured
+    # end to end on one page, 1.00 speaks 257 characters a minute, 1.02 speaks
+    # 277, and 1.05 speaks 281 — so 1.05 bought 1.5% over 1.02 and was heard as
+    # hurried. The rest of what 「快」 means is the gaps, which are ours: see
+    # `voice.pause_comma` and `voice.pause_sentence`.
+    tts_speech_rate: float = 1.02
     # Silence around each page's narration, so pages do not cut into one
     # another and nobody speaks over a slide that is still fading in. Part of
     # the scene's own clip, so subtitles stay inside the speech.
