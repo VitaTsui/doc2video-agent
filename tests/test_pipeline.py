@@ -128,3 +128,27 @@ def test_unsupported_source_is_rejected(settings: Settings, store: ProjectStore,
 
     with pytest.raises(UnsupportedSource):
         agent.create_project(bad)
+
+
+def test_a_length_said_in_chat_is_applied_whether_or_not_a_model_is_configured(
+    built_project: VideoProject, settings: Settings, store: ProjectStore
+):
+    """「压到十五分钟」 is not a matter of judgement.
+
+    The rules read it — 900 seconds, asked for by a person — and the chat path
+    handed the message to the model loop instead, which rewrote the script and
+    left the target where it was. The user said fifteen minutes and got
+    twenty-five.
+    """
+    agent = Doc2VideoAgent(settings=settings, store=store)
+    built_project.intent.duration = 921
+    built_project.intent.duration_stated = False
+    store.save(built_project)
+
+    updated = agent._take_what_was_stated(built_project, "压到十五分钟，另外中试基地是一个词")
+
+    assert updated.intent.duration == 900
+    assert updated.intent.duration_stated is True
+    assert updated.intent.pronunciation == {"中试基地": " 中试基地"}
+    # And it survives the reload, because the next stage loads from disk.
+    assert store.load(built_project.project_id).intent.duration == 900

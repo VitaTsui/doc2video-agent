@@ -89,6 +89,24 @@ class Doc2VideoAgent:
         return project
 
     # -- entry points ---------------------------------------------------------
+    def _take_what_was_stated(self, project: VideoProject, message: str) -> VideoProject:
+        """Read the message's own facts into the project, and keep them."""
+        from .planner import _pronunciations_in, stated_duration
+
+        changed: list[str] = []
+        if (asked := stated_duration(message)) is not None:
+            if int(asked) != project.intent.duration or not project.intent.duration_stated:
+                project.intent.duration = int(asked)
+                project.intent.duration_stated = True
+                changed.append(f"目标时长 {int(asked)} 秒")
+        if learned := _pronunciations_in(message):
+            project.intent.pronunciation.update(learned)
+            changed.append("、".join(f"「{term}」怎么念" for term in learned))
+        if changed:
+            log.info("消息里明确说了：%s", "；".join(changed))
+            self.store.save(project)
+        return project
+
     def prepare(self, source_file: Path, brief: str) -> VideoProject:
         """Parse a deck and stop.
 
@@ -283,6 +301,14 @@ class Doc2VideoAgent:
                 current.intent.speech_rate = speech_rate
             self.store.save(current)
             self.run(message=message, project_id=project_id, revoice=True, progress=progress)
+
+        # What the message states outright, applied before anyone decides what
+        # to do about it. 「压到十五分钟」 is not a matter of judgement, and it
+        # stopped being acted on the moment a model was configured: the rules
+        # read it (900 seconds, asked for by a person), and this path handed the
+        # message to the loop instead, which rewrote the script and left the
+        # target where it was. The user said fifteen minutes and got twenty-five.
+        project = self._take_what_was_stated(project, message)
 
         loop = AgentLoop(
             project,

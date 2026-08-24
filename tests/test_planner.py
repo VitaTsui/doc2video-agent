@@ -207,3 +207,35 @@ def test_the_default_is_not_something_the_user_asked_for():
     assert stated_duration("做一个七分钟左右的讲解视频") == 420
     assert stated_duration("讲清楚就行") is None
     assert stated_duration("") is None
+
+
+def test_a_term_the_engine_cuts_in_half_can_be_named_as_one_word():
+    """The synthesiser picks its own phrase boundaries and gets them wrong.
+
+    Measured on 「国家人工智能应用中试基地」: `say` stops 0.27 seconds after 中,
+    reading 「应用中」 as a phrase and stranding 「试基地」. Long enough to hear a
+    word being cut in half, and nothing in the script says to pause there.
+
+    The fix is a boundary in front of the term, which is what the spoken form
+    carries. The caption keeps the term as written.
+    """
+    from doc2video.agent.planner import _pronunciations_in
+
+    assert _pronunciations_in("中试基地是一个词") == {"中试基地": " 中试基地"}
+    assert _pronunciations_in("「应用中试」别断开") == {"应用中试": " 应用中试"}
+    assert _pronunciations_in("RAG 念 R A G") == {"RAG": "R A G"}
+    assert _pronunciations_in("把第 3 页压到 20 秒") == {}
+
+
+def test_how_a_term_is_said_can_be_learned_after_hearing_it():
+    """Which is the only time anyone finds out.
+
+    This path read no dictionary at all, so 「RAG 念 R A G」 worked only in the
+    very first message — before there was a film to hear it in.
+    """
+    project = _project()
+    plan = parse_edit_rules("中试基地是一个词", project)
+
+    assert plan.intent.pronunciation == {"中试基地": " 中试基地"}
+    # And it has to be spoken again: the words did not change, the sound did.
+    assert plan.revoice

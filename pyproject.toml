@@ -1,6 +1,6 @@
 [project]
 name = "doc2video-agent"
-version = "0.9.17"
+version = "0.10.0"
 description = "PDF / PPT intelligent explainer-video agent: document -> narration -> TTS -> director -> deterministic render -> MP4"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,6 +20,10 @@ dependencies = [
     # MCP is a first-class surface, not an add-on: with it optional the default
     # config (mcp_enabled=true) would fail to build the app on a plain install.
     "mcp>=2.0",
+    # Where Chinese words begin and end, which a synthesiser guesses at and
+    # gets wrong on any term it has not met. Pure Python, MIT, one dictionary
+    # file — see doc2video/tools/tts/phrasing.py for what it is used for.
+    "jieba>=0.42",
 ]
 
 [project.optional-dependencies]

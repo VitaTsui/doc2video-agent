@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # --- TTS ---
     tts_provider: str = "auto"
     tts_voice: str = ""
+    # The engine's own comfortable pace, after two goes at speeding it up were
+    # both heard as hurried (1.05, then 1.02). `say -r` is words a minute and
+    # quantises coarsely — measured end to end on one page, 1.00 speaks 257
+    # characters a minute, 1.02 speaks 277, 1.05 speaks 281 — so the step from
+    # 1.00 is bigger than it looks and there is nothing in between to take.
+    # The rest of what 「快」 means is the gaps, and those are ours to set: see
+    # `voice.pause_comma`, `voice.pause_enum`, `voice.pause_sentence`.
     tts_speech_rate: float = 1.0
     # Silence around each page's narration, so pages do not cut into one
     # another and nobody speaks over a slide that is still fading in. Part of

@@ -16,8 +16,12 @@ import pytest
 
 from doc2video.tools.tts.base import join_units
 from doc2video.tools.tts.units import (
-    MAX_UNIT_SECONDS,
+    PAUSE_COLON,
+    PAUSE_COMMA,
     PAUSE_EMPHASIS,
+    PAUSE_ENUM,
+    PAUSE_EXCLAIM,
+    PAUSE_SEMICOLON,
     PAUSE_SENTENCE,
     PAUSE_TURN,
     plan_units,
@@ -34,15 +38,41 @@ def test_a_page_is_spoken_in_several_units_not_one():
         assert unit.texts
 
 
-def test_no_unit_runs_past_the_ceiling():
-    """A long unit is a long stretch of unbroken machine, which is the problem."""
-    from doc2video.tools.tts.base import estimate_duration
+def test_the_mark_says_how_long_the_pause_is():
+    """A written line already says where it breathes; the marks are the answer.
 
-    sentences = ["很长很长的一句话，" * 6] * 6
-    for unit in plan_units(sentences):
-        # One sentence can exceed it on its own; two must not.
-        if len(unit.texts) > 1:
-            assert estimate_duration(unit.text) <= MAX_UNIT_SECONDS * 1.2
+    ；holds two halves of one thought together and ：leans into what follows,
+    so neither may pause as long as the full stop that ends the thought.
+    """
+    sentences = ["先看结论。", "分成两半：", "一半是量、一半是质；", "再看代价。"]
+    units = plan_units(sentences)
+    beats = [unit.pause_before for unit in units]
+
+    # 「一半是量、一半是质；」 is spoken as one: a 、 between two scraps is the
+    # shortest gap there is, and three characters on their own cost more in
+    # engine overhead than the gap is worth. Every other mark keeps its beat.
+    assert [u.text for u in units] == [
+        "先看结论。", "分成两半：", "一半是量、一半是质；", "再看代价。",
+    ]
+    assert beats[0] == 0.0  # the scene's own lead silence is already there
+    assert beats[1] == PAUSE_SENTENCE
+    assert beats[2] == PAUSE_COLON
+    assert beats[3] == PAUSE_SEMICOLON
+    assert PAUSE_ENUM < PAUSE_COMMA < PAUSE_COLON < PAUSE_SEMICOLON < PAUSE_SENTENCE
+    assert PAUSE_SENTENCE < PAUSE_EXCLAIM
+
+
+def test_a_closing_quote_does_not_hide_the_mark():
+    """「他说：『走。』」 ends on a full stop, whatever its last character is."""
+    units = plan_units(["他说：「走。」", "然后就走了。"])
+    assert units[-1].pause_before == PAUSE_SENTENCE
+
+
+def test_a_line_with_no_mark_at_all_still_gets_a_beat():
+    """Titles and fragments arrive unpunctuated; silence is not the answer."""
+    lines = ["石化AI商业情报中心", "先说这个平台的分量。"]
+    beats = [unit.pause_before for unit in plan_units(lines)]
+    assert beats[1] == PAUSE_SENTENCE
 
 
 def test_the_emphasised_sentence_gets_the_longest_beat():
@@ -62,9 +92,29 @@ def test_the_emphasised_sentence_gets_the_longest_beat():
 
 
 def test_a_turn_in_the_script_gets_its_own_beat():
+    """A mark decides where; 「但是」 decides that this one is worth longer.
+
+    The beat belongs to the sentence that turns, which means its first clause —
+    not every clause inside it.
+    """
     sentences = ["先讲清楚现在的做法。", "但是这样有个代价，得说明白。"]
-    units = plan_units(sentences, emphasis=[False, False], weight=lambda _: 6.0)
-    assert units[-1].pause_before == PAUSE_TURN
+    units = plan_units(sentences, emphasis=[False, False])
+
+    turning = next(u for u in units if u.text.startswith("但是"))
+    assert turning.pause_before == PAUSE_TURN
+    assert units[-1].pause_before == PAUSE_COMMA
+
+
+def test_a_turn_never_invents_a_pause_where_the_writing_has_none():
+    """It lengthens the beat a mark already asked for. It is not a mark itself.
+
+    The comma here is cut like any other, but 「不过」 in the middle of a sentence
+    gets the comma's beat — not the turn's. A pause is only ever as long as the
+    punctuation it stands on.
+    """
+    units = plan_units(["现在的做法是这样，不过这样有个代价。"])
+    assert [u.text for u in units] == ["现在的做法是这样，", "不过这样有个代价。"]
+    assert units[1].pause_before == PAUSE_COMMA
 
 
 def test_joining_units_gives_exact_windows(tmp_path: Path):
@@ -113,12 +163,17 @@ def test_where_a_unit_ends_is_a_question_about_the_language():
         "从上传到成片，中间没有人工介入。",
     ]
     units = plan_units(sentences)
-    assert len(units) == len(sentences)
+    # Two of these sentences have a comma in them, so there are more units than
+    # sentences — and every gap between them is a mark somebody wrote.
+    assert len(units) == 7
+    assert all(unit.pause_before in {0.0, PAUSE_COMMA, PAUSE_SENTENCE} for unit in units)
 
-    # A sentence too short to stand alone keeps the next one company rather
-    # than being spoken between two breaths.
+    # Including the short ones. 「先说背景。」 is a full stop like any other, and
+    # the length of what precedes a mark is not the mark's business — that test
+    # (「上一句不足 2.2 秒就并进来」) was the last piece of clock in here.
     units = plan_units(["先说背景。", "这个揭榜为什么来，我们凭什么接，都在这一部分。"])
-    assert len(units) == 1
+    assert len(units) == 4
+    assert units[1].pause_before == PAUSE_SENTENCE
 
 
 def test_the_beats_are_a_ladder_a_listener_can_hear():
@@ -178,3 +233,80 @@ def test_a_unit_is_joined_without_the_engine_s_own_silence(tmp_path: Path):
     # for, not 0.75 plus the four tenths of nothing the clips came with.
     gap = windows[1][0] - windows[0][1]
     assert gap == pytest.approx(0.75, abs=0.05)
+
+
+def test_a_space_in_the_spoken_form_is_a_boundary_the_engine_obeys():
+    """`say` ignores a space in Chinese. It does not ignore `[[slnc 40]]`.
+
+    Measured on 「这是国家人工智能应用中试基地，……」: untouched, the break lands
+    1.79s in and lasts 0.27s — after 中, in the middle of 中试. With the term
+    registered as 「应用 中试」 it lands at 1.68s and lasts 0.21s, which is the
+    boundary before 中试 and the place a person reading aloud would take it.
+
+    40 milliseconds is under the ear's threshold for a gap; the point is not the
+    silence but the phrase boundary it forces.
+    """
+    from doc2video.tools.tts.providers import MacOSSayProvider, SilentProvider
+
+    said = MacOSSayProvider().phrase_boundary("国家人工智能应用 中试基地")
+    assert said == "国家人工智能应用[[slnc 40]]中试基地"
+
+    # Every other engine leaves it alone rather than reading the marker aloud.
+    assert SilentProvider().phrase_boundary("应用 中试基地") == "应用 中试基地"
+
+
+def test_the_dictionary_reaches_chinese_terms_too():
+    """It matched Latin tokens only, so a Chinese entry was silently ignored."""
+    from doc2video.tools.tts.pronounce import for_speech
+
+    assert for_speech("应用中试基地", {"应用中试": "应用 中试"}) == "应用 中试基地"
+    # The longer entry wins, so registering both does not produce 「应用 中 试」.
+    assert for_speech(
+        "应用中试基地", {"中试": " 中试", "应用中试": "应用 中试"}
+    ) == "应用 中试基地"
+    # And a Latin term still has to be a whole token: AI must not fire in MAIL.
+    assert for_speech("MAIL 和 AI", {"AI": "A I"}) == "MAIL 和 A I"
+
+
+def test_a_sentence_keeps_one_window_however_many_clauses_it_has(tmp_path: Path):
+    """The captions and the camera are cut by sentence; only speaking is by clause.
+
+    A sentence's window runs from its first clause to its last, and both ends
+    were written by `join_units` rather than estimated from the clip afterwards.
+    """
+    from doc2video.core.config import get_settings
+    from doc2video.tools.tts import TTSTool
+
+    settings = get_settings().model_copy(update={"tts_provider": "silent"})
+    sentences = ["一二三，四五六。", "七八九。"]
+    result = TTSTool(settings).synthesize(
+        "".join(sentences), tmp_path / "clip.wav", sentences=sentences
+    )
+
+    assert [segment.text for segment in result.segments] == sentences
+    first, second = result.segments
+    assert first.start == 0.0
+    # The comma inside the first sentence does not end it, and the gap before
+    # the second is the full stop's.
+    assert first.end < second.start
+
+
+def test_a_run_of_tiny_enumerated_scraps_is_spoken_as_one():
+    """「建供应链、外贸、招投标三类情报，」 is three clips of three characters.
+
+    Each clip pays the engine's own end-of-utterance lengthening, and a page of
+    them came out a fifth slower than the same words in fewer pieces: measured,
+    224 characters in 37 clips ran at 190 characters a minute where the script
+    had been running at 265. Merged, the same page runs 273.
+
+    Only across 、, and only while the result stays short: every mark that
+    means something still gets the pause we chose.
+    """
+    units = plan_units(["建供应链、外贸、招投标三类情报，统一数据底座关联研判。"])
+
+    assert [unit.text for unit in units][0] == "建供应链、外贸、招投标"
+    # The comma's own pause is still ours.
+    assert any(unit.pause_before == PAUSE_COMMA for unit in units)
+    # And a long enumeration is not glued into one breathless run.
+    long_list = plan_units(["监测价格、供需、库存、装置运行、物流事件、政策变化、行情波动。"])
+    assert max(len(unit.text) for unit in long_list) <= 20

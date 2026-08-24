@@ -146,13 +146,37 @@ def test_the_score_does_not_drift_with_deck_length(score):
     assert large_score > small_score
 
 
-def test_read_aloud_narration_costs_originality(score):
-    scenes = [_scene(i, narration="系统架构说明") for i in range(1, 6)]
+def test_a_script_that_left_the_page_behind_costs_grounding(score):
+    """The check runs the other way now.
 
-    report = score(_project(scenes))
+    A high overlap with the page used to be the defect — 「接近照读」 — back when
+    the script's job was to explain what the page could not say for itself. The
+    script reads the deck now, so overlap is the thing working, and what is
+    worth catching is a page of specifics summarised into a sentence that
+    shares almost nothing with it.
+    """
+    page_text = (
+        "系统架构说明：请求先进网关，再交给模型，最后落到检索这一层，"
+        "三层各管一件事，出了问题也好定位。"
+    )
 
-    originality = next(d for d in report.dimensions if d.name == "originality")
-    assert originality.score < 100
+    def deck(narration: str):
+        project = _project([_scene(i, narration=narration) for i in range(1, 6)])
+        for page in project.document.pages:
+            page.elements[0].text = page_text
+        return project
+
+    kept = next(
+        d for d in score(deck("请求先进网关，再交给模型，最后落到检索这一层。")).dimensions
+        if d.name == "grounding"
+    )
+    lost = next(
+        d for d in score(deck("这一部分讲的东西挺重要的，值得关注。")).dimensions
+        if d.name == "grounding"
+    )
+
+    assert kept.score == 100
+    assert lost.score < 100
 
 
 def test_a_deck_with_no_camera_work_scores_lower_on_direction(score):
@@ -179,7 +203,7 @@ def test_dimensions_carry_their_own_evidence(score):
     assert {d.name for d in report.dimensions} == {
         "completeness",
         "pacing",
-        "originality",
+        "grounding",
         "direction",
         "subtitles",
         # What the viewer sees, which none of the others can reach: a scene
@@ -291,3 +315,191 @@ def test_a_flat_rhythm_is_reported_and_a_varied_one_is_not():
     assert _length_spread(varied) is None
     # Too few sentences to say anything about rhythm.
     assert _length_spread("只有一句话。") is None
+
+
+def test_a_script_that_announces_a_list_and_walks_away_is_incomplete(score):
+    """「平台上有三块开放机制。」 and then the page ends.
+
+    The three are on the slide, in front of the viewer. Announcing them and
+    not naming them sets up an expectation the film never pays — measured
+    twice on one 30-page deck, and it is what gets noticed.
+    """
+    from doc2video.skills.review import _dangling_counts
+
+    assert _dangling_counts("平台上有三块开放机制。") == [("三块", 3, 1)]
+    # Named in the same breath: nothing dangling.
+    assert _dangling_counts("平台上有三块开放机制：技能广场、MCP 工具库、插件集市。") == []
+    # Pointing back at two things already named is not an announcement.
+    assert _dangling_counts("这两块都是与本项目高匹配的资源。") == []
+    # 「第三部分」 is a section number, not a count.
+    assert _dangling_counts("第三部分，石化商业情报智能体。") == []
+    # Items separated by full stops are still items — this names all five.
+    assert _dangling_counts(
+        "方案分五部分。一是背景及技术牵头方。二是核心市场痛点分析。"
+        "三是项目建设主旨思路。四是项目总体建设内容。五是联合揭榜商业价值。"
+    ) == []
+    # And the second mention points back at what was already named.
+    assert _dangling_counts(
+        "竖着看分四类。一是预训练。二是指令微调。三是偏好数据。四是基准测试。"
+        "四类支撑模型从训练到质检的全流程。"
+    ) == []
+
+    scenes = [_scene(i, narration="平台上有三块开放机制。") for i in range(1, 6)]
+    completeness = next(
+        d for d in score(_project(scenes)).dimensions if d.name == "completeness"
+    )
+    assert completeness.score < 100
+
+
+def test_a_page_walked_only_a_quarter_of_the_way_is_flagged(score):
+    """「讲了一半就翻页」, measured rather than felt.
+
+    A four-card layout where the script names the first card: the camera then
+    has nothing to point at for the other three, and the film moves on while
+    three quarters of what is on screen goes unsaid. Sixteen pages of one
+    30-page deck named fewer than half of their own blocks.
+    """
+    from doc2video.schemas import DocumentPage, SlideElement
+    from doc2video.skills.review import missed_items
+
+    page = DocumentPage(
+        index=1,
+        title="市场研判情报",
+        elements=[
+            SlideElement(
+                id=f"e{i}",
+                kind=ElementKind.PARAGRAPH,
+                text=text,
+                bbox=BBox(x=0, y=0, w=9, h=9),
+            )
+            for i, text in enumerate(
+                [
+                    "供应链经营风险可控化",
+                    "外贸市场拓展精准赋能",
+                    "项目招投标竞争优势打造",
+                    "产销策略动态优化调整",
+                ],
+                start=1,
+            )
+        ],
+    )
+
+    walked, affordable, missed = missed_items(
+        "一是供应链经营风险可控化，持续监控原料的供需和价格，支撑采购议价，提前识别风险。", page
+    )
+    assert walked == 1
+    assert affordable > walked  # the script had the words for more
+    assert "外贸市场拓展精准赋能" in missed
+
+    # And a script that walks the whole page is not flagged.
+    walked, affordable, _ = missed_items(
+        "一是供应链经营风险可控化。二是外贸市场拓展精准赋能。"
+        "三是项目招投标竞争优势打造。四是产销策略动态优化调整。",
+        page,
+    )
+    assert walked >= affordable
+
+
+def test_a_target_shorter_than_the_deck_can_be_told_in_is_not_the_film_s_fault(score):
+    """208 blocks do not fit in fifteen minutes however tightly they are written.
+
+    Measured on the deck this came from: naming every block once takes about
+    22 minutes, the script was compressed by every means that keeps the content
+    (14% shorter, not one item lost) and still ran 22. Scoring that against
+    fifteen marks the film down for the length of the document.
+    """
+    from doc2video.skills.review import tellable_seconds
+
+    project = _project([_scene(i) for i in range(1, 6)], duration=30)
+    for page in project.document.pages:
+        page.elements = page.elements + [
+            page.elements[0].model_copy(update={"id": f"{page.elements[0].id}_{n}"})
+            for n in range(4)
+        ]
+        for element in page.elements:
+            element.text = "这一处是页面上的一段文字，长到值得单独讲一句。"
+
+    floor = tellable_seconds(project.document, 4.15, 1.4)
+    assert floor > 30  # the deck cannot be told in half a minute
+
+    report = score(project)
+    said = [f for f in project.review if f.kind == "undertellable"]
+    assert said, [f.kind for f in project.review]
+    assert "分钟" in said[0].message
+    # And the length is judged against what the deck needs, not against the
+    # number that was asked for: 「偏差超过」 must be measured from the floor.
+    drift = [f for f in project.review if f.kind == "duration"]
+    assert not drift or "目标 30 秒" not in drift[0].message
+    assert report.score > 0
+
+
+def test_how_much_of_a_page_is_worth_naming_follows_the_page():
+    """内容少的按文稿讲全，内容多的挑重点——而且不是一刀切的上限。
+
+    A 24-block page and an 8-block page are not equally worth six sentences.
+    The share grows with the page and grows more slowly than it: everything up
+    to four, six of eight, ten of twenty-four. Measured across the deck this
+    came from — 185 blocks named unbounded (15.8 minutes), 130 under this rule
+    (12.1), and its twelve sparse pages untouched.
+    """
+    from doc2video.schemas import BBox, DocumentPage, ElementKind, SlideElement
+    from doc2video.skills.review import worth_naming
+
+    def page_of(count: int) -> DocumentPage:
+        return DocumentPage(
+            index=1,
+            elements=[
+                SlideElement(
+                    id=f"e{i}",
+                    kind=ElementKind.PARAGRAPH,
+                    text="这是页面上的一处文字内容。",
+                    bbox=BBox(x=0, y=0, w=9, h=9),
+                )
+                for i in range(count)
+            ],
+        )
+
+    assert worth_naming(page_of(3)) == 3      # read it
+    assert worth_naming(page_of(4)) == 4
+    assert worth_naming(page_of(8)) == 6      # choose from it
+    assert worth_naming(page_of(24)) == 10
+    # Never a flat ceiling: a denser page still earns more than a lighter one.
+    assert worth_naming(page_of(24)) > worth_naming(page_of(12)) > worth_naming(page_of(8))
+
+
+def test_what_one_block_is_worth_follows_the_block():
+    """每处也不设固定值：八个字的小标题和两百字的段落不该一样。
+
+    Sub-linear like the per-page share: a label is one short sentence, a
+    paragraph is not read out but is not one sentence either.
+    """
+    from doc2video.skills.review import MIN_ITEM_CHARS, item_share_chars
+
+    assert item_share_chars("多智能体协同") == MIN_ITEM_CHARS
+    assert item_share_chars("一" * 24) == 18
+    assert item_share_chars("一" * 60) == 28
+    assert item_share_chars("一" * 200) == 50
+    # Always more for more, never proportionally more.
+    assert item_share_chars("一" * 200) > item_share_chars("一" * 60)
+    assert item_share_chars("一" * 200) < 200 / 2
+
+
+def test_too_fast_means_faster_than_asked_for():
+    """The band moves with the speed the machine was told to speak at.
+
+    Raising the default 5% put eight ordinary pages over the 340-a-minute line
+    on one deck — pages speaking exactly as fast as they had been told to.
+    """
+    from doc2video.schemas import Scene, SceneAudio
+    from doc2video.skills.speech_review import TOO_FAST
+
+    project = _project([_scene(1)])
+    scene = project.scenes[0]
+    scene.narration = "一" * 350
+    scene.audio = SceneAudio(path="audio/scene_01.wav", duration=61.4)
+    assert isinstance(scene, Scene)
+
+    # 350 characters in 60 seconds is 350 a minute — over the line at 1.0×…
+    assert 350 > TOO_FAST
+    # …and inside it once the machine was asked to speak 5% quicker.
+    assert 350 < TOO_FAST * 1.05

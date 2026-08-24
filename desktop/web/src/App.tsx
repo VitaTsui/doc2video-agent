@@ -338,7 +338,7 @@ export function App() {
    */
   const follow = useCallback(
     async (jobId: string, intro: string, expectsVideo = true) => {
-      const id = say({ role: 'assistant', kind: 'job', text: intro, job: null })
+      const card = say({ role: 'assistant', kind: 'job', text: intro, job: null })
       abort.current?.abort()
       abort.current = new AbortController()
 
@@ -369,6 +369,14 @@ export function App() {
                 }
               : current,
           )
+          // And into the conversation, where the person is actually looking.
+          // Only this run's: the record accumulates across runs, and a card
+          // that replayed the last three of them would say more about the
+          // past than about what is happening now.
+          if (entries?.length) {
+            const latest = entries[entries.length - 1].run_id
+            amend(card, { steps: entries.filter((e) => e.run_id === latest), projectId: id })
+          }
         })
       }, 1500)
 
@@ -378,18 +386,18 @@ export function App() {
           jobId,
           (state) => {
             if (state.project_id) watching.current = state.project_id
-            amend(id, { job: state })
+            amend(card, { job: state })
           },
           abort.current.signal,
         )
       } catch (error) {
-        amend(id, { kind: 'text', text: `没能跟上进度：${api.describeError(error)}` })
+        amend(card, { kind: 'text', text: `没能跟上进度：${api.describeError(error)}` })
         return
       } finally {
         window.clearInterval(poll)
         setRunning(false)
       }
-      amend(id, { job: final })
+      amend(card, { job: final })
       // A finished turn changes a project's duration, its output, and its
       // place in the list; the sidebar is stale until it is re-read.
       void loadProjects()
@@ -521,7 +529,7 @@ export function App() {
           // the person thought they had asked for.
           text: prepared.duration_stated
             ? `《${prepared.title}》共 ${prepared.pages.length} 页，按这个要求算下来大约 ${seconds} 秒。`
-            : `《${prepared.title}》共 ${prepared.pages.length} 页。没说要多长，先按默认算下来大约 ${seconds} 秒——想改直接说，比如「七分钟左右」。`,
+            : `《${prepared.title}》共 ${prepared.pages.length} 页。你没说要多长，按这份文档的内容算下来大约 ${seconds} 秒——想要短一点直接说，比如「压到八分钟」。`,
           projectId: prepared.project_id,
           pages: prepared.pages,
           guide,

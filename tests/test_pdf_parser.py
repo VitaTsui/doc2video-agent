@@ -115,3 +115,30 @@ def test_a_heading_is_not_swallowed_by_the_paragraph_above_it():
         {"type": 0, "bbox": (60, 160, 560, 176), "lines": [line("隔了一段", 12.0)]},
     ]
     assert len(_joined_paragraphs(far)) == 2
+
+
+def test_two_columns_do_not_come_back_as_one_element(tmp_path: Path):
+    """PyMuPDF groups by proximity, and a four-card layout defeats it.
+
+    The two card numbers sit at the same height, so 「01」 and 「02」 come back as
+    one block 970 points wide on a 1920-point page. Nothing downstream can tell
+    that from a genuinely wide heading: a highlight on the left card grew a box
+    that reached across the page and framed the right card's number too, which
+    is what the viewer sees as 「框选框到隔壁去了」.
+    """
+    doc = fitz.open()
+    page = doc.new_page(width=960, height=540)
+    page.insert_text((60, 100), "01", fontsize=28)
+    page.insert_text((520, 100), "02", fontsize=28)
+    page.insert_text((60, 160), "供应链经营风险可控化", fontsize=18)
+    path = tmp_path / "columns.pdf"
+    doc.save(path)
+    doc.close()
+
+    parsed = parse(path, tmp_path / "assets")
+    texts = {el.text: el for el in parsed.pages[0].elements if el.text}
+
+    assert "01" in texts and "02" in texts, texts.keys()
+    assert not any("01" in text and "02" in text for text in texts), texts.keys()
+    # And each keeps its own column: neither box reaches the other's.
+    assert texts["01"].bbox.x + texts["01"].bbox.w < texts["02"].bbox.x

@@ -54,6 +54,14 @@ class VideoIntent(BaseModel):
     tone: str = "清晰、稳重"
     language: str = "zh"
     duration: int = Field(default=480, description="Target total duration in seconds")
+    # Whether that number came from the person or from this line. It decides
+    # whether the script may be cut to fit it: 「八分钟」 is a promise to keep,
+    # and a default nobody chose is not. Measured on a 30-page deck — naming
+    # each of its 208 blocks in one short sentence takes 17 minutes, so the
+    # 480-second default was quietly deciding that half the deck goes unsaid.
+    duration_stated: bool = Field(
+        default=False, description="True when the requested duration came from the user"
+    )
     emphasis_pages: list[int] = Field(default_factory=list)
     skip_pages: list[int] = Field(default_factory=list)
     instructions: str = ""

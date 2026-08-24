@@ -32,7 +32,7 @@ type Tab = 'deck' | 'video' | 'pages' | 'ledger'
 const DIMENSION: Record<string, string> = {
   completeness: '完整度',
   pacing: '节奏',
-  originality: '原创度',
+  grounding: '贴合文档',
   direction: '镜头',
   subtitles: '字幕',
   // Added when the frame checks were: the panel showed 「render」 among five

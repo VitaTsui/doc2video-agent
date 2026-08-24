@@ -43,13 +43,17 @@ MIN_MEASURABLE = 2.0
 
 
 def check_speech(
-    project: VideoProject, asset_path, *, lead: float = 0.0, tail: float = 0.0
+    project: VideoProject, asset_path, *, lead: float = 0.0, tail: float = 0.0, speed: float = 1.0
 ) -> list[ReviewFinding]:
     """Scenes delivered too fast, too slow, or without a breath.
 
     `lead` and `tail` are the silence wrapped around every clip. They have to
     come off before the rate means anything: counted in, a scene reads slower
     than it is spoken, and the fast one that prompted this check stops firing.
+
+    `speed` is what the machine was told to speak at, and the band moves with
+    it: 「偏快」 has to mean faster than asked for, not faster than the default
+    somebody changed.
     """
     findings: list[ReviewFinding] = []
     for scene in project.scenes:
@@ -61,7 +65,12 @@ def check_speech(
             continue
 
         rate = len(scene.narration) / spoken * 60
-        if rate > tuning.value("review.too_fast"):
+        # The band moves with the speed that was asked for. The numbers were
+        # measured at the engine's own pace, and raising the default 5% put
+        # ordinary pages over the line — eight 「偏快」 findings on a deck that
+        # was speaking exactly as fast as it had been told to.
+        asked = project.intent.speech_rate or speed or 1.0
+        if rate > tuning.value("review.too_fast") * asked:
             findings.append(
                 ReviewFinding(
                     severity="warning",
@@ -70,7 +79,7 @@ def check_speech(
                     message=f"语速 {rate:.0f} 字/分，偏快，听的人跟不上",
                 )
             )
-        elif rate < tuning.value("review.too_slow"):
+        elif rate < tuning.value("review.too_slow") * asked:
             findings.append(
                 ReviewFinding(
                     severity="warning",

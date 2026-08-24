@@ -70,7 +70,7 @@ def _extract_elements(page: fitz.Page, page_number: int, zoom: float) -> list[Sl
     candidates: list[tuple[float, SlideElement]] = []
     seq = 0
 
-    for block in _joined_paragraphs(raw.get("blocks", [])):
+    for block in _split_columns(_joined_paragraphs(raw.get("blocks", []))):
         bbox = _scaled_bbox(block.get("bbox"), zoom)
         if bbox is None:
             continue
@@ -172,6 +172,104 @@ def _joined_paragraphs(blocks: list[dict]) -> list[dict]:
             continue
         merged.append(dict(block))
     return merged
+
+
+# A gap this wide inside one block is not word spacing — it is the corridor
+# between two columns. In points, before the render zoom; roughly a centimetre
+# on an A4 page, and three times the widest ordinary word space.
+_COLUMN_GAP_PT = 24.0
+
+
+def _split_columns(blocks: list[dict]) -> list[dict]:
+    """Cut a block in two where it reaches across a gap between columns.
+
+    PyMuPDF groups by proximity, and on a four-card layout the two card numbers
+    sitting at the same height come back as one block: 「01 02」, 970 points
+    wide on a 1920-point page. Nothing downstream can tell that apart from a
+    genuinely wide heading — so a highlight on the left card grew a box that
+    reached across the page and framed the right card's number too, which is
+    what a viewer sees as 「框选框到隔壁去了」.
+
+    Only horizontal gaps, and only within a line: two lines of a paragraph are
+    someone else's job (`_joined_paragraphs`), and cutting a block vertically
+    here would undo it.
+    """
+    out: list[dict] = []
+    for block in blocks:
+        if block.get("type") == 1 or not block.get("lines"):
+            out.append(block)
+            continue
+        groups = _column_groups(block["lines"])
+        if len(groups) < 2:
+            out.append(block)
+            continue
+        for lines in groups:
+            boxes = [line["bbox"] for line in lines]
+            out.append(
+                {
+                    **block,
+                    "lines": lines,
+                    "bbox": (
+                        min(b[0] for b in boxes),
+                        min(b[1] for b in boxes),
+                        max(b[2] for b in boxes),
+                        max(b[3] for b in boxes),
+                    ),
+                }
+            )
+    return out
+
+
+def _column_groups(lines: list[dict]) -> list[list[dict]]:
+    """Split a block's pieces into columns, where a wide gap separates them.
+
+    A line that itself straddles the gap is split into pieces first, so a
+    single line reading 「01      02」 becomes two.
+    """
+    pieces: list[dict] = []
+    for line in lines:
+        pieces.extend(_split_line(line))
+    if len(pieces) < 2:
+        return [pieces] if pieces else []
+
+    pieces.sort(key=lambda piece: piece["bbox"][0])
+    groups: list[list[dict]] = [[pieces[0]]]
+    for piece in pieces[1:]:
+        edge = max(one["bbox"][2] for one in groups[-1])
+        if piece["bbox"][0] - edge > _COLUMN_GAP_PT:
+            groups.append([piece])
+        else:
+            groups[-1].append(piece)
+    return groups
+
+
+def _split_line(line: dict) -> list[dict]:
+    """One line's spans, cut where they reach across a column gap."""
+    spans = [span for span in line.get("spans", []) if span.get("text", "").strip()]
+    if len(spans) < 2:
+        return [line] if spans else []
+
+    runs: list[list[dict]] = [[spans[0]]]
+    for span in spans[1:]:
+        if span["bbox"][0] - runs[-1][-1]["bbox"][2] > _COLUMN_GAP_PT:
+            runs.append([span])
+        else:
+            runs[-1].append(span)
+    if len(runs) < 2:
+        return [line]
+    return [
+        {
+            **line,
+            "spans": run,
+            "bbox": (
+                min(s["bbox"][0] for s in run),
+                min(s["bbox"][1] for s in run),
+                max(s["bbox"][2] for s in run),
+                max(s["bbox"][3] for s in run),
+            ),
+        }
+        for run in runs
+    ]
 
 
 def _continues(previous: dict, block: dict) -> bool:

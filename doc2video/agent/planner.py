@@ -384,6 +384,20 @@ _READ_AS = re.compile(
     r"([A-Za-z][A-Za-z0-9+]{1,15})\s*(?:念|读作|读成)\s*([A-Za-z0-9][A-Za-z0-9 ]{0,23})"
 )
 
+# 「中试基地是一个词」/「中试基地别断开」: what someone says after hearing a term
+# cut in half. The synthesiser decides its own phrase boundaries and gets them
+# wrong on words it does not know — measured on 「国家人工智能应用中试基地」,
+# `say` stops 0.27 seconds after 中, which is long enough to hear. The fix is a
+# space in front of the term, which is how the spoken form says 「a word starts
+# here」 (see `TTSProvider.phrase_boundary`).
+_ONE_WORD = re.compile(
+    r"[「『\"'（(]?([^\s，。！？；：、,.!?;:「」『』\"'（）()]{2,12})[」』\"'）)]?"
+    r"\s*(?:是一个词|是个词|是一个词组|别断开|不要断开|不能断开|连着念|连读)"
+)
+
+# Words a sentence starts with before it gets to the term.
+_LEAD_INS = ("另外", "还有", "而且", "顺便", "对了", "记得", "请把", "请", "帮我", "把", "然后")
+
 _STYLE_HINTS = {
     "专业": "professional",
     "科技": "tech",
@@ -435,6 +449,7 @@ def parse_intent_rules(message: str, current: VideoIntent) -> VideoIntent:
 
     if (asked := stated_duration(message)) is not None:
         intent.duration = int(asked)
+        intent.duration_stated = True
 
     for keyword, style in _STYLE_HINTS.items():
         if keyword in message:
@@ -477,9 +492,7 @@ def parse_intent_rules(message: str, current: VideoIntent) -> VideoIntent:
     if voice := _voice_from(message):
         intent.voice = voice
 
-    # 「RAG 念 R A G」 — a deck's own vocabulary, said the way this deck says it.
-    for term, spoken in _READ_AS.findall(message):
-        intent.pronunciation[term.strip()] = spoken.strip()
+    intent.pronunciation.update(_pronunciations_in(message))
 
     intent.instructions = message.strip()[:500]
     return intent
@@ -531,6 +544,29 @@ def _voice_from(message: str) -> str:
     return next((name for name in installed if gender_of(name) == wanted), "")
 
 
+def _pronunciations_in(message: str) -> dict[str, str]:
+    """The deck's own vocabulary, said the way this deck says it.
+
+    Two phrasings, one dictionary:
+
+    * 「RAG 念 R A G」 — the engine reads an initialism as a word.
+    * 「中试基地是一个词」 — the engine breaks the term in half. The spoken form
+      is the term with a boundary in front of it; the caption keeps the term.
+    """
+    learned = {term.strip(): spoken.strip() for term, spoken in _READ_AS.findall(message)}
+    for match in _ONE_WORD.findall(message):
+        # 「另外中试基地是一个词」 — the sentence's own connective is not part of
+        # the term, and a boundary in front of 「另外」 would be a pause in a
+        # place nobody meant.
+        term = match.strip()
+        for lead in _LEAD_INS:
+            if term.startswith(lead) and len(term) > len(lead) + 1:
+                term = term[len(lead) :]
+        if term:
+            learned[term] = f" {term}"
+    return learned
+
+
 def parse_edit_rules(message: str, project: VideoProject) -> EditPlan:
     """Regex edit parsing. Deliberately conservative: when a message cannot be
     mapped confidently, do the cheapest safe thing rather than rewriting everything."""
@@ -549,6 +585,7 @@ def parse_edit_rules(message: str, project: VideoProject) -> EditPlan:
             target_seconds = minutes * 60
         else:
             intent.duration = int(minutes * 60)
+            intent.duration_stated = True
 
     if mentions_page:
         for page_index in pages:
@@ -564,8 +601,18 @@ def parse_edit_rules(message: str, project: VideoProject) -> EditPlan:
             )
     elif target_seconds and minutes is None:
         intent.duration = int(target_seconds)
+        intent.duration_stated = True
 
-    revoice = any(k in message for k in ("音色", "声音", "配音", "语速", "换个声音"))
+    # A term said wrong is noticed *after* hearing it, which means it is said
+    # in the second message and every one after — and this path never read the
+    # dictionary, so 「RAG 念 R A G」 worked only if you predicted the problem
+    # before the first render.
+    learned = _pronunciations_in(message)
+    intent.pronunciation.update(learned)
+
+    revoice = bool(learned) or any(
+        k in message for k in ("音色", "声音", "配音", "语速", "换个声音")
+    )
     redirect = any(k in message for k in ("放大", "高亮", "镜头", "聚焦", "指针"))
     rewrite_all = any(k in message for k in ("整体重写", "全部重写", "重写讲稿"))
 

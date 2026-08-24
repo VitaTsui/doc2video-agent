@@ -66,7 +66,7 @@ const QUALITY = {
   dimensions: [
     { name: 'completeness', score: 100, weight: 0.35, detail: '0 处不完整' },
     { name: 'pacing', score: 100, weight: 0.2, detail: '节奏均匀' },
-    { name: 'originality', score: 100, weight: 0.2, detail: '无照读页面文字' },
+    { name: 'grounding', score: 100, weight: 0.2, detail: '没有脱离页面内容的场景' },
   ],
 }
 

@@ -9,9 +9,11 @@ actions automatically.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel
 
-from ..core import tuning
+from ..core import ledger, tuning
 from ..schemas import (
     ActionType,
     BBox,
@@ -31,6 +33,40 @@ from .base import Skill
 # says 「再看这一块」 and the picture does not move. So the budget is time: one
 # move per stretch of speech, floored so a short page still gets a gesture and
 # capped so a long one does not turn into a slideshow of boxes.
+# How much of an element's own text has to turn up in a sentence before the
+# camera will point at it. Bigrams, so word order does not matter and a
+# rephrasing still counts; 0.35 keeps a card apart from its neighbour on a
+# four-card page, where the headings share their shape but not their nouns.
+MENTION_THRESHOLD = 0.35
+# …or this many character pairs outright. A clause can only ever cover a small
+# share of a long paragraph — 「是聚焦基地建设任务」 shares 15% of the 57-character
+# block it is quoting — so a share-only gate could never point at a paragraph
+# and pointed at the four-character chip above it instead. Measured on that
+# page: the right block shares 6–9 pairs with the clause quoting it, the wrong
+# ones share 2–4.
+MENTION_PAIRS = 6
+
+# The pause between one marker leaving and the next arriving. Long enough that
+# they are not on screen together, short enough not to read as nothing.
+MARKER_GAP = 0.15
+
+# A chip that names the block under it — 「揭榜要求」, 「基地介绍」 — is a label,
+# not the thing being said. Boxing it puts a frame around four characters while
+# the narrator reads the paragraph beneath, which is what it looked like from
+# the sofa. Short *and* followed closely by something much longer: 「(一)背景及
+# 技术牵头方」 on a contents page is equally short and has nothing under it, so
+# it stays a target.
+LABEL_CHARS = 8
+LABEL_BODY_RATIO = 3.0
+LABEL_GAP = 0.12
+
+# When a page would otherwise get no camera at all, half a match is better than
+# a motionless page.
+LOOSE_MENTION = 0.2
+
+# Where a sentence changes what it is talking about.
+_CLAUSE_SPLIT = re.compile(r"[，、；：]")
+
 SECONDS_PER_ACTION = 6.0
 MIN_ACTIONS_PER_SCENE = 2
 MAX_ACTIONS_PER_SCENE = 8
@@ -93,6 +129,13 @@ class ActionChoice(BaseModel):
     segment_id: str
     type: ActionType
     target: str
+    #: Where in the sentence this one is talked about, 0–1. A sentence can walk
+    #: two items — 「第一部分是背景及技术牵头方，第二部分是核心市场痛点分析。」 —
+    #: and one box for the pair sits on the wrong half of it for half the time.
+    at_fraction: float = 0.0
+    #: For a merged run, the moment the narration leaves this block. The box
+    #: holds until then instead of expiring on a timer.
+    holds_until: float = 0.0
 
 
 class SceneDirection(BaseModel):
@@ -112,14 +155,63 @@ class DirectorSkill(Skill):
             if page is None:
                 scene.actions = []
                 continue
-            choices = self._choose_heuristically(scene, page)
-            scene.actions = self._to_actions(scene, page, choices)
+            # One entry per page, like every other stage that works page by
+            # page. A single line for thirty pages of camera work says nothing
+            # about the page whose box went to the wrong card.
+            with ledger.call(
+                "director", f"第 {scene.source_page} 页", covers=[ledger.scene_key(scene.scene_id)]
+            ):
+                choices = self._choose_heuristically(scene, page)
+                scene.actions = self._to_actions(scene, page, choices)
+                scene.actions = self._check_and_redo(scene, page)
             total_actions += len(scene.actions)
 
         self.log.info("镜头设计完成：共 %d 个动作", total_actions)
 
+    def _check_and_redo(self, scene: Scene, page: DocumentPage) -> list[DirectorAction]:
+        """Look at what was chosen, and choose again where it does not hold.
+
+        The same shape as the script step's own check: a deterministic rule,
+        applied before the render spends minutes drawing the result.
+
+        * **A box on something the sentence never mentions.** The camera is
+          bound by what the sentence says, and a sentence that mentions nothing
+          used to fall through to the best-scoring element on the page — a box
+          on a card the narrator is not talking about, which is what 「框选跟
+          讲稿对不上」 looks like.
+        * **A page with nothing to look at.** A page that names things and gets
+          no camera at all is a page the viewer watches sit still. Tried again
+          with a looser bar before giving up: half a match is better than a
+          motionless page, and 0.35 was measured on cards that share a shape.
+        """
+        segments = {segment.id: segment for segment in scene.segments}
+        kept: list[DirectorAction] = []
+        dropped = 0
+        for action in scene.actions:
+            segment_id = action.params.get("segment_id") if action.params else None
+            segment = segments.get(segment_id or "")
+            element = page.element(action.target) if action.target else None
+            if action.target and element is not None and segment is not None:
+                hit, share = _shared_grams(element.text, segment.text)
+                if share < MENTION_THRESHOLD and hit < MENTION_PAIRS:
+                    dropped += 1
+                    continue
+            kept.append(action)
+        if dropped:
+            self.log.info("第 %s 页去掉 %d 个讲稿没提到的镜头", scene.source_page, dropped)
+
+        has_box = any(action.target for action in kept)
+        if not has_box and _worth_looking_at(page):
+            retry = self._choose_heuristically(scene, page, threshold=LOOSE_MENTION)
+            if retry:
+                self.log.info("第 %s 页原本没有镜头，放宽匹配后补上", scene.source_page)
+                return self._to_actions(scene, page, retry)
+        return kept
+
     # -- choosing what to look at ---------------------------------------
-    def _choose_heuristically(self, scene: Scene, page: DocumentPage) -> list[ActionChoice]:
+    def _choose_heuristically(
+        self, scene: Scene, page: DocumentPage, *, threshold: float = MENTION_THRESHOLD
+    ) -> list[ActionChoice]:
         """Rank segments by how much they deserve a camera move, then take the top few."""
         # A signpost page gets its transition and nothing else.
         if page.page_type in SIGNPOST_PAGES:
@@ -127,21 +219,38 @@ class DirectorSkill(Skill):
 
         scored: list[tuple[float, ActionChoice]] = []
         for segment in scene.segments:
-            target_id = self._resolve_target(segment, page)
-            if target_id is None:
-                continue
-            element = page.element(target_id)
-            if element is None or not _worth_pointing_at(element) or _is_banner(element, page):
-                continue
-            score = element.importance + (0.5 if segment.emphasis else 0.0)
-            # A node in a declared flow is worth more than a box that happens
-            # to be on the page: the arrows say this one is part of the thing
-            # being explained.
-            if page.diagram is not None and target_id in page.diagram.nodes:
-                score += 0.3
-            action_type = self._pick_action(segment, element, page)
-            choice = ActionChoice(segment_id=segment.id, type=action_type, target=target_id)
-            scored.append((score, choice))
+            for target_id, fraction in self._targets_in(segment, page, threshold=threshold):
+                element = page.element(target_id)
+                if element is None or not _worth_pointing_at(element) or _is_banner(element, page):
+                    continue
+                score = element.importance + (0.5 if segment.emphasis else 0.0)
+                # A node in a declared flow is worth more than a box that happens
+                # to be on the page: the arrows say this one is part of the thing
+                # being explained.
+                if page.diagram is not None and target_id in page.diagram.nodes:
+                    score += 0.3
+                action_type = self._pick_action(segment, element, page)
+                scored.append((
+                    score,
+                    ActionChoice(
+                        segment_id=segment.id,
+                        type=action_type,
+                        target=target_id,
+                        at_fraction=fraction,
+                    ),
+                ))
+
+        # One gesture per page for the same kind of thing. A contents page whose
+        # first four items got an outline and whose fifth got a red dot reads as
+        # a mistake, not as emphasis: the items are siblings and the sentence
+        # naming the last one is shorter only because it is last.
+        kinds = {choice.type for _score, choice in scored}
+        if ActionType.POINTER in kinds and kinds & {ActionType.HIGHLIGHT, ActionType.ZOOM}:
+            scored = [
+                (score, choice.model_copy(update={"type": ActionType.HIGHLIGHT})
+                 if choice.type is ActionType.POINTER else choice)
+                for score, choice in scored
+            ]
 
         scored.sort(key=lambda item: -item[0])
         chosen: list[ActionChoice] = []
@@ -151,7 +260,7 @@ class DirectorSkill(Skill):
                 break
         # Keep narrative order — ranking was only for selection.
         order = {s.id: i for i, s in enumerate(scene.segments)}
-        chosen.sort(key=lambda c: order.get(c.segment_id, 0))
+        chosen.sort(key=lambda c: (order.get(c.segment_id, 0), c.at_fraction))
         # Never the same box twice *in a row* — that reads as a stutter. Twice
         # with something else in between is not a stutter but a return, and
         # refusing it left the picture still while the narration came back to
@@ -192,24 +301,82 @@ class DirectorSkill(Skill):
             return ActionType.POINTER
         return ActionType.HIGHLIGHT
 
-    def _resolve_target(self, segment: NarrationSegment, page: DocumentPage) -> str | None:
+    def _targets_in(
+        self, segment: NarrationSegment, page: DocumentPage, *, threshold: float = MENTION_THRESHOLD
+    ) -> list[tuple[str, float]]:
+        """Everything this sentence talks about, and roughly when it gets there.
+
+        One box per sentence was wrong the moment a sentence covered two items:
+        「第一部分是背景及技术牵头方，第二部分是核心市场痛点分析。」 got a single
+        box, on whichever half matched better, and it sat there through the
+        other half. The clause is what walks the page, so the clause is what the
+        camera follows — timed by where it falls in the sentence, because the
+        sentence's own start and end are measured.
+        """
+        pieces = [piece for piece in _CLAUSE_SPLIT.split(segment.text) if piece.strip()]
+        if len(pieces) < 2:
+            bound = self._resolve_target(segment, page, threshold=threshold)
+            return [(bound, 0.0)] if bound else []
+
+        found: list[tuple[str, float]] = []
+        spent = 0
+        for piece in pieces:
+            fraction = spent / max(len(segment.text), 1)
+            spent += len(piece)
+            target = self._resolve_target(
+                NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis),
+                page,
+                threshold=threshold,
+            )
+            if target and (not found or found[-1][0] != target):
+                found.append((target, fraction))
+        if not found:
+            bound = self._resolve_target(segment, page, threshold=threshold)
+            return [(bound, 0.0)] if bound else []
+        return found
+
+    def _resolve_target(
+        self, segment: NarrationSegment, page: DocumentPage, *, threshold: float = MENTION_THRESHOLD
+    ) -> str | None:
         for ref in segment.element_refs:
             element = page.element(ref)
             if element is None or not _worth_pointing_at(element):
                 continue
             if not _is_banner(element, page):
                 return ref
-        # Nothing bound: fall back to the most distinctive element whose text the
-        # sentence actually mentions, so we never point at an unrelated box.
+        # Nothing bound: find the element this sentence is talking about.
+        #
+        # The model fills `element_refs` when it feels like it — measured on a
+        # 30-page deck, 30 of 70 sentences came back with none, and seven pages
+        # had not one — so the camera cannot depend on them. It used to fall
+        # back on the element's first six characters appearing verbatim in the
+        # sentence, which is a coin flip: the script says 「供应链经营风险可控化」
+        # for a card headed 「01 供应链经营风险可控化」 and the six characters
+        # matched, but 「持续监控原料的供需和价格」 for one headed 「实现原料供需、
+        # 价格持续监控」 shares every word and not the first six.
+        #
+        # The script reads the page now — measured at 73–85% character overlap
+        # — so asking how much of an element's own text turns up in the sentence
+        # is both cheap and decisive.
         best: tuple[float, str] | None = None
         for element in page.elements:
             if element.kind is ElementKind.TITLE or not _worth_pointing_at(element):
                 continue
-            key = element.text.strip()[:6]
-            if len(key) >= 2 and key in segment.text:
-                score = element.importance
-                if best is None or score > best[0]:
-                    best = (score, element.id)
+            if _is_label(element, page):
+                continue
+            hit, share = _shared_grams(element.text, segment.text)
+            if share < threshold and hit < MENTION_PAIRS:
+                continue
+            # How much of the sentence this element accounts for, not what
+            # share of the element the sentence covers. Sharing everything is
+            # easy for a four-character chip — 「揭榜要求」 scored a perfect 1.0
+            # against a sentence that went on to say the paragraph underneath
+            # it, and the box framed the label while the narrator read the
+            # text. The paragraph shares a smaller share of itself and far more
+            # of the sentence, which is the thing being said.
+            score = hit + element.importance
+            if best is None or score > best[0]:
+                best = (score, element.id)
         return best[1] if best else None
 
     @staticmethod
@@ -248,8 +415,32 @@ class DirectorSkill(Skill):
             )
         )
 
-        last_target: str | None = None
+        # When the next marker lands, keyed by the choice it follows. Computed
+        # up front because a choice does not know what comes after it.
+        starts: list[float] = []
         for choice in choices:
+            segment = segments.get(choice.segment_id)
+            if segment is None or choice.type is ActionType.RESET:
+                starts.append(float("inf"))
+                continue
+            span = max(segment.end - segment.start, 0.0)
+            starts.append(max(0.0, segment.start + span * choice.at_fraction + AUDIO_LEAD))
+        next_at = {
+            choice.segment_id + str(index): starts[index + 1]
+            for index, choice in enumerate(choices)
+            if index + 1 < len(starts)
+        }
+
+        # A run of choices on the same target is one look at it, not several.
+        # 「很长一段都是同一块内容」 came out as a box that appeared, went away
+        # four seconds later, and came back for the next sentence — the picture
+        # blinking while the narration never left the block. Merged, the box
+        # goes up when the block is first mentioned and stays until the
+        # narration moves on.
+        choices = _merge_runs(choices, segments)
+
+        last_target: str | None = None
+        for index, choice in enumerate(choices):
             segment = segments.get(choice.segment_id)
             if segment is None:
                 continue
@@ -262,14 +453,25 @@ class DirectorSkill(Skill):
                 if choice.target and choice.target == last_target:
                     continue
                 span = max(segment.end - segment.start, 0.0)
+                at = max(0.0, segment.start + span * choice.at_fraction + AUDIO_LEAD)
                 if choice.type is ActionType.POINTER:
                     duration = min(POINTER_DURATION, max(MIN_KEEP_DURATION, span - 0.2))
+                elif choice.holds_until:
+                    # A merged run: hold the box for as long as the narration
+                    # stays on this block, rather than for a fixed four seconds
+                    # and then off again while it is still being talked about.
+                    duration = max(MIN_ACTION_DURATION, choice.holds_until - at - 0.2)
                 else:
                     duration = max(MIN_ACTION_DURATION, min(MAX_ACTION_DURATION, span - 0.2))
-                at = max(0.0, segment.start + AUDIO_LEAD)
 
-            # An action must fit inside its own scene, and be long enough to read.
+            # An action must fit inside its own scene, be long enough to read,
+            # and be gone before the next one arrives. Two markers on screen at
+            # once is what the contents page looked like: the caption had moved
+            # on to 「最后是联合揭榜商业价值」 while the box still sat on 「(四)项目
+            # 总体建设内容」 and a red dot had already appeared on (五).
             duration = min(duration, scene.duration - at)
+            if (following := next_at.get(choice.segment_id + str(index), None)) is not None:
+                duration = min(duration, max(following - at - MARKER_GAP, 0.0))
             if at >= scene.duration or duration < MIN_KEEP_DURATION:
                 continue
             last_target = choice.target or last_target
@@ -410,10 +612,72 @@ def _union(a: BBox, b: BBox) -> BBox:
     )
 
 
+def _is_label(element, page: DocumentPage) -> bool:
+    """Whether this element is the caption on the block below it."""
+    text = (element.text or "").strip()
+    if not text or len(text) > LABEL_CHARS or element.bbox is None:
+        return False
+    height = page.height or 1080
+    bottom = element.bbox.y + element.bbox.h
+    for other in page.elements:
+        if other.id == element.id or other.bbox is None or not (other.text or "").strip():
+            continue
+        below = other.bbox.y >= bottom - element.bbox.h * 0.5
+        near = other.bbox.y - bottom <= height * LABEL_GAP
+        longer = len(other.text.strip()) >= len(text) * LABEL_BODY_RATIO
+        if below and near and longer:
+            return True
+    return False
+
+
+def _merge_runs(choices: list[ActionChoice], segments: dict) -> list[ActionChoice]:
+    """Collapse consecutive looks at the same thing into one that holds."""
+    merged: list[ActionChoice] = []
+    for choice in choices:
+        segment = segments.get(choice.segment_id)
+        if segment is None:
+            merged.append(choice)
+            continue
+        end = segment.end
+        if merged and merged[-1].target and merged[-1].target == choice.target:
+            merged[-1] = merged[-1].model_copy(update={"holds_until": end})
+            continue
+        merged.append(choice.model_copy(update={"holds_until": end}))
+    return merged
+
+
+def _worth_looking_at(page: DocumentPage) -> bool:
+    """Whether this page has anything a camera could usefully point at."""
+    return sum(1 for element in page.elements if _worth_pointing_at(element)) >= 2
+
+
+def _shared_grams(element_text: str, sentence: str) -> tuple[int, float]:
+    """`(how many, what share)` of `element_text` turns up in `sentence`."""
+    element_text, sentence = element_text.strip(), sentence.strip()
+    if len(element_text) < 3 or len(sentence) < 3:
+        return (0, 0.0)
+    grams = {element_text[i : i + 2] for i in range(len(element_text) - 1)}
+    said = {sentence[i : i + 2] for i in range(len(sentence) - 1)}
+    hit = len(grams & said)
+    return (hit, hit / len(grams))
+
+
+def _mentioned(element_text: str, sentence: str) -> float:
+    """What share of `element_text` turns up in `sentence`, by character bigram."""
+    return _shared_grams(element_text, sentence)[1]
+
+
 def _action_budget(scene: Scene) -> int:
-    """How many camera moves this page's own length can carry."""
-    by_time = round(scene.duration / SECONDS_PER_ACTION)
-    return max(MIN_ACTIONS_PER_SCENE, min(MAX_ACTIONS_PER_SCENE, by_time))
+    """How many camera moves this page can carry.
+
+    One every six seconds was the rule, and it is the wrong question now that
+    the script walks a page item by item: a 19-second contents page names five
+    sections and got three boxes, so two of them were read out with the camera
+    sitting on somebody else. What actually limits this is how long a box has
+    to stay up to be read — anything more often than that is a flicker.
+    """
+    room = int(scene.duration // (MIN_ACTION_DURATION + AUDIO_LEAD))
+    return max(MIN_ACTIONS_PER_SCENE, min(MAX_ACTIONS_PER_SCENE, room))
 
 
 def _zoom_pays_off(element, page: DocumentPage) -> bool:

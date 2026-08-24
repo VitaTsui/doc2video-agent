@@ -42,6 +42,40 @@ SPELL_OUT = {
 
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+]*")
 
+# An all-caps run this long or shorter is an initialism, and its letters are
+# what it is. Measured with `say`: 「CCAI」 comes back in 0.40 seconds — a word,
+# not four letters, which take 1.01. Five letters and up is left alone, because
+# that is where the caps start being a word in capitals: 「SKILL.md」 is a file
+# name, not S-K-I-L-L.
+SPELL_LIMIT = 4
+
+# The letters a Chinese voice mis-reads on their own, written as the syllable
+# that is the letter's name. A lone 「A」 came back as 啊 — an interjection —
+# and 「I」 fares no better. The consonants do not need this and are worse for
+# it: 「C」 read as a Latin letter is the letter, and 「西」 is a Chinese word
+# that happens to sound near it.
+LETTER_SOUNDS = {"A": "诶", "E": "伊", "I": "艾", "O": "欧", "U": "尤"}
+# Read as words by people, so reading them as letters would be the mistake.
+# Two kinds: acronyms that became words, and ordinary words a slide happens to
+# set in capitals — a deck's 「MAIL」 is mail, not M-A-I-L.
+SAID_AS_WORDS = frozenset(
+    {
+        "NASA", "OPEC", "IEEE", "SAAS", "JSON", "YAML", "SQL", "GUI", "JAVA", "DEMO",
+        "MAIL", "HOME", "NEXT", "TEAM", "DATA", "TIME", "USER", "PLUS", "MENU", "NEWS",
+        "OPEN", "FREE", "MORE", "BEST", "TOP", "NEW", "ALL", "END", "MAP", "WEB", "APP",
+    }
+)
+
+
+def _is_initialism(token: str) -> bool:
+    """Whether this Latin token is a set of letters rather than a word."""
+    return (
+        token.isupper()
+        and token.isalpha()
+        and 2 <= len(token) <= SPELL_LIMIT
+        and token not in SAID_AS_WORDS
+    )
+
 
 def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
     """`text` as it should be spoken. The caption keeps the original.
@@ -50,12 +84,33 @@ def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
     about a company called RAG is talking about the company.
     """
     table = {**SPELL_OUT, **(extra or {})}
-    if not table:
-        return text
 
-    lookup = {key.upper(): value for key, value in table.items()}
+    # Latin terms are matched as whole tokens — 「AI」 must not fire inside
+    # 「MAIL」. Anything else has no token boundaries to speak of, so it is a
+    # plain substring, longest first: a deck that registers both 「中试」 and
+    # 「应用中试」 means the longer one.
+    latin = {k: v for k, v in table.items() if _TOKEN.fullmatch(k)}
+    other = sorted((k for k in table if k not in latin), key=len, reverse=True)
+
+    lookup = {key.upper(): value for key, value in latin.items()}
 
     def swap(match: re.Match[str]) -> str:
-        return lookup.get(match.group(0).upper(), match.group(0))
+        token = match.group(0)
+        if (named := lookup.get(token.upper())) is not None:
+            return named
+        if _is_initialism(token):
+            # Joined, not spaced. A space here becomes a phrase boundary on
+            # the way to the engine, and the letters came out with a stop
+            # between each of them. Measured: 「CC诶艾」 and 「C C 诶 艾」 take the
+            # same 2.29 seconds to say, so the space was buying nothing and
+            # costing the pauses.
+            return "".join(LETTER_SOUNDS.get(ch, ch) for ch in token)
+        return token
 
-    return _TOKEN.sub(swap, text)
+    spoken = _TOKEN.sub(swap, text)
+    for term in other:
+        spoken = spoken.replace(term, table[term])
+    # A deck that registers both 「中试」 and 「应用中试」 has the shorter entry
+    # fire again inside the longer one's replacement. Two boundaries in a row
+    # are one boundary.
+    return re.sub(r"  +", " ", spoken)

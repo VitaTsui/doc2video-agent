@@ -28,6 +28,7 @@ from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisu
 from ..tools.llm import model_schema
 from ..tools.tts import estimate_duration
 from .base import ProgressFn, Skill, load_prompt
+from .review import page_share_chars
 
 # Pages per model call. Small enough that a long deck cannot overrun the
 # output budget, large enough that each page can see its neighbours.
@@ -52,7 +53,23 @@ TYPE_WEIGHT = {
     PageType.OTHER: 0.9,
 }
 EMPHASIS_MULTIPLIER = 1.9
+# A page with no text of its own still takes a moment; a page with a wall of it
+# does not get to eat the whole film.
+BASE_VOLUME = 60
+MAX_VOLUME = 900
+# The page type still counts, but it no longer decides: reading a dense chart
+# page takes as long as its labels take to read, whatever a table says a chart
+# page is usually worth. As an exponent, 0.5 keeps the ordering and halves the
+# spread (1.35 → 1.16, 0.35 → 0.59).
+TYPE_INFLUENCE = 0.5
 MIN_SCENE_SECONDS = 4.0
+# The most a page's own text can claim as a floor. Past this the page is dense
+# enough that some of it will have to go unread whatever the deck's length.
+MAX_FLOOR_SECONDS = 20.0
+# How much of the film the floors may claim between them before they are all
+# scaled down. The rest is divided by weight, which is what gives a dense page
+# more than its own floor.
+FLOOR_SHARE = 0.6
 MAX_SCENE_SECONDS = 75.0
 
 SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?；;])\s*|\n+")
@@ -147,6 +164,7 @@ class NarrationSkill(Skill):
                 lambda: self._placeholder(pages, budgets, kept),
                 what="讲稿",
             )
+        drafts = self._repair_drafts(pages, budgets, drafts, frozen=set(kept))
         drafts = self._fit_duration(pages, budgets, drafts, frozen=set(kept))
         self._build_scenes(pages, drafts)
         self.log.info(
@@ -162,6 +180,98 @@ class NarrationSkill(Skill):
             for index, text in sorted((written or {}).items())
             if index in indexes and text and text.strip()
         }
+
+    # -- repair ---------------------------------------------------------
+    def _repair_drafts(
+        self,
+        pages: list[DocumentPage],
+        budgets: dict[int, float],
+        drafts: dict[int, PageNarration],
+        frozen: set[int] | None = None,
+    ) -> dict[int, PageNarration]:
+        """Rewrite the pages that did not finish what they started.
+
+        Two faults, one repair — both are 「讲了一半就翻页」 and both are decided
+        by the same deterministic rules the quality report uses, so a page is
+        judged the same way before it is spoken as after.
+
+        「平台上有三块开放机制。」 and the page ends — the three are on the slide
+        in front of the viewer, and the sentence set up an expectation the film
+        never pays. Saying so in the writing prompt helped and did not settle
+        it: two pages in thirty before, one after. So the draft is checked
+        against the same deterministic rule the quality report uses, and the
+        pages that fail are written again, once, with the specific sentence
+        quoted back.
+
+        Only those pages, and only once: a page that comes back dangling twice
+        is a page the model cannot do better on, and re-asking forever costs
+        minutes for nothing.
+        """
+        from .review import _dangling_counts, missed_items
+
+        frozen = frozen or set()
+        by_index = {page.index: page for page in pages}
+        broken: dict[int, str] = {}
+        for index, draft in drafts.items():
+            if index in frozen or (page := by_index.get(index)) is None:
+                continue
+            if found := _dangling_counts(draft.narration):
+                phrase, said, named = found[0]
+                broken[index] = (
+                    f"上一稿在这一页写了「{phrase}」，却只点到 {named} 项。"
+                    f"请把这 {said} 项的名字按页面上的写法都说出来；"
+                    "如果字数装不下，就不要报数，直接讲其中最重要的一两项。"
+                )
+                continue
+            walked, affordable, missed = missed_items(draft.narration, page)
+            if affordable and walked < affordable and missed:
+                # Told as a shape, not as a complaint. 「补进去」 left the model
+                # free to keep the paragraph it had written about one card and
+                # append nothing — measured on eleven reworked pages, the count
+                # did not move. A sentence each, in page order, is something it
+                # can actually execute, and it is what 「先横向铺开」 means.
+                # Coverage *within* the budget. Asked without the number, the
+                # rework covered the page by reading every card's body as well
+                # — the deck went from 2103 characters to 5973, a 24-minute
+                # film against an 8-minute request. Breadth is the thing worth
+                # having; the words per item are what has to give.
+                want = min(affordable, len(missed) + walked)
+                budget = self._char_budget(budgets[index])
+                each = max(12, budget // max(want, 1))
+                broken[index] = (
+                    f"上一稿只讲到这一页的 {walked} 处内容，这一页值得讲到 {affordable} 处——"
+                    "一张卡片讲得再透，旁边三张没讲到，观众看着屏幕上的它们听你翻页。\n"
+                    f"重写这一页：写成 {want} 句左右，**按页面顺序一处一句**，"
+                    f"每句 {each} 字上下（这一页平均每处该讲多少），"
+                    "带上那一处自己的名字和它最要紧的一个信息。"
+                    f"整页不要超过 {budget} 字。\n"
+                    f"漏掉的是：「{'」「'.join(missed[:6])}」。\n"
+                    "每句短一点没关系，讲不全才是问题；细节留给观众自己看屏幕。"
+                )
+        if not broken or not self.llm.available:
+            return drafts
+
+        self.log.info("需要返工的页面：%s", sorted(broken))
+        for index, note in broken.items():
+            page = by_index.get(index)
+            if page is None:
+                continue
+            try:
+                with ledger.call(self.llm.source, f"第 {index} 页｜返工"):
+                    result = self.llm.complete_json(
+                        self._prompt([page], budgets, position=index - 1) + f"\n\n# 返工\n{note}",
+                        schema=model_schema(NarrationResult),
+                        system=load_prompt("narration"),
+                        max_tokens=self.ctx.settings.llm_max_tokens,
+                    )
+                rewritten = NarrationResult.model_validate(result).pages
+            except Exception as exc:  # noqa: BLE001 - a failed repair keeps the draft
+                self.log.warning("第 %d 页返工失败，保留原稿：%s", index, exc)
+                continue
+            for candidate in rewritten:
+                if candidate.index == index and candidate.narration.strip():
+                    drafts[index] = candidate
+        return drafts
 
     # -- fitting --------------------------------------------------------
     def _fit_duration(
@@ -190,6 +300,14 @@ class NarrationSkill(Skill):
         target = float(self.project.intent.duration)
         if target <= 0 or not drafts:
             return drafts
+        # Nobody asked for a length: the target came from the deck's own content,
+        # so it is a plan rather than a promise. A plan is still worth keeping —
+        # left alone, the writer ran 2.4× past it (24.4 minutes against the 13.3
+        # its own pages proposed), which is every item said at 46 characters
+        # where the estimate says 18–28. But it is kept only by rewriting, never
+        # by cutting: nothing here may decide on its own that a page loses its
+        # last item to a number nobody asked for.
+        rewrite_only = not self.project.intent.duration_stated
 
         silence = self._page_silence() * len(pages)
         pace = self._pace()
@@ -241,6 +359,9 @@ class NarrationSkill(Skill):
             "讲稿", f"超出目标时长 {total - target:.0f} 秒，压缩 {len(over)} 页"
         )
 
+        from .review import _dangling_counts, missed_items
+
+        by_index = {page.index: page for page in pages}
         trimmed = dict(drafts)
         for _, index, allowed in over:
             if total <= target * (1 + DURATION_TOLERANCE):
@@ -249,9 +370,106 @@ class NarrationSkill(Skill):
             shorter = _trim_to(draft.narration, int(allowed * pace))
             if len(shorter) >= len(draft.narration):
                 continue
+            # Trimming takes sentences off the end, and the end of a page is
+            # where its last items are. 「平台上有三块开放机制。」 — the page that
+            # started this — is what a trim looks like from the outside: the
+            # script named three, the trimmer removed the naming, and the film
+            # announced a list and moved on. A page is only shortened while it
+            # still tells the whole page.
+            page = by_index.get(index)
+            costs_content = bool(_dangling_counts(shorter)) and not _dangling_counts(
+                draft.narration
+            )
+            if page is not None and not costs_content:
+                costs_content = (
+                    missed_items(shorter, page)[0] < missed_items(draft.narration, page)[0]
+                )
+            if costs_content or rewrite_only:
+                # Cutting from the end takes the page's last items with it. Ask
+                # for the same page said in fewer words instead — one call, and
+                # it is the only way to honour both 「十五分钟」 and 「把这一页讲
+                #全」, which is what the person asked for on the same day.
+                rewritten = self._compress_with_model(page, draft, int(allowed * pace))
+                if rewritten is None:
+                    self.log.info("第 %d 页压不动：剪会少讲内容，改写也没写短", index)
+                    continue
+                total -= spoken(draft.narration) - spoken(rewritten.narration)
+                trimmed[index] = rewritten
+                continue
             total -= spoken(draft.narration) - spoken(shorter)
             trimmed[index] = PageNarration(index=index, narration=shorter, segments=[])
         return trimmed
+
+    def _compress_with_model(
+        self, page: DocumentPage | None, draft: PageNarration, allowed: int
+    ) -> PageNarration | None:
+        """The same page, said shorter. None when it could not be done.
+
+        Trimming removes sentences, and a page's last sentences are its last
+        items — 「平台上有三块开放机制。」 is what that looks like from the
+        outside. Rewriting keeps every item and takes the words out of each
+        one, which is the only way a stated length and a fully-told page can
+        both be true.
+
+        Checked rather than trusted: the rewrite has to be shorter *and* still
+        name what the original named, or it is thrown away.
+        """
+        if page is None or not self.llm.available:
+            return None
+
+        from .review import missed_items
+
+        note = (
+            f"这一页现在 {len(draft.narration)} 字，要压到 {allowed} 字以内。\n"
+            "**内容一处都不能少**：现在讲到的每一处，改写后还要讲到。\n"
+            "压的是字，不是信息——删修饰词、合并重复的说法、去掉可有可无的连接词、"
+            "报了数的地方，几项的名字一个都不能少（说了「五部分」就得点出五个）、"
+            "把长句拆成短句。宁可每句只剩七八个字。\n\n"
+            f"现在的讲稿：\n{draft.narration}"
+        )
+        try:
+            with ledger.call(self.llm.source, f"第 {page.index} 页｜压到 {allowed} 字"):
+                result = self.llm.complete_json(
+                    self._prompt([page], {page.index: allowed / self._pace()},
+                                 position=page.index - 1) + f"\n\n# 返工\n{note}",
+                    schema=model_schema(NarrationResult),
+                    system=load_prompt("narration"),
+                    max_tokens=self.ctx.settings.llm_max_tokens,
+                )
+            pages = NarrationResult.model_validate(result).pages
+        except Exception as exc:  # noqa: BLE001 - a failed rewrite keeps the draft
+            self.log.warning("第 %d 页压缩失败，保留原稿：%s", page.index, exc)
+            return None
+
+        for candidate in pages:
+            if candidate.index != page.index or not candidate.narration.strip():
+                continue
+            if len(candidate.narration) >= len(draft.narration):
+                continue
+            # Judged against what the page is worth walking, not against what
+            # the draft happened to walk. The draft over-names — page 10 named
+            # nine of its ten blocks where the rule says seven — and requiring
+            # 「不比原来少」 rejected every rewrite of exactly the pages that
+            # needed one: 2–2.5× over budget, and left alone.
+            from .review import _dangling_counts, worth_naming
+
+            floor = min(missed_items(draft.narration, page)[0], worth_naming(page))
+            if missed_items(candidate.narration, page)[0] < floor:
+                self.log.info("第 %d 页改写后少讲了内容，不采用", page.index)
+                continue
+            # And it must not turn a named list back into a bare count. The
+            # rewrite is asked for fewer words, and 「五部分」 followed by two of
+            # them is exactly the shape that gets noticed — the check existed
+            # for the writing step and this path was not running it.
+            if _dangling_counts(candidate.narration) and not _dangling_counts(draft.narration):
+                self.log.info("第 %d 页改写后变成报了数不点名，不采用", page.index)
+                continue
+            self.log.info(
+                "第 %d 页改写压缩：%d → %d 字", page.index,
+                len(draft.narration), len(candidate.narration),
+            )
+            return candidate
+        return None
 
     def _placeholder(
         self,
@@ -281,10 +499,22 @@ class NarrationSkill(Skill):
             return []
 
         budgets = self._allocate_budget(pages)
+        # What this project already has. A page the caller did not mention is
+        # not a page with nothing on it: the script may have been written last
+        # week, or by 「生成讲稿」 five minutes ago. Overwriting it with
+        # placeholder text threw away thirty pages of finished writing on a
+        # call that said nothing about them — and the video that came out
+        # opened with 「这一期我们来讲……」 over a script the model had already
+        # written properly.
+        existing = {
+            scene.source_page: scene.narration
+            for scene in self.project.scenes
+            if scene.source_page and scene.narration.strip()
+        }
         drafts: dict[int, PageNarration] = {}
         missing: list[int] = []
         for page in pages:
-            text = (narrations.get(page.index) or "").strip()
+            text = (narrations.get(page.index) or existing.get(page.index) or "").strip()
             if text:
                 drafts[page.index] = PageNarration(
                     index=page.index, narration=text, segments=[]
@@ -429,19 +659,101 @@ class NarrationSkill(Skill):
         speech_total = max(intent.duration - silence, intent.duration * 0.4)
         weights: dict[int, float] = {}
         for page in pages:
-            weight = TYPE_WEIGHT.get(page.page_type, 1.0)
-            # More real content on a page deserves proportionally more airtime.
-            content_factor = 1.0 + min(len(page.raw_text()), 600) / 600
-            weight *= content_factor
+            # How much there is to say, which is now mostly how much the page
+            # says: the script reads the deck rather than commenting on it, so
+            # a page's share of the film should track its own text. The old
+            # factor (1.0–2.0 over the first 600 characters) left the type
+            # weight in charge, and it showed — a 1122-character page and a
+            # 112-character cover were budgeted 78 and 19 characters, so the
+            # dense page could not be read out and the cover had four times
+            # its own text to fill. Measured on that deck: pages ran from 7%
+            # to 405% of their budget.
+            #
+            # What this page is worth saying, which is not the same as how much
+            # text it carries: a 24-block page is chosen from rather than read
+            # out, so its share is the share of the blocks that get named.
+            # Weighting by raw characters instead left the writer a budget the
+            # size of the page and it filled it — 46 characters an item where
+            # the estimate says 18, and a film 20.7 minutes long against the
+            # 12.5 the same estimate had proposed.
+            weight = TYPE_WEIGHT.get(page.page_type, 1.0) ** TYPE_INFLUENCE * page_share_chars(
+                page
+            )
             if page.index in intent.emphasis_pages:
                 weight *= EMPHASIS_MULTIPLIER
             weights[page.index] = weight
 
-        total_weight = sum(weights.values()) or 1.0
+        # A page's floor is what reading its own words costs. A cover carrying
+        # 112 characters was budgeted 19 and came back with 80 — the model was
+        # right and the budget was wrong, and the same happened on every sparse
+        # page: 2–4× over, measured across seven of them. Proportional shares
+        # alone cannot fix it, because these pages are small in proportion and
+        # still have a floor of their own text.
+        pace = self._pace()
+        floors = {
+            page.index: min(
+                max(len(page.raw_text()) / pace, MIN_SCENE_SECONDS), MAX_FLOOR_SECONDS
+            )
+            for page in pages
+        }
+        # The floors are a claim on the film, and thirty pages' worth of them
+        # can exceed the whole thing — this deck's came to 625 seconds against
+        # a 360-second target, which would have made the length the user asked
+        # for meaningless. Above their share they are scaled down together, so
+        # they stay in proportion to each other and the target still holds. On
+        # a deck that dense some of the text goes unread whatever we do; §三 of
+        # the writing prompt says to drop whole items rather than compress them
+        # all into summary.
+        claimed = sum(floors.values())
+        cap = speech_total * FLOOR_SHARE
+        if claimed > cap:
+            # Only the part above the minimum is scaled. Scaling the whole
+            # floor put a 20-character page at 1.4 seconds of speech — a scene
+            # shorter than the silence around it, which is not a scene.
+            base = MIN_SCENE_SECONDS * len(pages)
+            room = max(claimed - base, 1e-6)
+            scale = max(cap - base, 0.0) / room
+            floors = {
+                index: MIN_SCENE_SECONDS + (seconds - MIN_SCENE_SECONDS) * scale
+                for index, seconds in floors.items()
+            }
+        return self._share(speech_total, weights, floors)
+
+    @staticmethod
+    def _share(
+        total: float, weights: dict[int, float], floors: dict[int, float]
+    ) -> dict[int, float]:
+        """Split `total` by weight, but never below a page's floor.
+
+        Pages that would fall under their floor are fixed at it and taken out
+        of the pool; the rest re-divide what remains, which can push another
+        page under its own floor — hence the loop. It ends because each pass
+        fixes at least one page, and if every page is fixed there is nothing
+        left to divide.
+        """
         budgets: dict[int, float] = {}
-        for index, weight in weights.items():
-            seconds = speech_total * weight / total_weight
-            budgets[index] = max(MIN_SCENE_SECONDS, min(MAX_SCENE_SECONDS, seconds))
+        pool, open_pages = total, dict(weights)
+        while open_pages:
+            weight_sum = sum(open_pages.values()) or 1.0
+            under = {
+                index: floors[index]
+                for index, weight in open_pages.items()
+                if pool * weight / weight_sum < floors[index]
+            }
+            if not under:
+                for index, weight in open_pages.items():
+                    budgets[index] = min(MAX_SCENE_SECONDS, pool * weight / weight_sum)
+                break
+            budgets.update(under)
+            pool -= sum(under.values())
+            for index in under:
+                open_pages.pop(index)
+            if pool <= 0:
+                # The floors alone spend the whole target. Everyone left gets
+                # theirs anyway — a page still has to say its own title — and
+                # the film runs long, which the run reports.
+                budgets.update({index: floors[index] for index in open_pages})
+                break
         return budgets
 
     def _char_budget(self, seconds: float) -> int:
@@ -453,7 +765,10 @@ class NarrationSkill(Skill):
         the model has done anything wrong. One source now, and it follows the
         voice — `say` says 4.75, Edge's broadcast voice 4.15.
         """
-        return int(seconds * self._pace())
+        # The engine's own pace times what it was asked to do with it: the pace
+        # is measured at 1.0, and a deck spoken 5% quicker fits 5% more script
+        # in the same seconds.
+        return int(seconds * self._pace() * max(self.ctx.settings.tts_speech_rate or 1.0, 0.1))
 
     def _pace(self) -> float:
         from ..tools.tts import TTSTool
@@ -592,31 +907,54 @@ class NarrationSkill(Skill):
                 # not talking about is worse than crossing the diagram out of
                 # order (方案 §20).
                 lines.append(f"这一页画的是一条流程，按箭头走是：{flow}")
-            # Said with the remedy attached, because the budget loses on its
-            # own. A prompt that (rightly) warns against padding and says
-            # 「每页只抓一个讲解重点」 pulls the other way, and the model
-            # resolves the tension toward brevity: measured at 30% under
-            # budget on nine pages out of nine, which is a video a third
-            # shorter than the one that was asked for. Trimming can fix an
-            # overrun after the fact; nothing can fill a shortfall.
+            # A ceiling, said as one. It used to be a target with a remedy
+            # attached — 「不够时补原因、影响、数字背后的含义」 — which is the
+            # right instruction for a script that explains the deck and the
+            # wrong one for a script that reads it: the only way to reach a
+            # number the page has no words for is to invent some.
             budget = self._char_budget(budgets[page.index])
-            low, high = int(budget * 0.85), int(budget * 1.15)
+            # Stated as a target with both failure modes named, because a
+            # ceiling alone does not work: the model writes about one paragraph
+            # a page whatever the number says. Measured across 30 pages — dense
+            # pages came in at 38–60% of budget while sparse ones ran 200–286%,
+            # so the page with 582 characters on it and the page with 79 got
+            # narration of the same length. Each direction has one likely
+            # cause, and saying which is what makes the number actionable.
+            budget = self._char_budget(budgets[page.index])
+            low, high = int(budget * 0.8), int(budget * 1.3)
             lines.append(
-                f"字数预算：{budget} 字，必须落在 {low}–{high} 字。不够时补的是原因、影响、"
-                "与上下页的关系、数字背后的含义，不是把结论换个说法再说一遍。"
+                f"字数预算：{budget} 字（{low}–{high} 字）。"
+                f"这一页页面文字 {len(page.raw_text())} 字，预算是按它算的。"
+                "写少了通常是漏讲了页面上的内容——回去把具体的条目、数字、名称补上；"
+                "写多了通常是在发挥——删掉页面支撑不了的话。"
+                "报了数就要点名：说了「三块」「四类」，就要把这几项的名字说出来，"
+                "装不下就别报数。"
             )
+            # The page's own words come first and are named as the material.
+            # They used to come last, under 「元素：」, after a summary and a
+            # key-point list the understanding step had written — so the first
+            # thing the writer read was already a summary of the page, and it
+            # wrote a summary of that. 「之前的讲稿太总结了」 has a cause, and
+            # this is most of it.
+            elements = [e for e in page.elements if e.text]
+            if elements:
+                lines.append(f"页面原文（{len(elements)} 处，讲稿的主要材料，按这个顺序讲）：")
+                # Longer than it was: this is the source text now, not a hint
+                # about what the page is roughly about. A body paragraph cut at
+                # 120 characters is a paragraph the narration cannot read out,
+                # and the model fills the gap the only way it can — by making
+                # something up.
+                lines.extend(
+                    f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 400)}" for e in elements
+                )
+            if page.speaker_notes:
+                lines.append(f"演讲者备注：{_truncate(page.speaker_notes, 300)}")
+            if page.summary or page.key_points:
+                lines.append("（以下是这一页的理解笔记，帮你判断轻重，不要照着它写——它已经是概括了）")
             if page.summary:
                 lines.append(f"页面摘要：{page.summary}")
             if page.key_points:
                 lines.append("关键点：" + "；".join(page.key_points))
-            if page.speaker_notes:
-                lines.append(f"演讲者备注：{_truncate(page.speaker_notes, 300)}")
-            elements = [e for e in page.elements if e.text]
-            if elements:
-                lines.append("元素：")
-                lines.extend(
-                    f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 120)}" for e in elements
-                )
         return "\n".join(lines)
 
     @staticmethod

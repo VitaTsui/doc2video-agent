@@ -22,6 +22,8 @@ def _skill(settings: Settings, store: ProjectStore, *, pages: int, duration: flo
         source=Source(type=SourceType.PPTX, file="demo.pptx", path="source/demo.pptx"),
     )
     project.intent.duration = duration
+    # These tests are about what happens to a length someone asked for.
+    project.intent.duration_stated = True
     project.document.pages = [
         DocumentPage(index=i, title=f"第 {i} 页", width=1920, height=1080)
         for i in range(1, pages + 1)
@@ -50,7 +52,8 @@ def test_page_seconds_is_speech_plus_its_own_silence(settings: Settings, store: 
 
 def test_chars_are_budgeted_from_speech_not_screen_time(settings: Settings, store: ProjectStore):
     row = _skill(settings, store, pages=8, duration=300.0).guide()[0]
-    assert row["target_chars"] == int(row["target_seconds"] * 4.6)
+    # The engine's own pace, times the rate it was asked to speak at.
+    assert row["target_chars"] == int(row["target_seconds"] * 4.6 * settings.tts_speech_rate)
 
 
 def test_a_short_target_still_leaves_something_to_say(settings: Settings, store: ProjectStore):
@@ -192,7 +195,7 @@ def test_the_pace_follows_the_engine_that_will_speak_it(settings, store):
     fast = _skill(Settings(**{**settings.model_dump(), "tts_provider": "macos_say"}), store,
                   pages=4, duration=120.0)
     assert fast._pace() > 0
-    assert fast._char_budget(10.0) == int(10.0 * fast._pace())
+    assert fast._char_budget(10.0) == int(10.0 * fast._pace() * settings.tts_speech_rate)
 
 
 def test_a_script_that_came_up_short_says_so(settings: Settings, store: ProjectStore):
@@ -220,3 +223,83 @@ def test_a_script_that_came_up_short_says_so(settings: Settings, store: ProjectS
 
     said = [d for d in record.degradations if "短" in d.reason]
     assert said, [d.reason for d in record.degradations]
+
+
+def test_adopting_a_script_does_not_throw_away_the_one_already_written(
+    settings: Settings, store: ProjectStore
+):
+    """A page the caller did not mention is not a page with nothing on it.
+
+    「开始生成」 sends the boxes; a page whose box was never opened arrives as
+    nothing. Treating that as 「没有讲稿」 replaced a finished script with
+    placeholder text — measured on a 30-page deck: all thirty pages of model
+    writing gone, and the film opened with the heuristic's 「这一期我们来讲……」.
+    """
+    skill = _skill(settings, store, pages=3, duration=120.0)
+    skill.apply({1: "第一页是人写的。", 2: "第二页也是。", 3: "第三页同样。"})
+    written = {scene.source_page: scene.narration for scene in skill.project.scenes}
+
+    # A second pass that mentions one page only.
+    skill.apply({2: "第二页改了。"})
+    now = {scene.source_page: scene.narration for scene in skill.project.scenes}
+
+    assert now[2] == "第二页改了。"
+    assert now[1] == written[1]
+    assert now[3] == written[3]
+
+
+def test_shortening_a_page_never_takes_its_last_items_away(
+    settings: Settings, store: ProjectStore
+):
+    """Trimming cuts from the end, and the end of a page is where its list is.
+
+    「平台上有三块开放机制。」 is what a trim looks like from the outside: the
+    script named all three, the trimmer removed the naming, and the film
+    announced a list and moved on. Length is worth less than that.
+    """
+    from doc2video.skills.narration import PageNarration
+
+    skill = _skill(settings, store, pages=2, duration=20.0)
+    pages = skill._pages()
+    budgets = skill._allocate_budget(pages)
+    whole = "平台上有三块开放机制：技能广场、MCP 工具库、插件集市。" + "补充说明的一句话。" * 6
+    drafts = {
+        pages[0].index: PageNarration(index=pages[0].index, narration=whole, segments=[]),
+        pages[1].index: PageNarration(index=pages[1].index, narration="第二页。", segments=[]),
+    }
+
+    fitted = skill._fit_duration(pages, budgets, drafts)
+
+    assert "技能广场" in fitted[pages[0].index].narration
+
+
+def test_a_script_is_only_cut_to_a_length_someone_asked_for(
+    settings: Settings, store: ProjectStore
+):
+    """480 seconds is a field default, not a request.
+
+    Measured on a 30-page deck: naming each of its 208 blocks in one short
+    sentence takes 17 minutes, so trimming to the default was deciding, on
+    nobody's behalf, that half of what is on the slides goes unsaid.
+    """
+    from doc2video.skills.narration import PageNarration
+
+    skill = _skill(settings, store, pages=2, duration=20.0)
+    pages = skill._pages()
+    budgets = skill._allocate_budget(pages)
+    long_page = "这一句是要被压掉的内容。" * 8
+    drafts = {
+        page.index: PageNarration(index=page.index, narration=long_page, segments=[])
+        for page in pages
+    }
+
+    trimmed = skill._fit_duration(pages, budgets, dict(drafts))
+    assert len(trimmed[pages[0].index].narration) < len(long_page)
+
+    # With no request behind the number the script is not *cut* — the target
+    # was proposed from the deck, and losing a page's last sentences to a
+    # number nobody asked for is the one thing this must not do. Without a
+    # model to rewrite with, that means leaving it as it is.
+    skill.project.intent.duration_stated = False
+    kept = skill._fit_duration(pages, budgets, dict(drafts))
+    assert kept[pages[0].index].narration == long_page

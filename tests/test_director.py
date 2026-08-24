@@ -437,6 +437,146 @@ def test_a_long_page_can_carry_more_than_four_shots():
         _action_budget,
     )
 
-    assert _action_budget(Scene(scene_id="s", duration=6.0)) == MIN_ACTIONS_PER_SCENE
-    assert _action_budget(Scene(scene_id="s", duration=30.0)) == 5
+    # What limits this is how long a box has to stay up to be read, not a
+    # rate: a 19-second contents page names five sections, and 「one every six
+    # seconds」 gave it three boxes — two sections were read out with the camera
+    # sitting on somebody else.
+    assert _action_budget(Scene(scene_id="s", duration=2.0)) == MIN_ACTIONS_PER_SCENE
+    assert _action_budget(Scene(scene_id="s", duration=19.0)) >= 5
     assert _action_budget(Scene(scene_id="s", duration=600.0)) == MAX_ACTIONS_PER_SCENE
+
+
+def test_a_sentence_that_names_two_things_gets_two_boxes(
+    settings: Settings, store: ProjectStore
+):
+    """「第一部分是背景及技术牵头方，第二部分是核心市场痛点分析。」
+
+    One box per sentence sat on whichever half matched better and stayed there
+    through the other half — the narration said 第一部分 while the box was on
+    (二). The clause is what walks the page, so the clause is what the camera
+    follows, timed by where it falls in the sentence.
+    """
+    page = _page(
+        [
+            SlideElement(
+                id="e1",
+                kind=ElementKind.PARAGRAPH,
+                text="(一)背景及技术牵头方",
+                bbox=BBox(x=600, y=200, w=300, h=60),
+                importance=0.8,
+            ),
+            SlideElement(
+                id="e2",
+                kind=ElementKind.PARAGRAPH,
+                text="(二)核心市场痛点分析",
+                bbox=BBox(x=600, y=400, w=300, h=60),
+                importance=0.8,
+            ),
+        ]
+    )
+    segment = NarrationSegment(
+        id="scene_01_s01",
+        text="第一部分是背景及技术牵头方，第二部分是核心市场痛点分析。",
+        start=0.0,
+        end=10.0,
+    )
+    scene = _run(page, _scene([segment]), settings, store)
+
+    boxes = [a for a in scene.actions if a.target]
+    assert [a.target for a in boxes] == ["e1", "e2"]
+    assert boxes[0].at < boxes[1].at
+
+
+def test_a_box_the_sentence_never_mentions_is_dropped(
+    settings: Settings, store: ProjectStore
+):
+    """The camera is bound by what the sentence says.
+
+    A sentence that mentions nothing on the page used to fall through to the
+    best-scoring element — a box on a card the narrator is not talking about,
+    which is what 「框选跟讲稿对不上」 looks like from the sofa.
+    """
+    page = _page(
+        [
+            SlideElement(
+                id="e1", kind=ElementKind.PARAGRAPH, text="供应链经营风险可控化",
+                bbox=BBox(x=100, y=100, w=300, h=60), importance=0.9,
+            ),
+            SlideElement(
+                id="e2", kind=ElementKind.PARAGRAPH, text="外贸市场拓展精准赋能",
+                bbox=BBox(x=100, y=300, w=300, h=60), importance=0.9,
+            ),
+        ]
+    )
+    segment = NarrationSegment(
+        id="scene_01_s01", text="这一页我们换个角度，先把整体思路说清楚。", start=0.0, end=8.0
+    )
+    scene = _run(page, _scene([segment]), settings, store)
+
+    assert not [a for a in scene.actions if a.target]
+
+
+def test_the_box_goes_to_the_text_being_read_not_to_its_label(
+    settings: Settings, store: ProjectStore
+):
+    """「揭榜要求」 is a four-character chip above the paragraph it introduces.
+
+    Two things put the box on it. Ranked by what share of the *element* the
+    sentence covers, a four-character chip scores a perfect 1.0 and a
+    57-character paragraph scores 15%. And a chip is not what is being said at
+    all — it is the name of what is being said, which is underneath it.
+    """
+    page = _page(
+        [
+            SlideElement(
+                id="chip", kind=ElementKind.PARAGRAPH, text="揭榜要求",
+                bbox=BBox(x=100, y=100, w=120, h=40), importance=0.6,
+            ),
+            SlideElement(
+                id="body", kind=ElementKind.PARAGRAPH,
+                text="聚焦基地建设任务，重点解决人工智能技术赋能石化化工行业关键问题，以成果落地应用为牵引。",
+                bbox=BBox(x=100, y=200, w=700, h=120), importance=0.6,
+            ),
+        ]
+    )
+    segment = NarrationSegment(
+        id="scene_01_s01",
+        text="揭榜要求这一条，是聚焦基地建设任务，以成果落地应用为牵引。",
+        start=0.0,
+        end=9.0,
+    )
+    scene = _run(page, _scene([segment]), settings, store)
+
+    # The chip is a label on the block below it, and a label is not the thing
+    # being said: the box goes to the paragraph the sentence is quoting, and
+    # nowhere at all while the sentence is still naming the label.
+    assert [a.target for a in scene.actions if a.target] == ["body"]
+
+
+def test_a_label_with_nothing_under_it_is_still_a_target(
+    settings: Settings, store: ProjectStore
+):
+    """「(一)背景及技术牵头方」 on a contents page is the content, not a caption.
+
+    What makes a chip a label is not being short — it is being short *and*
+    standing on top of something much longer. A contents page is a column of
+    short lines with nothing underneath any of them.
+    """
+    page = _page(
+        [
+            SlideElement(
+                id="one", kind=ElementKind.PARAGRAPH, text="(一)背景及技术牵头方",
+                bbox=BBox(x=600, y=200, w=300, h=60), importance=0.8,
+            ),
+            SlideElement(
+                id="two", kind=ElementKind.PARAGRAPH, text="(二)核心市场痛点分析",
+                bbox=BBox(x=600, y=400, w=300, h=60), importance=0.8,
+            ),
+        ]
+    )
+    segment = NarrationSegment(
+        id="scene_01_s01", text="第一部分是背景及技术牵头方。", start=0.0, end=6.0
+    )
+    scene = _run(page, _scene([segment]), settings, store)
+
+    assert [a.target for a in scene.actions if a.target] == ["one"]

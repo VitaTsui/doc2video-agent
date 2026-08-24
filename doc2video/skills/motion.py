@@ -7,6 +7,7 @@ and normalized rectangles.
 
 from __future__ import annotations
 
+from ..core import ledger
 from ..core.errors import SkillFailed
 from ..schemas import (
     ActionCue,
@@ -49,6 +50,7 @@ class MotionSkill(Skill):
         for scene in self.project.scenes:
             duration = max(scene.duration, 0.5)
             start, end = cursor, cursor + duration
+            before = len(timeline.subtitles)
 
             if scene.visual.asset:
                 timeline.video.append(
@@ -84,6 +86,16 @@ class MotionSkill(Skill):
                 )
 
             timeline.actions.extend(self._scene_action_cues(scene, offset=start, timeline=timeline))
+            # Said page by page, like the stages around it. Where a page lands
+            # in the film, and how many captions it took, is the thing someone
+            # checks when a caption is late.
+            with ledger.call(
+                "timeline",
+                f"第 {scene.source_page} 页｜{start:.1f}–{end:.1f}s｜"
+                f"{len(timeline.subtitles) - before} 条字幕｜{len(scene.actions)} 个动作",
+                covers=[ledger.scene_key(scene.scene_id)],
+            ):
+                pass
             cursor = end
 
         timeline.duration = round(cursor, 3)

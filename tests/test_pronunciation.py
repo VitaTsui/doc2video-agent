@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from doc2video.agent.planner import parse_intent_rules
 from doc2video.schemas import VideoIntent
-from doc2video.tools.tts.pronounce import SPELL_OUT, for_speech
+from doc2video.tools.tts.pronounce import for_speech
 
 
 def test_an_initialism_read_as_a_word_is_spelled_out():
@@ -18,18 +18,34 @@ def test_an_initialism_read_as_a_word_is_spelled_out():
     assert for_speech("这里最关键的是 RAG 模块。") == "这里最关键的是 R A G 模块。"
 
 
-def test_the_terms_the_engine_already_gets_right_are_left_alone():
-    """The list is of terms this engine gets wrong, not of technical terms.
+def test_a_short_run_of_capitals_is_read_as_letters():
+    """It said 「AI」 as a word, and 「CCAI」 as something like a word.
 
-    `say` spells out most initialisms correctly on its own — AI, PDF, API,
-    SDK, GPU, KPI, JSON, HTTP all come back as letters. Adding them would be
-    churn; and SaaS is read as "sass", which is how people say it, so a
-    dictionary that spelled it out would make the delivery worse.
+    This test used to assert the opposite — that `say` spells initialisms out
+    on its own and the list should stay small. Listening says otherwise, and
+    so does the clock: 「CCAI」 comes back in 0.40 seconds where its four
+    letters take 1.01.
+
+    Length is the line. Two to four capitals are an initialism; five and up is
+    a word set in capitals, and 「SKILL.md」 is a file name rather than
+    S-K-I-L-L.
     """
-    text = "SaaS 产品的 API、SDK 和 JSON 接口，AI 与 GPU 都在里面。"
-    assert for_speech(text) == text
-    assert "SaaS" not in SPELL_OUT
-    assert "AI" not in SPELL_OUT
+    # Written as the letters' names, not as the letters: handed two lone Latin
+    # characters, a Chinese voice read 「A」 as 啊 — an interjection.
+    # Only the letters a Chinese voice mis-reads on their own are written as
+    # syllables: 「A」 came back as 啊. 「C」 is better left as the letter — 「西」
+    # is a Chinese word that merely sounds near it.
+    assert for_speech("AI 应用中试平台") == "诶艾 应用中试平台"
+    assert for_speech("浙江大学 CCAI 宁波中心") == "浙江大学 CC诶艾 宁波中心"
+    # All consonants: nothing to rewrite, and nothing to separate either —
+    # the engine reads MCP as its letters on its own.
+    assert for_speech("石化生态 MCP 工具库") == "石化生态 MCP 工具库"
+    assert for_speech("依托 SKILL.md 规范") == "依托 SKILL.md 规范"
+    # Words that happen to be in capitals stay words: a deck's 「MAIL」 is mail.
+    assert for_speech("MAIL 收件箱") == "MAIL 收件箱"
+    # And SaaS is said as a word by people, so spelling it out would be worse.
+    assert for_speech("SaaS 产品") == "SaaS 产品"
+
 
 
 def test_a_project_can_overrule_the_built_in_list():

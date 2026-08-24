@@ -8,6 +8,8 @@ director binds narration to on-screen elements.
 from __future__ import annotations
 
 import contextlib
+import re
+import subprocess
 import sys
 import wave
 from array import array
@@ -76,6 +78,27 @@ class TTSProvider:
 
     def available(self) -> bool:
         return False
+
+    #: Whether this engine has anywhere to put 「a word starts here」. When it
+    #: does not, measuring a clip for cut words buys nothing — there would be
+    #: no way to act on the answer.
+    honours_phrase_boundary = False
+
+    def phrase_boundary(self, text: str) -> str:
+        """Turn a space in spoken text into whatever this engine reads as 「别在这里断」.
+
+        A synthesiser decides its own phrase boundaries, and it gets them wrong
+        on terms it does not know. Measured on 「国家人工智能应用中试基地」:
+        every engine tried breaks after 中, reading 「应用中」 as a phrase and
+        leaving 「试基地」 stranded — macOS `say` stops 0.27 seconds there, which
+        is long enough to hear as a word being cut in half.
+
+        A space is how a person writes 「这两个字属于下一个词」, and it is what
+        the pronunciation dictionary can carry (「应用中试」 念 「应用 中试」).
+        Engines differ in what they do with it: `say` ignores it outright. So
+        each one renders it in its own terms, and the default is to leave it be.
+        """
+        return text
 
     def synthesize(self, text: str, out_path: Path, *, voice: str = "", rate: float = 1.0) -> float:
         """Write audio for ``text`` to ``out_path`` and return its duration."""
@@ -270,6 +293,76 @@ def audio_duration(path: Path) -> float | None:
     from ..media_binaries import probe_duration
 
     return probe_duration(path)
+
+
+def silences(path: Path, *, floor: float = 0.06) -> list[tuple[float, float]]:
+    """Every quiet stretch in a clip, as `(start, length)` in seconds.
+
+    Used to hear what the engine did rather than assume it: a gap the script
+    did not ask for is either a mark being read or a word being cut in half,
+    and only the clip can say which one happened where.
+
+    Read straight out of the PCM when it can be — every provider here writes
+    16-bit WAV, and a film is hundreds of clips: spawning ffmpeg for each one
+    put two minutes on the test suite alone, for a measurement the samples
+    already carry.
+    """
+    if path.suffix.lower() == ".wav":
+        with contextlib.suppress(wave.Error, OSError, EOFError):
+            return _quiet_runs(path, floor)
+
+    from ...core import programs
+
+    ffmpeg = programs.find("ffmpeg")
+    if ffmpeg is None:
+        return []
+    try:
+        proc = subprocess.run(  # noqa: S603 - argv built here
+            [ffmpeg, "-i", str(path), "-af", f"silencedetect=noise=-40dB:d={floor}",
+             "-f", "null", "-"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+    pattern = re.compile(r"silence_start: ([\d.]+)[\s\S]*?silence_duration: ([\d.]+)")
+    return [(float(at), float(length)) for at, length in pattern.findall(proc.stderr)]
+
+
+def _quiet_runs(path: Path, floor: float) -> list[tuple[float, float]]:
+    """`silences` for 16-bit PCM, in samples rather than in a subprocess."""
+    with wave.open(str(path), "rb") as handle:
+        params = handle.getparams()
+        frames = handle.readframes(params.nframes)
+    if params.sampwidth != 2 or not frames:
+        return []
+
+    audio = array("h")
+    audio.frombytes(frames[: len(frames) - len(frames) % 2])
+    if sys.byteorder == "big":
+        audio.byteswap()
+
+    step = params.nchannels
+    limit = int(QUIET * 32767)
+    window = max(1, int(params.framerate * 0.01)) * step  # 10ms, as trimming uses
+    seconds = window / step / params.framerate
+
+    runs: list[tuple[float, float]] = []
+    start: int | None = None
+    for index, at in enumerate(range(0, len(audio), window)):
+        chunk = audio[at : at + window]
+        loud = bool(chunk) and max(max(chunk), -min(chunk)) > limit
+        if loud and start is not None:
+            length = (index - start) * seconds
+            if length >= floor:
+                runs.append((start * seconds, length))
+            start = None
+        elif not loud and start is None:
+            start = index
+    if start is not None:
+        length = (len(audio) / window - start) * seconds
+        if length >= floor:
+            runs.append((start * seconds, length))
+    return runs
 
 
 def join_units(clips: list[Path], pauses: list[float], out_path: Path) -> list[tuple[float, float]]:
