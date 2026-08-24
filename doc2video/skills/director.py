@@ -46,6 +46,10 @@ MENTION_THRESHOLD = 0.35
 # ones share 2–4.
 MENTION_PAIRS = 6
 
+# The pause between one marker leaving and the next arriving. Long enough that
+# they are not on screen together, short enough not to read as nothing.
+MARKER_GAP = 0.15
+
 # A chip that names the block under it — 「揭榜要求」, 「基地介绍」 — is a label,
 # not the thing being said. Boxing it puts a frame around four characters while
 # the narrator reads the paragraph beneath, which is what it looked like from
@@ -129,6 +133,9 @@ class ActionChoice(BaseModel):
     #: two items — 「第一部分是背景及技术牵头方，第二部分是核心市场痛点分析。」 —
     #: and one box for the pair sits on the wrong half of it for half the time.
     at_fraction: float = 0.0
+    #: For a merged run, the moment the narration leaves this block. The box
+    #: holds until then instead of expiring on a timer.
+    holds_until: float = 0.0
 
 
 class SceneDirection(BaseModel):
@@ -232,6 +239,18 @@ class DirectorSkill(Skill):
                         at_fraction=fraction,
                     ),
                 ))
+
+        # One gesture per page for the same kind of thing. A contents page whose
+        # first four items got an outline and whose fifth got a red dot reads as
+        # a mistake, not as emphasis: the items are siblings and the sentence
+        # naming the last one is shorter only because it is last.
+        kinds = {choice.type for _score, choice in scored}
+        if ActionType.POINTER in kinds and kinds & {ActionType.HIGHLIGHT, ActionType.ZOOM}:
+            scored = [
+                (score, choice.model_copy(update={"type": ActionType.HIGHLIGHT})
+                 if choice.type is ActionType.POINTER else choice)
+                for score, choice in scored
+            ]
 
         scored.sort(key=lambda item: -item[0])
         chosen: list[ActionChoice] = []
@@ -396,8 +415,32 @@ class DirectorSkill(Skill):
             )
         )
 
-        last_target: str | None = None
+        # When the next marker lands, keyed by the choice it follows. Computed
+        # up front because a choice does not know what comes after it.
+        starts: list[float] = []
         for choice in choices:
+            segment = segments.get(choice.segment_id)
+            if segment is None or choice.type is ActionType.RESET:
+                starts.append(float("inf"))
+                continue
+            span = max(segment.end - segment.start, 0.0)
+            starts.append(max(0.0, segment.start + span * choice.at_fraction + AUDIO_LEAD))
+        next_at = {
+            choice.segment_id + str(index): starts[index + 1]
+            for index, choice in enumerate(choices)
+            if index + 1 < len(starts)
+        }
+
+        # A run of choices on the same target is one look at it, not several.
+        # 「很长一段都是同一块内容」 came out as a box that appeared, went away
+        # four seconds later, and came back for the next sentence — the picture
+        # blinking while the narration never left the block. Merged, the box
+        # goes up when the block is first mentioned and stays until the
+        # narration moves on.
+        choices = _merge_runs(choices, segments)
+
+        last_target: str | None = None
+        for index, choice in enumerate(choices):
             segment = segments.get(choice.segment_id)
             if segment is None:
                 continue
@@ -410,14 +453,25 @@ class DirectorSkill(Skill):
                 if choice.target and choice.target == last_target:
                     continue
                 span = max(segment.end - segment.start, 0.0)
+                at = max(0.0, segment.start + span * choice.at_fraction + AUDIO_LEAD)
                 if choice.type is ActionType.POINTER:
                     duration = min(POINTER_DURATION, max(MIN_KEEP_DURATION, span - 0.2))
+                elif choice.holds_until:
+                    # A merged run: hold the box for as long as the narration
+                    # stays on this block, rather than for a fixed four seconds
+                    # and then off again while it is still being talked about.
+                    duration = max(MIN_ACTION_DURATION, choice.holds_until - at - 0.2)
                 else:
                     duration = max(MIN_ACTION_DURATION, min(MAX_ACTION_DURATION, span - 0.2))
-                at = max(0.0, segment.start + span * choice.at_fraction + AUDIO_LEAD)
 
-            # An action must fit inside its own scene, and be long enough to read.
+            # An action must fit inside its own scene, be long enough to read,
+            # and be gone before the next one arrives. Two markers on screen at
+            # once is what the contents page looked like: the caption had moved
+            # on to 「最后是联合揭榜商业价值」 while the box still sat on 「(四)项目
+            # 总体建设内容」 and a red dot had already appeared on (五).
             duration = min(duration, scene.duration - at)
+            if (following := next_at.get(choice.segment_id + str(index), None)) is not None:
+                duration = min(duration, max(following - at - MARKER_GAP, 0.0))
             if at >= scene.duration or duration < MIN_KEEP_DURATION:
                 continue
             last_target = choice.target or last_target
@@ -574,6 +628,22 @@ def _is_label(element, page: DocumentPage) -> bool:
         if below and near and longer:
             return True
     return False
+
+
+def _merge_runs(choices: list[ActionChoice], segments: dict) -> list[ActionChoice]:
+    """Collapse consecutive looks at the same thing into one that holds."""
+    merged: list[ActionChoice] = []
+    for choice in choices:
+        segment = segments.get(choice.segment_id)
+        if segment is None:
+            merged.append(choice)
+            continue
+        end = segment.end
+        if merged and merged[-1].target and merged[-1].target == choice.target:
+            merged[-1] = merged[-1].model_copy(update={"holds_until": end})
+            continue
+        merged.append(choice.model_copy(update={"holds_until": end}))
+    return merged
 
 
 def _worth_looking_at(page: DocumentPage) -> bool:

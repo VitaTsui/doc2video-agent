@@ -30,9 +30,11 @@ def test_a_short_run_of_capitals_is_read_as_letters():
     a word set in capitals, and 「SKILL.md」 is a file name rather than
     S-K-I-L-L.
     """
-    assert for_speech("AI 应用中试平台") == "A I 应用中试平台"
-    assert for_speech("浙江大学 CCAI 宁波中心") == "浙江大学 C C A I 宁波中心"
-    assert for_speech("石化生态 MCP 工具库") == "石化生态 M C P 工具库"
+    # Written as the letters' names, not as the letters: handed two lone Latin
+    # characters, a Chinese voice read 「A」 as 啊 — an interjection.
+    assert for_speech("AI 应用中试平台") == "诶艾 应用中试平台"
+    assert for_speech("浙江大学 CCAI 宁波中心") == "浙江大学 西西诶艾 宁波中心"
+    assert for_speech("石化生态 MCP 工具库") == "石化生态 艾姆西皮 工具库"
     assert for_speech("依托 SKILL.md 规范") == "依托 SKILL.md 规范"
     # Words that happen to be in capitals stay words: a deck's 「MAIL」 is mail.
     assert for_speech("MAIL 收件箱") == "MAIL 收件箱"
