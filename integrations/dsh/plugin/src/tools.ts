@@ -15,6 +15,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { JsonValue } from '@deepseek-ai/dsh-tools'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { Backend, BackendError } from './backend.ts'
+import { follow } from './jobs.ts'
 
 /** One page as the model needs to see it to write for it. */
 interface PageView {
@@ -67,6 +68,23 @@ function explain(error: unknown): never {
 }
 
 export function registerTools(ctx: Context, backend: Backend): void {
+  /**
+   * Hand a started render to dsh's background runtime, and say which way this
+   * composition ended up working. With `ctx.jobs` the model is notified when
+   * the render lands and can stop it with `job_kill`; without it, the only way
+   * to know is to ask.
+   */
+  const handOff = (job: JobReply, label: string, exec: { agent?: unknown }) => {
+    const dshJob = follow(ctx, backend, job.job_id, label, exec.agent as never)
+    return {
+      ...job,
+      ...dshJob ? { dsh_job_id: dshJob } : {},
+      note: dshJob
+        ? '已挂到后台，跑完会通知你，不用反复查；想停用 job_kill。'
+        : '隔一会儿用 doc2video_status 查一次进度。',
+    }
+  }
+
   ctx.tools.register(defineTool({
     name: 'doc2video_prepare',
     description:
@@ -128,7 +146,8 @@ export function registerTools(ctx: Context, backend: Backend): void {
       '把写好的逐页讲稿交回去，开始配音、镜头设计、渲染和质检。'
       + '键是页码（字符串），值是那一页的讲稿；没给的页会用它自己已有的讲稿。'
       + '每页别超过 doc2video_prepare 给的 budget_chars——超了成片就超时长，而音频一旦合成，长度就改不动了。'
-      + '渲染要几分钟，所以这里立刻返回 job_id，进度用 doc2video_status 查。',
+      + '渲染要几分钟，所以这里立刻返回 job_id。'
+      + '装了 dsh 的后台任务插件时它会挂到后台、跑完通知你——不要反复查；否则再用 doc2video_status 隔一会儿查一次。',
     parameters: {
       project_id: { type: 'string', required: true, description: 'doc2video_prepare 返回的工程 id。' },
       narrations: {
@@ -138,24 +157,16 @@ export function registerTools(ctx: Context, backend: Backend): void {
         description: '页码 -> 该页讲稿，例如 {"1": "……", "2": "……"}。',
       },
     },
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          job_id: { type: 'string', required: true },
-          status: { type: 'string', required: true },
-        },
-      },
-      render: (_args, value) => asText(value),
-    },
+    output: { schema: { type: 'json' }, render: (_args, value) => asText(value) },
     async execute(args, exec) {
       try {
-        return await backend.json<JobReply>(
+        const job = await backend.json<JobReply>(
           `/projects/${args.project_id}/narrations`,
           { narrations: asStrings(args.narrations) },
           exec.signal,
         )
+        const pages = Object.keys(args.narrations).length
+        return handOff(job, `doc2video 出片：${args.project_id}（${pages} 页）`, exec)
       } catch (error) {
         return explain(error)
       }
@@ -195,24 +206,16 @@ export function registerTools(ctx: Context, backend: Backend): void {
         description: '场景 id -> 新讲稿。',
       },
     },
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          job_id: { type: 'string', required: true },
-          status: { type: 'string', required: true },
-        },
-      },
-      render: (_args, value) => asText(value),
-    },
+    output: { schema: { type: 'json' }, render: (_args, value) => asText(value) },
     async execute(args, exec) {
       try {
-        return await backend.json<JobReply>(
+        const job = await backend.json<JobReply>(
           `/projects/${args.project_id}/scenes/narrations`,
           { scenes: asStrings(args.scenes) },
           exec.signal,
         )
+        const count = Object.keys(args.scenes).length
+        return handOff(job, `doc2video 重做 ${count} 个场景：${args.project_id}`, exec)
       } catch (error) {
         return explain(error)
       }
