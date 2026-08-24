@@ -11,6 +11,13 @@ choose rather than the engine's. Each unit's duration is also measured as it
 is written, so the sentence boundaries inside a scene are known exactly rather
 than inferred from the pauses in one long clip.
 
+A unit is where a beat is *decided*. It is not always where the audio is cut:
+an engine that can be asked to hold — `[[slnc N]]` and its equivalents — is
+asked, and speaks a whole sentence in one call, because a call is also one
+complete intonation and a page cut into thirty of them sounds like thirty
+utterances spliced together. Only an engine with nowhere to put the beat has
+its clauses spoken separately. Either way the beats are the ones chosen here.
+
 **The punctuation decides.** Two earlier rules did not. The first broke a unit
 whenever nine seconds had gone by, which put the long pause wherever the
 stopwatch happened to land — mid-sentence, mid-name. The second read the

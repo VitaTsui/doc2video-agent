@@ -80,6 +80,11 @@ class MacOSSayProvider(TTSProvider):
         """
         return re.sub(r"[ \u3000]+", "[[slnc 40]]", text)
 
+    def pause_markup(self, seconds: float) -> str:
+        """A beat asked for inside one call, so the sentence stays one arc."""
+        milliseconds = int(round(max(seconds, 0.0) * 1000))
+        return f"[[slnc {milliseconds}]]" if milliseconds > 0 else ""
+
     def synthesize(self, text: str, out_path: Path, *, voice: str = "", rate: float = 1.0) -> float:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         # `say -r` is words per minute; 175 is roughly its natural pace.

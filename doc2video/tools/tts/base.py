@@ -84,6 +84,14 @@ class TTSProvider:
     #: no way to act on the answer.
     honours_phrase_boundary = False
 
+    def pause_markup(self, seconds: float) -> str:  # noqa: ARG002
+        """How this engine is asked to hold for `seconds` in the middle of a call.
+
+        Empty for an engine with nothing to say it with — that engine's clauses
+        are spoken separately and the silence is written between the clips.
+        """
+        return ""
+
     def phrase_boundary(self, text: str) -> str:
         """Turn a space in spoken text into whatever this engine reads as 「别在这里断」.
 
