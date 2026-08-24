@@ -521,11 +521,10 @@ def test_the_box_goes_to_the_text_being_read_not_to_its_label(
 ):
     """「揭榜要求」 is a four-character chip above the paragraph it introduces.
 
-    Ranked by what share of the *element* the sentence covers, the chip scored
-    a perfect 1.0 and won — the box framed the label while the narrator read
-    the text under it. Ranked by how much of the sentence each element accounts
-    for, the paragraph wins with eighteen matched pairs against the chip's
-    three.
+    Two things put the box on it. Ranked by what share of the *element* the
+    sentence covers, a four-character chip scores a perfect 1.0 and a
+    57-character paragraph scores 15%. And a chip is not what is being said at
+    all — it is the name of what is being said, which is underneath it.
     """
     page = _page(
         [
@@ -548,8 +547,36 @@ def test_the_box_goes_to_the_text_being_read_not_to_its_label(
     )
     scene = _run(page, _scene([segment]), settings, store)
 
-    boxes = [a.target for a in scene.actions if a.target]
-    # The chip first — 「揭榜要求这一条」 does point at it — and then the paragraph
-    # the rest of the sentence is quoting. Before this, the chip won outright
-    # and the box sat on the label for the whole sentence.
-    assert boxes == ["chip", "body"]
+    # The chip is a label on the block below it, and a label is not the thing
+    # being said: the box goes to the paragraph the sentence is quoting, and
+    # nowhere at all while the sentence is still naming the label.
+    assert [a.target for a in scene.actions if a.target] == ["body"]
+
+
+def test_a_label_with_nothing_under_it_is_still_a_target(
+    settings: Settings, store: ProjectStore
+):
+    """「(一)背景及技术牵头方」 on a contents page is the content, not a caption.
+
+    What makes a chip a label is not being short — it is being short *and*
+    standing on top of something much longer. A contents page is a column of
+    short lines with nothing underneath any of them.
+    """
+    page = _page(
+        [
+            SlideElement(
+                id="one", kind=ElementKind.PARAGRAPH, text="(一)背景及技术牵头方",
+                bbox=BBox(x=600, y=200, w=300, h=60), importance=0.8,
+            ),
+            SlideElement(
+                id="two", kind=ElementKind.PARAGRAPH, text="(二)核心市场痛点分析",
+                bbox=BBox(x=600, y=400, w=300, h=60), importance=0.8,
+            ),
+        ]
+    )
+    segment = NarrationSegment(
+        id="scene_01_s01", text="第一部分是背景及技术牵头方。", start=0.0, end=6.0
+    )
+    scene = _run(page, _scene([segment]), settings, store)
+
+    assert [a.target for a in scene.actions if a.target] == ["one"]

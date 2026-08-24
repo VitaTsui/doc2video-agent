@@ -46,6 +46,16 @@ MENTION_THRESHOLD = 0.35
 # ones share 2–4.
 MENTION_PAIRS = 6
 
+# A chip that names the block under it — 「揭榜要求」, 「基地介绍」 — is a label,
+# not the thing being said. Boxing it puts a frame around four characters while
+# the narrator reads the paragraph beneath, which is what it looked like from
+# the sofa. Short *and* followed closely by something much longer: 「(一)背景及
+# 技术牵头方」 on a contents page is equally short and has nothing under it, so
+# it stays a target.
+LABEL_CHARS = 8
+LABEL_BODY_RATIO = 3.0
+LABEL_GAP = 0.12
+
 # When a page would otherwise get no camera at all, half a match is better than
 # a motionless page.
 LOOSE_MENTION = 0.2
@@ -333,6 +343,8 @@ class DirectorSkill(Skill):
         for element in page.elements:
             if element.kind is ElementKind.TITLE or not _worth_pointing_at(element):
                 continue
+            if _is_label(element, page):
+                continue
             hit, share = _shared_grams(element.text, segment.text)
             if share < threshold and hit < MENTION_PAIRS:
                 continue
@@ -544,6 +556,24 @@ def _union(a: BBox, b: BBox) -> BBox:
     return BBox(
         x=x, y=y, w=max(a.x + a.w, b.x + b.w) - x, h=max(a.y + a.h, b.y + b.h) - y
     )
+
+
+def _is_label(element, page: DocumentPage) -> bool:
+    """Whether this element is the caption on the block below it."""
+    text = (element.text or "").strip()
+    if not text or len(text) > LABEL_CHARS or element.bbox is None:
+        return False
+    height = page.height or 1080
+    bottom = element.bbox.y + element.bbox.h
+    for other in page.elements:
+        if other.id == element.id or other.bbox is None or not (other.text or "").strip():
+            continue
+        below = other.bbox.y >= bottom - element.bbox.h * 0.5
+        near = other.bbox.y - bottom <= height * LABEL_GAP
+        longer = len(other.text.strip()) >= len(text) * LABEL_BODY_RATIO
+        if below and near and longer:
+            return True
+    return False
 
 
 def _worth_looking_at(page: DocumentPage) -> bool:
