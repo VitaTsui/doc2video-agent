@@ -16,6 +16,7 @@ from .base import (
     allocate_segments,
     estimate_duration,
     join_units,
+    retime_gaps,
     silences,
     weight_of,
 )
@@ -203,26 +204,38 @@ class TTSTool:
         pauses: list[float] = []
         owners: list[int] = []
         parts: list[str] = []
+        # Where the beats inside this sentence fall and how long they were
+        # designed to be. The engine is asked for them and then held to them:
+        # what it renders is its own idea of the length, about a tenth of a
+        # second longer, and below 200ms it ignores the number entirely.
+        marks: list[tuple[int, float]] = []
+        said = 0
         sentence = units[0].sentence
         gap = units[0].pause_before
 
         def flush() -> None:
+            nonlocal said
             if not parts:
                 return
             clip = work / f"s{len(clips):03d}.wav"
             self._speak_once("".join(parts), clip, voice=voice, rate=rate)
+            retime_gaps(clip, list(marks), said)
             clips.append(clip)
             pauses.append(gap)
             owners.append(sentence)
             parts.clear()
+            marks.clear()
+            said = 0
 
         for unit in units:
             if unit.sentence != sentence:
                 flush()
                 sentence, gap = unit.sentence, unit.pause_before
             elif parts:
+                marks.append((said, unit.pause_before))
                 parts.append(engine.pause_markup(unit.pause_before))
             parts.append(spoken(unit.text))
+            said += len(unit.text)
         flush()
         return clips, pauses, owners
 

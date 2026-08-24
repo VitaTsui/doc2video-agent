@@ -404,3 +404,75 @@ def test_an_engine_with_no_markup_still_speaks_clause_by_clause(tmp_path, monkey
     tool.synthesize("".join(sentences), tmp_path / "out.wav", sentences=sentences)
 
     assert len(spoken) > 2, f"没有标记的引擎仍然按小句合成，实际 {len(spoken)} 次"
+
+
+def test_a_breath_stays_a_breath_rather_than_becoming_a_full_stop(tmp_path):
+    """An engine asked to hold for 120ms does not hold for 120ms.
+
+    `say` re-plans its phrasing around the request and adds about a tenth of a
+    second of its own, so a breath designed at 0.12 is heard at 0.24 — long
+    enough to read as the end of a sentence, which is how 「制造领域石化化工方向
+    的应用场景揭榜方案」 came out sounding like two. Below roughly 200ms the
+    number stops mattering at all: 20ms and 160ms both came back 0.26.
+
+    So the engine is asked, and then held to what was asked: every silence is
+    matched to the designed pause nearest it and cut back to that length.
+    """
+    import struct
+    import wave
+
+    from doc2video.tools.tts.base import retime_gaps, silences
+
+    # 1s of tone, 0.45s of silence, 1s of tone — a gap far longer than designed.
+    rate = 22050
+    frames = bytearray()
+    for seconds, loud in ((1.0, True), (0.45, False), (1.0, True)):
+        for index in range(int(rate * seconds)):
+            value = 8000 if loud and index % 20 < 10 else (-8000 if loud else 0)
+            frames += struct.pack("<h", value)
+    clip = tmp_path / "one.wav"
+    with wave.open(str(clip), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(bytes(frames))
+
+    # The designed beat sits halfway through the spoken characters.
+    after = retime_gaps(clip, [(10, 0.12)], 20)
+
+    gaps = [length for start, length in silences(clip, floor=0.05) if start > 0.05]
+    assert gaps, "间隔不该被删光——两边的字是绕着这个边界念的"
+    assert gaps[0] == pytest.approx(0.12, abs=0.02), f"气口该是 0.12，实际 {gaps[0]:.2f}"
+    assert after < 2.45, "整体应该短了，短掉的正是多出来的那段静音"
+
+
+def test_a_gap_nobody_asked_for_is_shortened_rather_than_closed(tmp_path):
+    """The engine's own boundaries are not mistakes to erase.
+
+    It put a phrase boundary there and spoke the words either side around it;
+    closing it completely runs them together. Cut short, it reads as phrasing
+    instead of as a pause.
+    """
+    import struct
+    import wave
+
+    from doc2video.tools.tts.base import INVENTED_GAP, retime_gaps, silences
+
+    rate = 22050
+    frames = bytearray()
+    for seconds, loud in ((1.0, True), (0.40, False), (1.0, True)):
+        for index in range(int(rate * seconds)):
+            value = 8000 if loud and index % 20 < 10 else (-8000 if loud else 0)
+            frames += struct.pack("<h", value)
+    clip = tmp_path / "two.wav"
+    with wave.open(str(clip), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(bytes(frames))
+
+    # No designed pause anywhere near it.
+    retime_gaps(clip, [], 20)
+
+    gaps = [length for start, length in silences(clip, floor=0.05) if start > 0.05]
+    assert gaps and gaps[0] == pytest.approx(INVENTED_GAP, abs=0.02)

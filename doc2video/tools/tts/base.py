@@ -373,6 +373,94 @@ def _quiet_runs(path: Path, floor: float) -> list[tuple[float, float]]:
     return runs
 
 
+#: What a gap nobody asked for is worth. Not zero — the engine put a phrase
+#: boundary there and the words either side were spoken around it — but short
+#: enough that it reads as phrasing rather than as the end of a sentence.
+INVENTED_GAP = 0.10
+
+#: How far a designed pause may be from the silence that claims it, in seconds
+#: of estimated speech. Wide, because the estimate is proportional and a long
+#: sentence drifts; a wrong claim only ever makes a gap the length of a
+#: neighbouring designed pause.
+CLAIM_TOLERANCE = 0.9
+
+#: Below this a silence is part of speaking rather than a pause in it.
+GAP_FLOOR = 0.13
+
+
+def retime_gaps(path: Path, marks: list[tuple[int, float]], spoken_chars: int) -> float:
+    """Cut every pause inside one clip back to the length it was designed to be.
+
+    An engine asked to hold for 120 milliseconds does not hold for 120
+    milliseconds: `say` re-plans its phrasing around the request and adds about
+    a tenth of a second of its own, so a breath designed at 0.12 is heard at
+    0.24 and reads as the end of a sentence rather than as a breath — reported
+    as 「停顿太长，变得像是两句了」. Below roughly 200ms the request stops mattering
+    at all: every value from 20 to 160 came back the same 0.26.
+
+    Asking differently cannot fix that, so this stops asking and edits the
+    result. Each silence is matched to the designed pause nearest it — position
+    estimated from how much speech precedes it — and cut to that length.
+
+    Silences no designed pause claims are the engine's own, including the ones
+    that land inside a word. They are cut to `INVENTED_GAP` rather than removed:
+    the words either side were spoken around a boundary, and closing it
+    completely runs them together.
+
+    Only ever shortens. A gap that already came back shorter than it was asked
+    for is left alone, because lengthening it would insert silence into speech
+    that was never planned around it.
+
+    @param marks: `(characters spoken before it, seconds)` for each designed pause.
+    @param spoken_chars: how many characters the clip says in total.
+    @returns the clip's new duration.
+    """
+    with wave.open(str(path), "rb") as handle:
+        params = handle.getparams()
+        data = array("h")
+        data.frombytes(handle.readframes(handle.getnframes()))
+
+    rate = params.framerate
+    total = len(data) / rate if rate else 0.0
+    if total <= 0:
+        return total
+    inner = [
+        (start, length)
+        for start, length in silences(path, floor=GAP_FLOOR)
+        if start > 0.05 and start + length < total - 0.05
+    ]
+    if not inner:
+        return total
+
+    speech = total - sum(length for _, length in inner)
+    targets: list[float] = []
+    for start, length in inner:
+        # Where this silence falls in the *speaking*, which is the only thing
+        # the character count can be compared against.
+        spoken_before = start - sum(gap for at_, gap in inner if at_ < start)
+        at = spoken_before / max(speech, 0.01) * spoken_chars
+        claimed: float | None = None
+        nearest = CLAIM_TOLERANCE
+        for chars, seconds in marks:
+            distance = abs(chars - at) / max(spoken_chars, 1) * total
+            if distance < nearest:
+                nearest, claimed = distance, seconds
+        targets.append(min(length, claimed if claimed is not None else INVENTED_GAP))
+
+    out = array("h")
+    cursor = 0
+    for (start, length), target in zip(inner, targets, strict=True):
+        out.extend(data[cursor : int(start * rate)])
+        out.extend([0] * int(target * rate))
+        cursor = int((start + length) * rate)
+    out.extend(data[cursor:])
+
+    with wave.open(str(path), "wb") as handle:
+        handle.setparams(params)
+        handle.writeframes(out.tobytes())
+    return len(out) / rate
+
+
 def join_units(clips: list[Path], pauses: list[float], out_path: Path) -> list[tuple[float, float]]:
     """Write `clips` end to end with `pauses[i]` of silence before clip i.
 
