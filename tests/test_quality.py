@@ -333,6 +333,16 @@ def test_a_script_that_announces_a_list_and_walks_away_is_incomplete(score):
     assert _dangling_counts("这两块都是与本项目高匹配的资源。") == []
     # 「第三部分」 is a section number, not a count.
     assert _dangling_counts("第三部分，石化商业情报智能体。") == []
+    # Items separated by full stops are still items — this names all five.
+    assert _dangling_counts(
+        "方案分五部分。一是背景及技术牵头方。二是核心市场痛点分析。"
+        "三是项目建设主旨思路。四是项目总体建设内容。五是联合揭榜商业价值。"
+    ) == []
+    # And the second mention points back at what was already named.
+    assert _dangling_counts(
+        "竖着看分四类。一是预训练。二是指令微调。三是偏好数据。四是基准测试。"
+        "四类支撑模型从训练到质检的全流程。"
+    ) == []
 
     scenes = [_scene(i, narration="平台上有三块开放机制。") for i in range(1, 6)]
     completeness = next(

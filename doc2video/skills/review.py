@@ -51,7 +51,11 @@ _COUNTED = re.compile(
     r"(?<!第)([两二三四五六七八九]|[2-9])\s*(个|块|类|项|条|种|大|步|方面|部分|层)"
 )
 _ANAPHORA = ("这", "那", "上述", "以上", "其中", "前面")
-_ITEM_SPLIT = re.compile(r"[，、；：]|以及|和|及")
+# Items are separated by whatever the writer used. 「方案分五部分。一是背景及
+# 技术牵头方。二是核心市场痛点分析。……」 names all five and was read as naming
+# two, because the split knew about commas and not about full stops — and the
+# one separator it did find was the 及 inside 「背景及技术牵头方」.
+_ITEM_SPLIT = re.compile(r"[，、；：。！？]|以及|和|及")
 _COUNT_VALUE = {"两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 
 
@@ -179,6 +183,7 @@ def _dangling_counts(narration: str) -> list[tuple[str, int, int]]:
     """Counts the script announces and then does not name: `(phrase, said, named)`."""
     sentences = [part for part in re.split(r"(?<=[。！？])", narration) if part.strip()]
     found: list[tuple[str, int, int]] = []
+    counted_once: set[str] = set()
     for index, sentence in enumerate(sentences):
         match = _COUNTED.search(sentence)
         if match is None:
@@ -186,6 +191,13 @@ def _dangling_counts(narration: str) -> list[tuple[str, int, int]]:
         head = sentence[: match.start()]
         if any(head.endswith(word) for word in _ANAPHORA):
             continue
+        # The second time a page says 「四类」 it is pointing back at the four it
+        # already named: 「……四是基准测试数据集，管质检。四类支撑模型从基础训练
+        # 到质检评估的全流程。」 is a page that named every one of them and was
+        # read as naming two.
+        if match.group(0) in counted_once:
+            continue
+        counted_once.add(match.group(0))
         said = _COUNT_VALUE.get(match.group(1)) or int(match.group(1))
         span = sentence + "".join(sentences[index + 1 :])
         named = len([piece for piece in _ITEM_SPLIT.split(span) if piece.strip()])
