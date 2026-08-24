@@ -48,15 +48,18 @@ def test_the_mark_says_how_long_the_pause_is():
     units = plan_units(sentences)
     beats = [unit.pause_before for unit in units]
 
+    # 「一半是量、一半是质；」 is spoken as one: a 、 between two scraps is the
+    # shortest gap there is, and three characters on their own cost more in
+    # engine overhead than the gap is worth. Every other mark keeps its beat.
     assert [u.text for u in units] == [
-        "先看结论。", "分成两半：", "一半是量、", "一半是质；", "再看代价。",
+        "先看结论。", "分成两半：", "一半是量、一半是质；", "再看代价。",
     ]
     assert beats[0] == 0.0  # the scene's own lead silence is already there
     assert beats[1] == PAUSE_SENTENCE
     assert beats[2] == PAUSE_COLON
-    assert beats[3] == PAUSE_ENUM
-    assert beats[4] == PAUSE_SEMICOLON
-    assert PAUSE_ENUM < PAUSE_COMMA < PAUSE_COLON < PAUSE_SEMICOLON < PAUSE_SENTENCE < PAUSE_EXCLAIM
+    assert beats[3] == PAUSE_SEMICOLON
+    assert PAUSE_ENUM < PAUSE_COMMA < PAUSE_COLON < PAUSE_SEMICOLON < PAUSE_SENTENCE
+    assert PAUSE_SENTENCE < PAUSE_EXCLAIM
 
 
 def test_a_closing_quote_does_not_hide_the_mark():
@@ -286,3 +289,24 @@ def test_a_sentence_keeps_one_window_however_many_clauses_it_has(tmp_path: Path)
     # The comma inside the first sentence does not end it, and the gap before
     # the second is the full stop's.
     assert first.end < second.start
+
+
+def test_a_run_of_tiny_enumerated_scraps_is_spoken_as_one():
+    """「建供应链、外贸、招投标三类情报，」 is three clips of three characters.
+
+    Each clip pays the engine's own end-of-utterance lengthening, and a page of
+    them came out a fifth slower than the same words in fewer pieces: measured,
+    224 characters in 37 clips ran at 190 characters a minute where the script
+    had been running at 265. Merged, the same page runs 273.
+
+    Only across 、, and only while the result stays short: every mark that
+    means something still gets the pause we chose.
+    """
+    units = plan_units(["建供应链、外贸、招投标三类情报，统一数据底座关联研判。"])
+
+    assert [unit.text for unit in units][0] == "建供应链、外贸、招投标"
+    # The comma's own pause is still ours.
+    assert any(unit.pause_before == PAUSE_COMMA for unit in units)
+    # And a long enumeration is not glued into one breathless run.
+    long_list = plan_units(["监测价格、供需、库存、装置运行、物流事件、政策变化、行情波动。"])
+    assert max(len(unit.text) for unit in long_list) <= 20

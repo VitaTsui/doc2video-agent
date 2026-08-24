@@ -56,6 +56,8 @@ from ...core import tuning
 # every silence in the film is one somebody chose.
 PAUSE_COMMA = 0.32      # ，— a breath, not a stop
 PAUSE_ENUM = 0.24       # 、— the shortest thing that is still a gap
+# How long a run of 、-separated scraps may grow before it is spoken as one.
+MERGE_UNTIL = 16
 PAUSE_SENTENCE = 0.82   # 。 and a line that ends with no mark at all
 PAUSE_EXCLAIM = 0.85    # ！？ — the sentence lands, then a beat
 PAUSE_SEMICOLON = 0.55  # ；— two halves of one thought
@@ -164,6 +166,32 @@ def clauses(sentence: str) -> list[str]:
     return pieces or ([sentence] if sentence.strip() else [])
 
 
+def _merge_short(pieces: list[str]) -> list[str]:
+    """Put a run of tiny enumerated clauses back into one utterance.
+
+    「建供应链、外贸、招投标三类情报，」 is three characters, two characters and
+    eight — spoken as three clips, each paying the engine's own end-of-utterance
+    lengthening, and the page came out a fifth slower than the same words in
+    fewer pieces. Measured on a 30-page film: 224 characters in 37 clips, 190
+    characters a minute against the 265 the same script ran at before.
+
+    Only across 、, and only while the result stays short. The gaps this gives
+    back to the engine are the shortest ones it takes; every mark that means
+    something still gets the pause we chose.
+    """
+    merged: list[str] = []
+    for piece in pieces:
+        if (
+            merged
+            and mark_of(merged[-1]) == "enum"
+            and len(merged[-1]) + len(piece) <= MERGE_UNTIL
+        ):
+            merged[-1] += piece
+            continue
+        merged.append(piece)
+    return merged
+
+
 def plan_units(
     sentences: list[str], *, emphasis: list[bool] | None = None, weight=None  # noqa: ARG001
 ) -> list[Unit]:
@@ -192,7 +220,7 @@ def plan_units(
         # `mid` marks a piece that is a breath inside a clause rather than the
         # end of one: the gap after it is a seam, not a beat.
         pieces: list[tuple[str, bool]] = []
-        for clause in clauses(sentence.strip()):
+        for clause in _merge_short(clauses(sentence.strip())):
             parts = breaths(clause)
             pieces += [(part, order < len(parts) - 1) for order, part in enumerate(parts)]
 
