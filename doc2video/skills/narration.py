@@ -444,7 +444,9 @@ class NarrationSkill(Skill):
                 ceiling = int(allowed * pace)
                 current = draft
                 for _round in range(COMPRESSION_ROUNDS):
-                    rewritten = self._compress_with_model(page, current, ceiling)
+                    rewritten = self._compress_with_model(
+                        page, current, ceiling, attempt=_round + 1
+                    )
                     if rewritten is None:
                         break
                     current = rewritten
@@ -461,7 +463,12 @@ class NarrationSkill(Skill):
         return trimmed
 
     def _compress_with_model(
-        self, page: DocumentPage | None, draft: PageNarration, allowed: int
+        self,
+        page: DocumentPage | None,
+        draft: PageNarration,
+        allowed: int,
+        *,
+        attempt: int = 1,
     ) -> PageNarration | None:
         """The same page, said shorter. None when it could not be done.
 
@@ -510,7 +517,13 @@ class NarrationSkill(Skill):
             f"现在的讲稿：\n{draft.narration}"
         )
         try:
-            with ledger.call(self.llm.source, f"第 {page.index} 页｜压到 {allowed} 字"):
+            # The round is part of what to call this: three passes over one page
+            # are three records, and without the number the account repeated
+            # 「第 17 页，压到 175 字」 three times and read as something stuck.
+            said = f"第 {page.index} 页｜压到 {allowed} 字"
+            if attempt > 1:
+                said += f"｜第 {attempt} 轮"
+            with ledger.call(self.llm.source, said, covers=[ledger.page_key(page.index)]):
                 result = self.llm.complete_json(
                     self._prompt([page], {page.index: allowed / self._pace()},
                                  position=page.index - 1) + f"\n\n# 返工\n{note}",
