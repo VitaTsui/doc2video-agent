@@ -4,7 +4,15 @@ import type { PlanAction } from "../types";
 
 const POINTER_COLOR = "#E2574C";
 
-/** A marker that lands on the target and pulses once — "look here". */
+/**
+ * A marker that lands beside the target and pulses once — "look here".
+ *
+ * Beside, not on. Centred, it sat on top of the words it was pointing at: a
+ * red disc over 「核心市场痛点分析」 covers two of the six characters it exists
+ * to draw the eye to. It goes to the left edge instead, just outside the box,
+ * and falls back to inside that edge when the target is already against the
+ * left of the frame.
+ */
 export const Pointer: React.FC<{ action: PlanAction; time: number }> = ({
   action,
   time,
@@ -24,11 +32,16 @@ export const Pointer: React.FC<{ action: PlanAction; time: number }> = ({
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
   );
 
+  // A little to the left of the target, vertically centred on it. `GAP` is in
+  // fractions of the frame, so it holds at any render size.
+  const GAP = 0.012;
+  const left = area.x - GAP > 0.01 ? area.x - GAP : area.x + Math.min(area.w / 2, GAP);
+
   return (
     <div
       style={{
         position: "absolute",
-        left: `${(area.x + area.w / 2) * 100}%`,
+        left: `${left * 100}%`,
         top: `${(area.y + area.h / 2) * 100}%`,
         width: 28,
         height: 28,

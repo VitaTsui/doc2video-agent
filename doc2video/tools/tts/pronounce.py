@@ -42,6 +42,33 @@ SPELL_OUT = {
 
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+]*")
 
+# An all-caps run this long or shorter is an initialism, and its letters are
+# what it is. Measured with `say`: 「CCAI」 comes back in 0.40 seconds — a word,
+# not four letters, which take 1.01. Five letters and up is left alone, because
+# that is where the caps start being a word in capitals: 「SKILL.md」 is a file
+# name, not S-K-I-L-L.
+SPELL_LIMIT = 4
+# Read as words by people, so reading them as letters would be the mistake.
+# Two kinds: acronyms that became words, and ordinary words a slide happens to
+# set in capitals — a deck's 「MAIL」 is mail, not M-A-I-L.
+SAID_AS_WORDS = frozenset(
+    {
+        "NASA", "OPEC", "IEEE", "SAAS", "JSON", "YAML", "SQL", "GUI", "JAVA", "DEMO",
+        "MAIL", "HOME", "NEXT", "TEAM", "DATA", "TIME", "USER", "PLUS", "MENU", "NEWS",
+        "OPEN", "FREE", "MORE", "BEST", "TOP", "NEW", "ALL", "END", "MAP", "WEB", "APP",
+    }
+)
+
+
+def _is_initialism(token: str) -> bool:
+    """Whether this Latin token is a set of letters rather than a word."""
+    return (
+        token.isupper()
+        and token.isalpha()
+        and 2 <= len(token) <= SPELL_LIMIT
+        and token not in SAID_AS_WORDS
+    )
+
 
 def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
     """`text` as it should be spoken. The caption keeps the original.
@@ -50,8 +77,6 @@ def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
     about a company called RAG is talking about the company.
     """
     table = {**SPELL_OUT, **(extra or {})}
-    if not table:
-        return text
 
     # Latin terms are matched as whole tokens — 「AI」 must not fire inside
     # 「MAIL」. Anything else has no token boundaries to speak of, so it is a
@@ -63,7 +88,12 @@ def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
     lookup = {key.upper(): value for key, value in latin.items()}
 
     def swap(match: re.Match[str]) -> str:
-        return lookup.get(match.group(0).upper(), match.group(0))
+        token = match.group(0)
+        if (named := lookup.get(token.upper())) is not None:
+            return named
+        if _is_initialism(token):
+            return " ".join(token)
+        return token
 
     spoken = _TOKEN.sub(swap, text)
     for term in other:

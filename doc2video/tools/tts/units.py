@@ -180,25 +180,53 @@ def plan_units(
     flags = list(emphasis or [])
     flags += [False] * (len(sentences) - len(flags))
 
+    from .phrasing import BREATH, breaths
+
     units: list[Unit] = []
-    previous = ""
+    previous, previous_mid = "", False
     for index, sentence in enumerate(sentences):
-        pieces = clauses(sentence.strip())
-        for position, piece in enumerate(pieces):
-            gap = pause_after(previous) if previous else 0.0
+        # A clause with no punctuation in it is spoken in one unbroken push.
+        # Long ones get the small breaths their own words allow — the seam a
+        # person takes in 「它是全国石化化工领域唯一…」, which is not a pause and
+        # is not nothing either.
+        # `mid` marks a piece that is a breath inside a clause rather than the
+        # end of one: the gap after it is a seam, not a beat.
+        pieces: list[tuple[str, bool]] = []
+        for clause in clauses(sentence.strip()):
+            parts = breaths(clause)
+            pieces += [(part, order < len(parts) - 1) for order, part in enumerate(parts)]
+
+        for position, (piece, _mid) in enumerate(pieces):
+            if not previous:
+                gap = 0.0
+            elif previous_mid:
+                gap = BREATH
+            else:
+                gap = pause_after(previous)
             # The sentence's own beat — a turn, or the writer's mark — belongs
             # to the sentence, not to every clause inside it.
             own = _emphasis_of(piece, flags[index]) if position == 0 else 0.0
             units.append(
                 Unit(texts=[piece], pause_before=max(gap, own), sentence=index)
             )
-            previous = piece
+            previous, previous_mid = piece, _mid
 
     if units:
         # Nothing to pause before at the start; the scene's own lead silence
         # is already there.
         units[0].pause_before = 0.0
     return units
+
+
+def _ends_sentence(text: str) -> bool:
+    """Whether this piece actually ends on a mark, rather than mid-clause.
+
+    `mark_of` reads an unmarked piece as a full stop, which is right for a line
+    that simply has no punctuation and wrong for a breath taken in the middle
+    of one.
+    """
+    stripped = text.rstrip().rstrip(TRAILING).rstrip()
+    return any(stripped.endswith(mark) for mark, _kind in MARKS)
 
 
 def _emphasis_of(sentence: str, emphasised: bool) -> float:
