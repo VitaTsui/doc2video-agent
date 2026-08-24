@@ -38,6 +38,13 @@ from .base import Skill
 # rephrasing still counts; 0.35 keeps a card apart from its neighbour on a
 # four-card page, where the headings share their shape but not their nouns.
 MENTION_THRESHOLD = 0.35
+# …or this many character pairs outright. A clause can only ever cover a small
+# share of a long paragraph — 「是聚焦基地建设任务」 shares 15% of the 57-character
+# block it is quoting — so a share-only gate could never point at a paragraph
+# and pointed at the four-character chip above it instead. Measured on that
+# page: the right block shares 6–9 pairs with the clause quoting it, the wrong
+# ones share 2–4.
+MENTION_PAIRS = 6
 
 # When a page would otherwise get no camera at all, half a match is better than
 # a motionless page.
@@ -168,7 +175,8 @@ class DirectorSkill(Skill):
             segment = segments.get(segment_id or "")
             element = page.element(action.target) if action.target else None
             if action.target and element is not None and segment is not None:
-                if _mentioned(element.text, segment.text) < MENTION_THRESHOLD:
+                hit, share = _shared_grams(element.text, segment.text)
+                if share < MENTION_THRESHOLD and hit < MENTION_PAIRS:
                     dropped += 1
                     continue
             kept.append(action)
@@ -325,10 +333,17 @@ class DirectorSkill(Skill):
         for element in page.elements:
             if element.kind is ElementKind.TITLE or not _worth_pointing_at(element):
                 continue
-            share = _mentioned(element.text, segment.text)
-            if share < threshold:
+            hit, share = _shared_grams(element.text, segment.text)
+            if share < threshold and hit < MENTION_PAIRS:
                 continue
-            score = share + element.importance / 10
+            # How much of the sentence this element accounts for, not what
+            # share of the element the sentence covers. Sharing everything is
+            # easy for a four-character chip — 「揭榜要求」 scored a perfect 1.0
+            # against a sentence that went on to say the paragraph underneath
+            # it, and the box framed the label while the narrator read the
+            # text. The paragraph shares a smaller share of itself and far more
+            # of the sentence, which is the thing being said.
+            score = hit + element.importance
             if best is None or score > best[0]:
                 best = (score, element.id)
         return best[1] if best else None
@@ -536,14 +551,20 @@ def _worth_looking_at(page: DocumentPage) -> bool:
     return sum(1 for element in page.elements if _worth_pointing_at(element)) >= 2
 
 
-def _mentioned(element_text: str, sentence: str) -> float:
-    """How much of `element_text` turns up in `sentence`, by character bigram."""
+def _shared_grams(element_text: str, sentence: str) -> tuple[int, float]:
+    """`(how many, what share)` of `element_text` turns up in `sentence`."""
     element_text, sentence = element_text.strip(), sentence.strip()
     if len(element_text) < 3 or len(sentence) < 3:
-        return 0.0
+        return (0, 0.0)
     grams = {element_text[i : i + 2] for i in range(len(element_text) - 1)}
     said = {sentence[i : i + 2] for i in range(len(sentence) - 1)}
-    return len(grams & said) / len(grams)
+    hit = len(grams & said)
+    return (hit, hit / len(grams))
+
+
+def _mentioned(element_text: str, sentence: str) -> float:
+    """What share of `element_text` turns up in `sentence`, by character bigram."""
+    return _shared_grams(element_text, sentence)[1]
 
 
 def _action_budget(scene: Scene) -> int:

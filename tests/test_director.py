@@ -514,3 +514,42 @@ def test_a_box_the_sentence_never_mentions_is_dropped(
     scene = _run(page, _scene([segment]), settings, store)
 
     assert not [a for a in scene.actions if a.target]
+
+
+def test_the_box_goes_to_the_text_being_read_not_to_its_label(
+    settings: Settings, store: ProjectStore
+):
+    """「揭榜要求」 is a four-character chip above the paragraph it introduces.
+
+    Ranked by what share of the *element* the sentence covers, the chip scored
+    a perfect 1.0 and won — the box framed the label while the narrator read
+    the text under it. Ranked by how much of the sentence each element accounts
+    for, the paragraph wins with eighteen matched pairs against the chip's
+    three.
+    """
+    page = _page(
+        [
+            SlideElement(
+                id="chip", kind=ElementKind.PARAGRAPH, text="揭榜要求",
+                bbox=BBox(x=100, y=100, w=120, h=40), importance=0.6,
+            ),
+            SlideElement(
+                id="body", kind=ElementKind.PARAGRAPH,
+                text="聚焦基地建设任务，重点解决人工智能技术赋能石化化工行业关键问题，以成果落地应用为牵引。",
+                bbox=BBox(x=100, y=200, w=700, h=120), importance=0.6,
+            ),
+        ]
+    )
+    segment = NarrationSegment(
+        id="scene_01_s01",
+        text="揭榜要求这一条，是聚焦基地建设任务，以成果落地应用为牵引。",
+        start=0.0,
+        end=9.0,
+    )
+    scene = _run(page, _scene([segment]), settings, store)
+
+    boxes = [a.target for a in scene.actions if a.target]
+    # The chip first — 「揭榜要求这一条」 does point at it — and then the paragraph
+    # the rest of the sentence is quoting. Before this, the chip won outright
+    # and the box sat on the label for the whole sentence.
+    assert boxes == ["chip", "body"]

@@ -55,7 +55,7 @@ from ...core import tuning
 # mark costs more clips and buys the only thing that makes this predictable:
 # every silence in the film is one somebody chose.
 PAUSE_COMMA = 0.32      # ，— a breath, not a stop
-PAUSE_ENUM = 0.16       # 、— the shortest thing that is still a gap
+PAUSE_ENUM = 0.24       # 、— the shortest thing that is still a gap
 PAUSE_SENTENCE = 0.82   # 。 and a line that ends with no mark at all
 PAUSE_EXCLAIM = 0.85    # ！？ — the sentence lands, then a beat
 PAUSE_SEMICOLON = 0.55  # ；— two halves of one thought

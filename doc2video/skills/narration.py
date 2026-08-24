@@ -423,6 +423,7 @@ class NarrationSkill(Skill):
             f"这一页现在 {len(draft.narration)} 字，要压到 {allowed} 字以内。\n"
             "**内容一处都不能少**：现在讲到的每一处，改写后还要讲到。\n"
             "压的是字，不是信息——删修饰词、合并重复的说法、去掉可有可无的连接词、"
+            "报了数的地方，几项的名字一个都不能少（说了「五部分」就得点出五个）、"
             "把长句拆成短句。宁可每句只剩七八个字。\n\n"
             f"现在的讲稿：\n{draft.narration}"
         )
@@ -450,10 +451,18 @@ class NarrationSkill(Skill):
             # nine of its ten blocks where the rule says seven — and requiring
             # 「不比原来少」 rejected every rewrite of exactly the pages that
             # needed one: 2–2.5× over budget, and left alone.
-            from .review import worth_naming
+            from .review import _dangling_counts, worth_naming
+
             floor = min(missed_items(draft.narration, page)[0], worth_naming(page))
             if missed_items(candidate.narration, page)[0] < floor:
                 self.log.info("第 %d 页改写后少讲了内容，不采用", page.index)
+                continue
+            # And it must not turn a named list back into a bare count. The
+            # rewrite is asked for fewer words, and 「五部分」 followed by two of
+            # them is exactly the shape that gets noticed — the check existed
+            # for the writing step and this path was not running it.
+            if _dangling_counts(candidate.narration) and not _dangling_counts(draft.narration):
+                self.log.info("第 %d 页改写后变成报了数不点名，不采用", page.index)
                 continue
             self.log.info(
                 "第 %d 页改写压缩：%d → %d 字", page.index,
