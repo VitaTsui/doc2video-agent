@@ -5,13 +5,11 @@ import type { PlanAction } from "../types";
 const POINTER_COLOR = "#E2574C";
 
 /**
- * A marker that lands beside the target and pulses once — "look here".
+ * A marker that lands on the target's edge and pulses once — "look here".
  *
- * Beside, not on. Centred, it sat on top of the words it was pointing at: a
- * red disc over 「核心市场痛点分析」 covers two of the six characters it exists
- * to draw the eye to. It goes to the left edge instead, just outside the box,
- * and falls back to inside that edge when the target is already against the
- * left of the frame.
+ * On the edge, not in the middle. Centred, it sat on top of the words it was
+ * pointing at: a red disc over 「核心市场痛点分析」 covers two of the six
+ * characters it exists to draw the eye to.
  */
 export const Pointer: React.FC<{ action: PlanAction; time: number }> = ({
   action,
@@ -32,10 +30,12 @@ export const Pointer: React.FC<{ action: PlanAction; time: number }> = ({
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
   );
 
-  // A little to the left of the target, vertically centred on it. `GAP` is in
-  // fractions of the frame, so it holds at any render size.
-  const GAP = 0.012;
-  const left = area.x - GAP > 0.01 ? area.x - GAP : area.x + Math.min(area.w / 2, GAP);
+  // Centred on the target's left edge: half the disc outside it, half inside.
+  // Fully outside was where it went first, and the render check — which asks
+  // whether anything inside the target changed — then reported nine pointers
+  // as never drawn, correctly. Straddling the edge keeps the words clear and
+  // leaves something to see inside the box.
+  const left = Math.max(area.x, 0.008);
 
   return (
     <div
