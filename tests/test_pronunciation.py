@@ -35,8 +35,8 @@ def test_a_short_run_of_capitals_is_read_as_letters():
     # Only the letters a Chinese voice mis-reads on their own are written as
     # syllables: 「A」 came back as 啊. 「C」 is better left as the letter — 「西」
     # is a Chinese word that merely sounds near it.
-    assert for_speech("AI 应用中试平台") == "诶艾 应用中试平台"
-    assert for_speech("浙江大学 CCAI 宁波中心") == "浙江大学 CC诶艾 宁波中心"
+    assert for_speech("AI 应用中试平台") == "诶爱 应用中试平台"
+    assert for_speech("浙江大学 CCAI 宁波中心") == "浙江大学 CC诶爱 宁波中心"
     # All consonants: nothing to rewrite, and nothing to separate either —
     # the engine reads MCP as its letters on its own.
     assert for_speech("石化生态 MCP 工具库") == "石化生态 MCP 工具库"

@@ -28,7 +28,7 @@ from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisu
 from ..tools.llm import model_schema
 from ..tools.tts import estimate_duration
 from .base import ProgressFn, Skill, load_prompt
-from .review import page_share_chars
+from .review import density, page_share_chars
 
 # Pages per model call. Small enough that a long deck cannot overrun the
 # output budget, large enough that each page can see its neighbours.
@@ -126,6 +126,38 @@ class PageNarration(BaseModel):
 
 class NarrationResult(BaseModel):
     pages: list[PageNarration]
+
+
+def _density_note(page, budget: int) -> str:
+    """How much of this page to tell, said as what to do rather than as a ratio.
+
+    Density used to be left to the writer to judge from the number of blocks it
+    could see, and blocks are the wrong measure: 「技术牵头方」 is four blocks —
+    three labels and one 342-character paragraph — so it read as a sparse page
+    and got read out in full. What matters is how much text there is against
+    what the budget can say.
+
+    Three bands rather than a switch. A page at 1.2× has to be tightened; a
+    page at 3× has to be chosen from; and telling a 1.2× page to 「挑重点」 is how
+    a script that was finally following the document starts summarising it
+    again.
+    """
+    ratio = density(page, budget)
+    if ratio <= 1.2:
+        return (
+            f"这一页文字 {ratio:.1f} 倍于预算，装得下：按页面原文讲，"
+            "一处一句，不要概括。"
+        )
+    if ratio <= 2.0:
+        return (
+            f"这一页文字 {ratio:.1f} 倍于预算，略微超出：每一处都要点到，"
+            "但长的那一两处只讲要点——名称、数字、结论，不要照读整段。"
+        )
+    return (
+        f"这一页文字 {ratio:.1f} 倍于预算，是密的页：挑重点讲。"
+        "先按骨架把每个板块点到（小标题、每一栏），长段落只取名称、数字和结论，"
+        "举例、括号里的补充、脚注可以不讲。没讲到的不要提。"
+    )
 
 
 class NarrationSkill(Skill):
@@ -930,6 +962,7 @@ class NarrationSkill(Skill):
                 "报了数就要点名：说了「三块」「四类」，就要把这几项的名字说出来，"
                 "装不下就别报数。"
             )
+            lines.append(_density_note(page, budget))
             # The page's own words come first and are named as the material.
             # They used to come last, under 「元素：」, after a summary and a
             # key-point list the understanding step had written — so the first

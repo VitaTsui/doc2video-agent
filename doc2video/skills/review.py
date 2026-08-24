@@ -124,6 +124,18 @@ def worth_naming(page) -> int:
     return min(count, math.ceil(NAMING_SHARE * math.sqrt(count))) if count else 0
 
 
+def density(page, budget: int) -> float:
+    """How much of this page's text the script can afford. Above 1 it cannot.
+
+    Density is how much there is to say, not how many boxes it is in. Counting
+    boxes made 「技术牵头方」 a sparse page — four blocks, three of them labels —
+    and it was read out in full, while the fourth block is a 342-character
+    paragraph and the page carries three times what its budget can say.
+    """
+    written = len(page.raw_text().strip())
+    return written / max(budget, 1)
+
+
 def item_share_chars(text: str) -> int:
     """What naming this one block costs, by its own size."""
     return max(MIN_ITEM_CHARS, math.ceil(ITEM_SHARE * math.sqrt(len(text.strip()))))

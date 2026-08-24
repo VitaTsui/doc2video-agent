@@ -51,10 +51,12 @@ SPELL_LIMIT = 4
 
 # The letters a Chinese voice mis-reads on their own, written as the syllable
 # that is the letter's name. A lone 「A」 came back as 啊 — an interjection —
-# and 「I」 fares no better. The consonants do not need this and are worse for
+# and 「I」 fares no better. 「I」 is 爱 rather than 艾: both are that vowel, and
+# 艾 next to 诶 came out closer to 「一艾」 than to 「A-I」 — chosen by listening
+# to the same sentence read five ways. The consonants do not need this and are worse for
 # it: 「C」 read as a Latin letter is the letter, and 「西」 is a Chinese word
 # that happens to sound near it.
-LETTER_SOUNDS = {"A": "诶", "E": "伊", "I": "艾", "O": "欧", "U": "尤"}
+LETTER_SOUNDS = {"A": "诶", "E": "伊", "I": "爱", "O": "欧", "U": "尤"}
 # Read as words by people, so reading them as letters would be the mistake.
 # Two kinds: acronyms that became words, and ordinary words a slide happens to
 # set in capitals — a deck's 「MAIL」 is mail, not M-A-I-L.
