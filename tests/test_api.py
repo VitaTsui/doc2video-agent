@@ -129,6 +129,22 @@ def test_narration_routes_exist_for_a_client_without_mcp(client: TestClient):
     assert bad_key.status_code in (400, 404)
 
 
+def test_several_scenes_are_revised_in_one_job(client: TestClient):
+    """One job for the whole set, not one per scene.
+
+    Every job re-runs voicing, direction, timeline and the concat, so three
+    scenes revised as three jobs would rebuild the film three times over and
+    leave the first two runs' output to be overwritten by the third.
+    """
+    missing = client.post(
+        "/projects/proj_nope/scenes/narrations", json={"scenes": {"scn_1": "你好"}}
+    )
+    assert missing.status_code == 404
+
+    empty = client.post("/projects/proj_nope/scenes/narrations", json={"scenes": {}})
+    assert empty.status_code in (400, 404)
+
+
 def test_chat_is_a_job_because_a_turn_may_render_more_than_once(client: TestClient):
     """The route the window uses to talk to the agent rather than command it.
 

@@ -398,6 +398,18 @@ export function App() {
         setRunning(false)
       }
       amend(card, { job: final })
+      // One last read of the record. The last step of a run is written after
+      // the job reports itself done, so whatever the polling caught was the
+      // run minus its closing lines — the chain said 「已思考 0 秒」 and kept
+      // every routine line it should have folded away.
+      const done = final.project_id ?? watching.current
+      if (done) {
+        const entries = await api.ledger(done).catch(() => null)
+        if (entries?.length) {
+          const latest = entries[entries.length - 1].run_id
+          amend(card, { steps: entries.filter((e) => e.run_id === latest), projectId: done })
+        }
+      }
       // A finished turn changes a project's duration, its output, and its
       // place in the list; the sidebar is stale until it is re-read.
       void loadProjects()
@@ -407,9 +419,13 @@ export function App() {
         current?.deck ? { ...current, deck: { ...current.deck, locked: false } } : current,
       )
 
-      // Stopping on purpose is not a failure, and the card above already
-      // says 「已中止」 — a second line calling it one would be wrong twice.
-      if (final.status === 'cancelled') return
+      // Stopping on purpose is not a failure. It does have to be said now:
+      // the progress card that used to say 「已中止」 is gone, and a chain that
+      // simply folds itself up looks like a run that finished.
+      if (final.status === 'cancelled') {
+        say({ role: 'assistant', kind: 'text', text: '停下了，已经做出来的都留着。' })
+        return
+      }
 
       if (final.status !== 'succeeded' || !final.project_id) {
         say({

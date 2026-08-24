@@ -1895,6 +1895,71 @@ body {
   margin-top: 6px;
 }
 
+/* The live line on the left, how far along and the way out on the right. One
+   row, no frame: this replaced a bordered card with a progress bar in it,
+   which is a control panel, and a conversation does not have one. */
+.chain__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chain__aside {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.chain__stop {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.chain__stop:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+/* Minutes of work, as a hairline under the line that says what is happening.
+   Two pixels, no container: something to glance at rather than watch. */
+.chain__track {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line);
+  margin: 6px 0 4px;
+  overflow: hidden;
+}
+
+.chain__fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+/* No denominator to fill against — the stages that do not loop over scenes.
+   It sweeps rather than sits at zero. */
+.chain__fill--pulse {
+  width: 30%;
+  animation: chain-sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes chain-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
 .chain__head {
   display: inline-flex;
   align-items: center;

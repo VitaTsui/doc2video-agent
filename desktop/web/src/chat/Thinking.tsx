@@ -22,7 +22,16 @@ import type { JobState, LedgerEntry } from '../api'
 /** One line of the chain. */
 type Thought = { key: string; text: string; lead?: boolean }
 
-export function Thinking({ entries, job }: { entries: LedgerEntry[]; job: JobState | null }) {
+export function Thinking({
+  entries,
+  job,
+  onStop,
+}: {
+  entries: LedgerEntry[]
+  job: JobState | null
+  /** Ask the run to stop. Sits in the header, where the run is. */
+  onStop?: () => void
+}) {
   const running = !job || job.status === 'queued' || job.status === 'running'
   // `null` means "whatever the run is doing": open while it works, folded once
   // it stops. A click pins it either way — someone reading step twelve should
@@ -37,7 +46,8 @@ export function Thinking({ entries, job }: { entries: LedgerEntry[]; job: JobSta
     if (running && body.current) body.current.scrollTop = body.current.scrollHeight
   }, [lines.length, running])
 
-  if (lines.length === 0) return null
+  // Nothing said yet and nothing running: there is no turn to describe.
+  if (lines.length === 0 && !running) return null
 
   const worked = entries
     .filter((entry) => entry.kind === 'stage')
@@ -46,20 +56,50 @@ export function Thinking({ entries, job }: { entries: LedgerEntry[]; job: JobSta
 
   return (
     <div className="chain">
-      <button type="button" className="chain__head" onClick={() => setPinned(!open)}>
-        <ChevronIcon open={open} size={14} />
-        {running ? (
-          // While it works the header is the live line itself, so a folded
-          // chain still says what is happening rather than only that something
-          // is. 「正在思考」 for four minutes is the thing this replaces.
-          <span className="chain__live">{open ? '正在思考…' : last.text}</span>
-        ) : (
-          <span>
-            {'已思考 '}
-            <span className="chain__time">{spell(worked)}</span>
+      <div className="chain__row">
+        <button type="button" className="chain__head" onClick={() => setPinned(!open)}>
+          <ChevronIcon open={open} size={14} />
+          {running ? (
+            // While it works the header is the live line itself, so a folded
+            // chain still says what is happening rather than only that
+            // something is. 「正在思考」 for four minutes is what this replaces.
+            // Open, the newest line is right below and saying it twice is
+            // just a repetition; folded, it is the only thing left to say.
+            <span className="chain__live">{open ? '正在思考…' : (last?.text ?? '正在开始…')}</span>
+          ) : (
+            <span>
+              {'已思考 '}
+              <span className="chain__time">{spell(worked)}</span>
+            </span>
+          )}
+        </button>
+        {/* How far through, and the way out. They used to sit in a bordered
+            card of their own above this — a control panel dropped into a
+            conversation. Minutes of work still need a way to be taken back;
+            they do not need a frame around them. */}
+        {running && (
+          <span className="chain__aside muted">
+            {job && job.total > 0 && <span className="chain__time">{`${job.done}/${job.total}`}</span>}
+            {onStop && (
+              <button type="button" className="chain__stop" disabled={job?.stopping} onClick={onStop}>
+                {job?.stopping ? '正在停…' : '中止'}
+              </button>
+            )}
           </span>
         )}
-      </button>
+      </div>
+
+      {/* A hairline, not a bar in a box: something to glance at, under the
+          line that already says what is happening. */}
+      {running && (
+        <div className="chain__track">
+          {job && job.total > 0 ? (
+            <div className="chain__fill" style={{ width: `${(job.done / job.total) * 100}%` }} />
+          ) : (
+            <div className="chain__fill chain__fill--pulse" />
+          )}
+        </div>
+      )}
 
       {open && (
         <div ref={body} className={running ? 'chain__body chain__body--live' : 'chain__body'}>

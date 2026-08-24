@@ -1,0 +1,16 @@
+# 用插件的方式挂 doc2video（另一条路是上一级目录的 MCP 桥接）。
+#
+#   dsh --profile <profile> --patch /绝对路径/integrations/dsh/plugin/cordis.patch.yml
+#
+# 后端不用自己起：留空 baseUrl，插件会自己拉起来，端口和 token 都是它挑的，
+# dsh 退出时一并收掉。
+- insert:
+    - id: doc2video
+      name: 'dsh-plugin-doc2video'
+      config:
+        # 装过 `pip install doc2video-agent` 就是 doc2video；从源码跑的话
+        # 换成 uv：command: uv，args: ['run', '--project', '/绝对路径/doc2video-agent']
+        command: doc2video
+        args: []
+        # 配音引擎、语速这类偏好，直接作为环境变量交给后端。
+        env: {}

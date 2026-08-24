@@ -2,7 +2,6 @@
 
 import { useEffect, useRef } from 'react'
 
-import { JobCard } from './JobCard'
 import { Thinking } from './Thinking'
 import type { Message } from './types'
 
@@ -86,20 +85,19 @@ export function MessageList({
                   </button>
                 </div>
               )}
+              {/* What it is thinking, as it thinks it — the chain, not the
+                  filing cabinet. The full account, with every page render and
+                  audio clip openable, stays in the panel: a conversation is a
+                  place for sentences. How far along it is and the way to stop
+                  it live in the chain's own header; a bordered progress card
+                  in the middle of a chat is a control panel, and no chat has
+                  one. */}
               {message.kind === 'job' && (
-                <>
-                  <JobCard
-                    job={message.job}
-                    onStop={message.job ? () => onStop(message.job!.job_id) : undefined}
-                  />
-                  {/* What it is thinking, as it thinks it — the chain, not
-                      the filing cabinet. The full account, with every page
-                      render and audio clip openable, stays in the panel: a
-                      conversation is a place for sentences. */}
-                  {(message.steps?.length ?? 0) > 0 && (
-                    <Thinking entries={message.steps!} job={message.job} />
-                  )}
-                </>
+                <Thinking
+                  entries={message.steps ?? []}
+                  job={message.job}
+                  onStop={message.job ? () => onStop(message.job!.job_id) : undefined}
+                />
               )}
               {/* A reference, not the thing itself. Unrolling a player, a
                   quality report and a thirty-entry ledger into the middle of
