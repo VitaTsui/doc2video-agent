@@ -140,11 +140,12 @@ class VoiceSkill(Skill):
                 self.project.intent.speech_rate or self.ctx.settings.tts_speech_rate,
                 self.tts.chars_per_second,
             )
-            # Silence is what this engine produces; re-speaking it five times
-            # produces it five more times. The film being mute is real and is
-            # reported — by the review, once for the film, rather than here
-            # thirty times for nothing.
-            if scene.audio.provider == SilentProvider.name:
+            # Re-speaking silence produces silence — but only when silence is
+            # all this machine has. A page that came out silent while a real
+            # voice is available is the one page that most needs saying again:
+            # it is what a single `say` timeout looks like, and it cost a deck
+            # twenty-seven mute pages before this told them apart.
+            if scene.audio.provider == SilentProvider.name and not self._has_voice():
                 continue
 
             quiet = sum(length for _, length in silences(path, floor=0.2))
@@ -172,6 +173,14 @@ class VoiceSkill(Skill):
             if redone >= MAX_REDO:
                 self.log.warning("重念次数已达上限 %d，剩下的保留原样", MAX_REDO)
                 break
+
+    def _has_voice(self) -> bool:
+        """Is there anything on this machine that can actually speak?"""
+        from ..tools.tts.providers import AUTO_ORDER, SilentProvider
+
+        return any(
+            cls.name != SilentProvider.name and cls().available() for cls in AUTO_ORDER
+        )
 
     def _fingerprint(self, scene: Scene) -> str:
         intent = self.project.intent

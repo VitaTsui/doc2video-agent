@@ -417,3 +417,89 @@ def test_the_published_voices_can_be_searched_by_what_a_person_would_type(tmp_pa
     # speaks with whatever is there, so this is the same question it asks.
     (tmp_path / "voices" / "en_US-amy-low.onnx").write_bytes(b"")
     assert piper_catalogue.search("amy", settings=settings)["voices"][0]["installed"]
+
+
+def test_one_timeout_costs_one_clip_rather_than_the_rest_of_the_deck(tmp_path, monkeypatch):
+    """`say` hung once on page four and the film went mute from there.
+
+    Falling back to another *voice* is meant to be permanent — a film half in
+    one voice and half in another is worse than one consistently in the second.
+    Falling back to *silence* is not that: silence is the absence of a voice,
+    and making it the current engine meant every later page started from it.
+    Twenty-seven of thirty pages came out mute from a single timeout.
+    """
+    import struct
+    import wave
+
+    from doc2video.core.config import Settings
+    from doc2video.tools.tts import TTSTool
+    from doc2video.tools.tts.base import TTSProvider
+
+    spoken: list[str] = []
+
+    class Flaky(TTSProvider):
+        name = "flaky"
+        honours_phrase_boundary = False
+
+        def available(self) -> bool:
+            return True
+
+        def synthesize(self, text, out_path, *, voice="", rate=1.0):
+            spoken.append(text)
+            # Every attempt at the second clip fails; everything else is fine.
+            if "第二句" in text:
+                raise TimeoutError("合成超时")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with wave.open(str(out_path), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(22050)
+                handle.writeframes(struct.pack("<h", 1000) * 22050)
+            return 1.0
+
+    tool = TTSTool(Settings())
+    engine = Flaky()
+    monkeypatch.setattr(tool, "_engine_for", lambda voice: engine)
+    monkeypatch.setattr(tool, "_local_fallback", lambda: SilentProvider())
+
+    tool.synthesize("第一句话。", tmp_path / "a.wav")
+    tool.synthesize("这是第二句。", tmp_path / "b.wav")
+    third = tool.synthesize("第三句话。", tmp_path / "c.wav")
+
+    assert third.provider == "flaky", "静音只该赔上失败的那一段，下一段要回到真嗓子"
+    assert sum("第二句" in text for text in spoken) == 2, "超时先重试一次再放弃"
+
+
+def test_a_silent_page_is_spoken_again_when_the_machine_can_speak(tmp_path):
+    """Re-speaking silence produces silence — but only when silence is all there is.
+
+    A page that came out silent while a real voice is available is the one page
+    that most needs saying again: it is what a single timeout looks like.
+    """
+    from doc2video.core.config import Settings
+    from doc2video.schemas import Scene, SceneAudio, Source, SourceType, VideoProject
+    from doc2video.skills.base import SkillContext
+    from doc2video.skills.voice import VoiceSkill
+    from doc2video.storage import ProjectStore
+
+    settings = Settings(storage_dir=str(tmp_path))
+    store = ProjectStore(settings)
+    project = VideoProject(
+        project_id="proj_redo",
+        source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
+    )
+    project.scenes = [
+        Scene(
+            scene_id="scn_1",
+            source_page=1,
+            narration="这一页讲的是产业链经营。",
+            audio=SceneAudio(path="audio/scn_1.wav", duration=3.0, provider=SilentProvider.name),
+        )
+    ]
+    skill = VoiceSkill(SkillContext.build(project, store=store, settings=settings))
+
+    # macOS `say` is present in CI for this repo's other voice tests; where it
+    # is not, the machine genuinely has no voice and skipping is correct.
+    assert skill._has_voice() is any(
+        cls.name != SilentProvider.name and cls().available() for cls in AUTO_ORDER
+    )

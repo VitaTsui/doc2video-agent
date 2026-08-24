@@ -23,7 +23,7 @@ from .base import (
 from .edge import EdgeProvider
 from .kokoro import KokoroProvider
 from .pronounce import for_speech
-from .providers import AUTO_ORDER, resolve_provider
+from .providers import AUTO_ORDER, SilentProvider, resolve_provider
 from .units import plan_units
 
 log = get_logger(__name__)
@@ -32,6 +32,11 @@ log = get_logger(__name__)
 # leave the engine free to take another somewhere else; three passes was enough
 # to settle every clause measured on a 30-page deck.
 REPHRASE_ROUNDS = 3
+
+#: How many times one clip is asked for before the engine is given up on. A
+#: `say` timeout is a hung process, not a broken engine — and giving up cost a
+#: whole deck its voice once.
+SYNTHESIS_ATTEMPTS = 2
 
 
 # Which of the built-in voices is which. macOS reports no gender, and asking
@@ -248,20 +253,39 @@ class TTSTool:
         and the rest of the deck is spoken by that one. Recorded as a
         degradation, because a video half in one voice and half in another is
         something the person who made it has to be told about.
+
+        Two things that switch is *not*. It is not a reason to give up on the
+        engine after one bad clip: `say` timed out once on page four of a deck
+        and the run went on to write twenty-seven pages of silence, because the
+        fallback had been made the current engine and every later page started
+        from it. So the engine is tried twice before anything is switched.
+
+        And it is not permanent when what it falls back to is silence. Another
+        voice is a voice, and staying on it keeps the film consistent; silence
+        is the absence of one, and the next page deserves the real engine again.
         """
-        self._provider = self._engine_for(voice)
-        try:
-            return self._provider.synthesize(text, out_path, voice=voice, rate=rate)
-        except Exception as exc:  # noqa: BLE001 - any failure, one answer
-            local = self._local_fallback()
-            if local is None:
-                raise
-            telemetry.record_degradation(
-                "配音", f"{self._provider.name} 合成失败，改用 {local.name}：{str(exc)[:120]}"
-            )
-            log.warning("%s 合成失败，改用 %s：%s", self._provider.name, local.name, exc)
+        engine = self._engine_for(voice)
+        self._provider = engine
+        last: Exception | None = None
+        for attempt in range(SYNTHESIS_ATTEMPTS):
+            try:
+                return engine.synthesize(text, out_path, voice=voice, rate=rate)
+            except Exception as exc:  # noqa: BLE001 - any failure, one answer
+                last = exc
+                if attempt + 1 < SYNTHESIS_ATTEMPTS:
+                    log.warning("%s 合成失败，重试一次：%s", engine.name, exc)
+
+        local = self._local_fallback()
+        if local is None:
+            raise last  # noqa: RSE102 - re-raise the engine's own failure
+        telemetry.record_degradation(
+            "配音", f"{engine.name} 合成失败，改用 {local.name}：{str(last)[:120]}"
+        )
+        log.warning("%s 合成失败，改用 %s：%s", engine.name, local.name, last)
+        # Silence is for this clip only; another voice is for the rest of the run.
+        if local.name != SilentProvider.name:
             self._provider = local
-            return local.synthesize(text, out_path, voice="", rate=local.natural_rate)
+        return local.synthesize(text, out_path, voice="", rate=local.natural_rate)
 
     def _local_fallback(self) -> TTSProvider | None:
         """The best voice on this machine, whatever the chosen one was."""
