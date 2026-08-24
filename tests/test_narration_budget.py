@@ -303,3 +303,50 @@ def test_a_script_is_only_cut_to_a_length_someone_asked_for(
     skill.project.intent.duration_stated = False
     kept = skill._fit_duration(pages, budgets, dict(drafts))
     assert kept[pages[0].index].narration == long_page
+
+
+def test_density_is_measured_in_words_not_in_boxes():
+    """Four boxes can be denser than sixteen.
+
+    「技术牵头方」 is three labels and one 342-character paragraph. Counting
+    boxes made it a sparse page — 「三五处，全讲」 — so the paragraph was read
+    out whole. Against its own budget the page carries three times what it can
+    say, which is the number that decides how it is told.
+    """
+    from doc2video.schemas import BBox, DocumentPage, ElementKind, PageType, SlideElement
+    from doc2video.skills.narration import _density_note
+    from doc2video.skills.review import density, page_share_chars
+
+    def page(index: int, texts: list[str]) -> DocumentPage:
+        return DocumentPage(
+            index=index,
+            title="页",
+            page_type=PageType.CONTENT,
+            elements=[
+                SlideElement(
+                    id=f"e{i}",
+                    kind=ElementKind.PARAGRAPH,
+                    text=text,
+                    bbox=BBox(x=0, y=i * 60, w=800, h=50),
+                )
+                for i, text in enumerate(texts)
+            ],
+        )
+
+    few_but_long = page(
+        1,
+        [
+            "企业定位 城市产业链智能创新生态运营商",
+            "企业愿景 全国产业链引领者",
+            "企业宗旨 服务智能生态",
+            "二〇一八年十二月，教育部发文批复同意建设……" * 12,
+        ],
+    )
+    # Eight nameable blocks, none of them long: more boxes, less to say.
+    many_but_short = page(2, [f"第{i}项要点，一句话说完" for i in range(8)])
+
+    dense = density(few_but_long, page_share_chars(few_but_long))
+    sparse = density(many_but_short, page_share_chars(many_but_short))
+    assert dense > 2 > sparse, f"四块的密页 {dense:.1f}，八块的稀疏页 {sparse:.1f}"
+    assert "挑重点" in _density_note(few_but_long, page_share_chars(few_but_long))
+    assert "挑重点" not in _density_note(many_but_short, page_share_chars(many_but_short))

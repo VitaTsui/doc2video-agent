@@ -27,7 +27,16 @@ import { registerTools } from './tools.ts'
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'doc2video'
 
-/** Services required by this plugin. */
+/**
+ * Services required by this plugin.
+ *
+ * `jobs` is deliberately absent. An injected name is a name the fiber *waits*
+ * for — declaring it here would make a composition without background jobs
+ * hang this plugin forever rather than run without them. It is looked up at
+ * call time instead (`ctx.get('jobs')`), which is what makes it optional: with
+ * it, a render becomes a dsh background job the model is notified about and
+ * can `job_kill`; without it, the tools work and the model polls.
+ */
 export const inject = ['tools']
 
 export interface Config {

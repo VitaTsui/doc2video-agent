@@ -13,7 +13,7 @@ from pathlib import Path
 from doc2video.core.config import Settings
 from doc2video.tools.parsers.slide_raster import FONT_CANDIDATES, font_candidates
 from doc2video.tools.tts.piper import PiperProvider
-from doc2video.tools.tts.providers import AUTO_ORDER, resolve_provider
+from doc2video.tools.tts.providers import AUTO_ORDER, SilentProvider, resolve_provider
 
 
 def test_every_platform_has_a_font_to_fall_back_on():
@@ -93,6 +93,66 @@ def test_an_unavailable_provider_never_leaves_the_pipeline_without_one():
     """Voicing must degrade to silence, not fail: the video is still watchable."""
     assert resolve_provider("piper").available()
     assert resolve_provider("nonexistent").available()
+
+
+def test_a_mute_film_is_reported_rather_than_scored_full_marks(tmp_path: Path, settings, store):
+    """The one defect the review could not see.
+
+    The silent provider writes a real clip of exactly the right length, so a
+    machine with no voice produced a film where every check passed — correct
+    timeline, correct subtitles, full marks — and no sound at all. Degrading to
+    silence is right; scoring it as a finished video is not.
+    """
+    from doc2video.schemas import Scene, SceneAudio, Source, SourceType, VideoProject
+    from doc2video.skills.base import SkillContext
+    from doc2video.skills.review import ReviewSkill
+
+    project = VideoProject(
+        project_id="proj_mute",
+        source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
+    )
+    clip = store.audio_dir(project.project_id) / "scn_1.wav"
+    clip.parent.mkdir(parents=True, exist_ok=True)
+    SilentProvider().synthesize("这一页讲的是产业链经营。", clip)
+    project.scenes = [
+        Scene(
+            scene_id="scn_1",
+            source_page=1,
+            narration="这一页讲的是产业链经营。",
+            duration=3.0,
+            audio=SceneAudio(path=f"audio/{clip.name}", duration=3.0, provider=SilentProvider.name),
+        )
+    ]
+
+    skill = ReviewSkill(SkillContext.build(project, store=store, settings=settings))
+    findings = skill._structural_checks()
+    silent = [f for f in findings if f.kind == "silent_audio"]
+    assert silent, "哑片必须被报出来"
+    assert "静音占位" in silent[0].message
+
+
+def test_what_stopped_the_voice_is_named_when_it_falls_through_to_silence(monkeypatch, caplog):
+    """A mute film is worth one loud sentence saying which engines refused.
+
+    Without it the only evidence is a video nobody can hear, and the fix
+    (install a voice) is not guessable from that.
+    """
+    import logging
+
+    from doc2video.tools.tts import providers
+
+    monkeypatch.setattr(providers.MacOSSayProvider, "available", lambda self: False)
+    monkeypatch.setattr(providers.KokoroProvider, "available", lambda self: False)
+    monkeypatch.setattr(providers.PiperProvider, "available", lambda self: False)
+    monkeypatch.setattr(providers.PiperProvider, "unavailable_reason", lambda self: "模型未安装")
+
+    with caplog.at_level(logging.WARNING):
+        provider = resolve_provider("auto")
+
+    assert provider.name == SilentProvider.name
+    said = " ".join(record.getMessage() for record in caplog.records)
+    assert "没有可用的配音引擎" in said
+    assert "模型未安装" in said, "要说清楚是哪一个引擎因为什么不能用"
 
 
 def test_the_cli_progress_printer_matches_what_the_pipeline_sends(capsys):
@@ -357,3 +417,89 @@ def test_the_published_voices_can_be_searched_by_what_a_person_would_type(tmp_pa
     # speaks with whatever is there, so this is the same question it asks.
     (tmp_path / "voices" / "en_US-amy-low.onnx").write_bytes(b"")
     assert piper_catalogue.search("amy", settings=settings)["voices"][0]["installed"]
+
+
+def test_one_timeout_costs_one_clip_rather_than_the_rest_of_the_deck(tmp_path, monkeypatch):
+    """`say` hung once on page four and the film went mute from there.
+
+    Falling back to another *voice* is meant to be permanent — a film half in
+    one voice and half in another is worse than one consistently in the second.
+    Falling back to *silence* is not that: silence is the absence of a voice,
+    and making it the current engine meant every later page started from it.
+    Twenty-seven of thirty pages came out mute from a single timeout.
+    """
+    import struct
+    import wave
+
+    from doc2video.core.config import Settings
+    from doc2video.tools.tts import TTSTool
+    from doc2video.tools.tts.base import TTSProvider
+
+    spoken: list[str] = []
+
+    class Flaky(TTSProvider):
+        name = "flaky"
+        honours_phrase_boundary = False
+
+        def available(self) -> bool:
+            return True
+
+        def synthesize(self, text, out_path, *, voice="", rate=1.0):
+            spoken.append(text)
+            # Every attempt at the second clip fails; everything else is fine.
+            if "第二句" in text:
+                raise TimeoutError("合成超时")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with wave.open(str(out_path), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(22050)
+                handle.writeframes(struct.pack("<h", 1000) * 22050)
+            return 1.0
+
+    tool = TTSTool(Settings())
+    engine = Flaky()
+    monkeypatch.setattr(tool, "_engine_for", lambda voice: engine)
+    monkeypatch.setattr(tool, "_local_fallback", lambda: SilentProvider())
+
+    tool.synthesize("第一句话。", tmp_path / "a.wav")
+    tool.synthesize("这是第二句。", tmp_path / "b.wav")
+    third = tool.synthesize("第三句话。", tmp_path / "c.wav")
+
+    assert third.provider == "flaky", "静音只该赔上失败的那一段，下一段要回到真嗓子"
+    assert sum("第二句" in text for text in spoken) == 2, "超时先重试一次再放弃"
+
+
+def test_a_silent_page_is_spoken_again_when_the_machine_can_speak(tmp_path):
+    """Re-speaking silence produces silence — but only when silence is all there is.
+
+    A page that came out silent while a real voice is available is the one page
+    that most needs saying again: it is what a single timeout looks like.
+    """
+    from doc2video.core.config import Settings
+    from doc2video.schemas import Scene, SceneAudio, Source, SourceType, VideoProject
+    from doc2video.skills.base import SkillContext
+    from doc2video.skills.voice import VoiceSkill
+    from doc2video.storage import ProjectStore
+
+    settings = Settings(storage_dir=str(tmp_path))
+    store = ProjectStore(settings)
+    project = VideoProject(
+        project_id="proj_redo",
+        source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
+    )
+    project.scenes = [
+        Scene(
+            scene_id="scn_1",
+            source_page=1,
+            narration="这一页讲的是产业链经营。",
+            audio=SceneAudio(path="audio/scn_1.wav", duration=3.0, provider=SilentProvider.name),
+        )
+    ]
+    skill = VoiceSkill(SkillContext.build(project, store=store, settings=settings))
+
+    # macOS `say` is present in CI for this repo's other voice tests; where it
+    # is not, the machine genuinely has no voice and skipping is correct.
+    assert skill._has_voice() is any(
+        cls.name != SilentProvider.name and cls().available() for cls in AUTO_ORDER
+    )

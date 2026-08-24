@@ -99,3 +99,58 @@ def test_a_long_stretch_with_no_pause_is_reported(tmp_path: Path):
 def test_a_scene_too_short_to_judge_is_not_judged(tmp_path: Path):
     project = _project(tmp_path, "两个字", [(LEAD, False), (0.4, True), (TAIL, False)])
     assert _check(project, tmp_path) == []
+
+
+def test_a_uniform_page_is_allowed_a_uniform_script():
+    """A contents page of five equal lines should be told in five equal sentences.
+
+    The flatness check used to compare against a constant, so it asked a page
+    with nothing to be varied about for variety — and the only way to obey is to
+    pad, which is the AI tic the neighbouring check reports.
+    """
+    from doc2video.schemas import BBox, DocumentPage, ElementKind, PageType, SlideElement
+    from doc2video.skills.review import _length_spread
+
+    def page(texts: list[str]) -> DocumentPage:
+        return DocumentPage(
+            index=1,
+            title="页",
+            page_type=PageType.CONTENT,
+            elements=[
+                SlideElement(
+                    id=f"e{i}",
+                    kind=ElementKind.PARAGRAPH,
+                    text=text,
+                    bbox=BBox(x=0, y=i * 60, w=800, h=50),
+                )
+                for i, text in enumerate(texts)
+            ],
+        )
+
+    flat_script = "第一，背景介绍。第二，痛点分析。第三，建设思路。第四，商业价值。"
+
+    contents = page(["(一)背景及技术牵头方", "(二)核心市场痛点分析",
+                     "(三)项目建设主旨思路", "(四)联合揭榜商业价值"])
+    assert _length_spread(flat_script, contents) is None, "页面本身是齐的，讲稿齐着讲不该扣分"
+
+    # The same script against a page of wildly different blocks: now it is the
+    # script that flattened the page.
+    uneven = page(["面向石化企业市场经营分析环节，分别建设供应链、外贸和招投标情报能力，"
+                   "并通过统一数据底座实现相互关联与综合研判。",
+                   "监测价格、供需与物流事件。", "回答：怎么买", "形成参与建议。"])
+    assert _length_spread(flat_script, uneven) is not None, "页面长短悬殊，讲稿抹平了就该报"
+
+
+def test_the_pages_own_words_are_not_the_writers_tic():
+    """「不是A，是B」 on the slide is the slide talking.
+
+    The script quoted 「未来不是慢一点，是直接失去生存席位」 and even attributed
+    it — 「页面最后一句话是……」. Marking that down marks the script down for
+    doing the one thing the grounding dimension asks of it.
+    """
+    from doc2video.skills.review import _quotes_page
+
+    page_text = "企业不做组织 AI 赋能与转型，未来不是发展慢一点，是直接失去生存席位！"
+
+    assert _quotes_page("不是慢一点，是", page_text), "少了一个词也还是页面的话"
+    assert not _quotes_page("不是简单的堆砌，而是深度的融合", page_text), "页面没写的就是自己发挥"

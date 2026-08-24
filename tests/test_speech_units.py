@@ -310,3 +310,235 @@ def test_a_run_of_tiny_enumerated_scraps_is_spoken_as_one():
     # And a long enumeration is not glued into one breathless run.
     long_list = plan_units(["监测价格、供需、库存、装置运行、物流事件、政策变化、行情波动。"])
     assert max(len(unit.text) for unit in long_list) <= 20
+
+
+def test_a_sentence_is_one_call_when_the_engine_can_hold_a_beat_itself(tmp_path, monkeypatch):
+    """Ten characters per call is what two people talking sounds like.
+
+    `say` gives every call a complete intonation — its own opening pitch, its
+    own falling close. A page cut into a call per clause is thirty utterances
+    spliced together, and on a real film that was 4930 characters in 511 calls.
+    It was reported as 「有两个人在说话，有重叠」, which is exactly what it is.
+
+    So an engine with markup of its own speaks a whole sentence at a time and
+    is *asked* for the beats inside it. The beats between sentences stay ours,
+    written as exact silence between the clips.
+    """
+    import struct
+    import wave
+
+    from doc2video.core.config import Settings
+    from doc2video.tools.tts import TTSTool
+    from doc2video.tools.tts.base import TTSProvider
+
+    spoken: list[str] = []
+
+    class Marked(TTSProvider):
+        name = "marked"
+        honours_phrase_boundary = True
+
+        def available(self) -> bool:
+            return True
+
+        def pause_markup(self, seconds: float) -> str:
+            return f"<{int(seconds * 1000)}>"
+
+        def synthesize(self, text, out_path, *, voice="", rate=1.0):
+            spoken.append(text)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with wave.open(str(out_path), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(22050)
+                handle.writeframes(struct.pack("<h", 0) * 22050)
+            return 1.0
+
+    tool = TTSTool(Settings())
+    monkeypatch.setattr(tool, "_engine_for", lambda voice: Marked())
+
+    sentences = ["先看基地，它是唯一一个。", "再看方向，一共六个。"]
+    tool.synthesize("".join(sentences), tmp_path / "out.wav", sentences=sentences)
+
+    assert len(spoken) == 2, f"应该一句一次合成，实际 {len(spoken)} 次：{spoken}"
+    # The comma inside the first sentence is asked for, not cut out of it.
+    assert "<" in spoken[0], f"句内的停顿要写进这一次调用里：{spoken[0]}"
+    assert "先看基地" in spoken[0] and "它是唯一一个" in spoken[0]
+
+
+def test_an_engine_with_no_markup_still_speaks_clause_by_clause(tmp_path, monkeypatch):
+    """The old arrangement is not wrong, it is what an engine without markup needs.
+
+    There is nowhere to put 「hold here」, so the clause is the call and the
+    silence is written between the clips.
+    """
+    import struct
+    import wave
+
+    from doc2video.core.config import Settings
+    from doc2video.tools.tts import TTSTool
+    from doc2video.tools.tts.base import TTSProvider
+
+    spoken: list[str] = []
+
+    class Plain(TTSProvider):
+        name = "plain"
+        honours_phrase_boundary = False
+
+        def available(self) -> bool:
+            return True
+
+        def synthesize(self, text, out_path, *, voice="", rate=1.0):
+            spoken.append(text)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with wave.open(str(out_path), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(22050)
+                handle.writeframes(struct.pack("<h", 0) * 22050)
+            return 1.0
+
+    tool = TTSTool(Settings())
+    monkeypatch.setattr(tool, "_engine_for", lambda voice: Plain())
+
+    sentences = ["先看基地，它是唯一一个。", "再看方向，一共六个。"]
+    tool.synthesize("".join(sentences), tmp_path / "out.wav", sentences=sentences)
+
+    assert len(spoken) > 2, f"没有标记的引擎仍然按小句合成，实际 {len(spoken)} 次"
+
+
+def test_a_breath_stays_a_breath_rather_than_becoming_a_full_stop(tmp_path):
+    """An engine asked to hold for 120ms does not hold for 120ms.
+
+    `say` re-plans its phrasing around the request and adds about a tenth of a
+    second of its own, so a breath designed at 0.12 is heard at 0.24 — long
+    enough to read as the end of a sentence, which is how 「制造领域石化化工方向
+    的应用场景揭榜方案」 came out sounding like two. Below roughly 200ms the
+    number stops mattering at all: 20ms and 160ms both came back 0.26.
+
+    So the engine is asked, and then held to what was asked: every silence is
+    matched to the designed pause nearest it and cut back to that length.
+    """
+    import struct
+    import wave
+
+    from doc2video.tools.tts.base import retime_gaps, silences
+
+    # 1s of tone, 0.45s of silence, 1s of tone — a gap far longer than designed.
+    rate = 22050
+    frames = bytearray()
+    for seconds, loud in ((1.0, True), (0.45, False), (1.0, True)):
+        for index in range(int(rate * seconds)):
+            value = 8000 if loud and index % 20 < 10 else (-8000 if loud else 0)
+            frames += struct.pack("<h", value)
+    clip = tmp_path / "one.wav"
+    with wave.open(str(clip), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(bytes(frames))
+
+    # The designed beat sits halfway through the spoken characters.
+    after = retime_gaps(clip, [(10, 0.12)], 20)
+
+    gaps = [length for start, length in silences(clip, floor=0.05) if start > 0.05]
+    assert gaps, "间隔不该被删光——两边的字是绕着这个边界念的"
+    assert gaps[0] == pytest.approx(0.12, abs=0.02), f"气口该是 0.12，实际 {gaps[0]:.2f}"
+    assert after < 2.45, "整体应该短了，短掉的正是多出来的那段静音"
+
+
+def test_a_gap_nobody_asked_for_is_shortened_rather_than_closed(tmp_path):
+    """The engine's own boundaries are not mistakes to erase.
+
+    It put a phrase boundary there and spoke the words either side around it;
+    closing it completely runs them together. Cut short, it reads as phrasing
+    instead of as a pause.
+    """
+    import struct
+    import wave
+
+    from doc2video.tools.tts.base import INVENTED_GAP, retime_gaps, silences
+
+    rate = 22050
+    frames = bytearray()
+    for seconds, loud in ((1.0, True), (0.40, False), (1.0, True)):
+        for index in range(int(rate * seconds)):
+            value = 8000 if loud and index % 20 < 10 else (-8000 if loud else 0)
+            frames += struct.pack("<h", value)
+    clip = tmp_path / "two.wav"
+    with wave.open(str(clip), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(bytes(frames))
+
+    # No designed pause anywhere near it.
+    retime_gaps(clip, [], 20)
+
+    gaps = [length for start, length in silences(clip, floor=0.05) if start > 0.05]
+    assert gaps and gaps[0] == pytest.approx(INVENTED_GAP, abs=0.02)
+
+
+def test_a_number_is_not_a_place_to_breathe():
+    """「2018年12月」 is a date, not three things.
+
+    A numeral opens a phrase — 「三类支撑」, 「12个方向」 — so a breath is taken in
+    front of one. jieba tags every part of a date as a numeral, so the rule fired
+    between each: 「2018 ｜ 年12 ｜ 月由教育部批复」. Inside a run of numerals there
+    is no seam.
+    """
+    from doc2video.tools.tts.units import plan_units
+
+    units = plan_units(["CCAI在2018年12月由教育部批复建设。"])
+    joined = " | ".join(u.text for u in units)
+    assert "2018年12月" in joined, f"日期被切开了：{joined}"
+
+
+def test_the_engine_phrases_its_own_sentence():
+    """Our breaths are for engines that speak a clause at a time.
+
+    Once a whole sentence is one call, the engine phrases it across the whole
+    sentence — and our `[[slnc]]` on top of that is a second set of breaks in
+    the same sentence. Reported as 「句子中间的停顿太多了，断的还很碎」.
+    Punctuation still gets its beat; the breaths do not.
+    """
+    import struct
+    import wave
+
+    from doc2video.core.config import Settings
+    from doc2video.tools.tts import TTSTool
+    from doc2video.tools.tts.base import TTSProvider
+
+    spoken: list[str] = []
+
+    class Marked(TTSProvider):
+        name = "marked"
+        honours_phrase_boundary = True
+
+        def available(self) -> bool:
+            return True
+
+        def pause_markup(self, seconds: float) -> str:
+            return f"<{int(seconds * 1000)}>"
+
+        def synthesize(self, text, out_path, *, voice="", rate=1.0):
+            spoken.append(text)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with wave.open(str(out_path), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(22050)
+                handle.writeframes(struct.pack("<h", 1000) * 22050)
+            return 1.0
+
+    import tempfile
+
+    tool = TTSTool(Settings())
+    tool._engine_for = lambda voice: Marked()  # type: ignore[method-assign]
+    line = "它是全国石化化工领域唯一一个国家级的AI应用中试平台，覆盖六大方向。"
+    with tempfile.TemporaryDirectory() as tmp:
+        tool.synthesize(line, Path(tmp) / "o.wav", sentences=[line])
+
+    assert len(spoken) == 1
+    # The comma is a beat and keeps its marker; the breaths inside each clause
+    # do not get one.
+    assert spoken[0].count("<") == 1, f"句内只该有标点那一个停顿：{spoken[0]}"

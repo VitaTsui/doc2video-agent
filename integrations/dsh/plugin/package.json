@@ -37,16 +37,23 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-tools": "^0.0.1-rc.1",
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/dsh-jobs": "^0.0.1-rc.3"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-tools": "^0.0.1-rc.1",
     "@deepseek-ai/schemastery": "^3.18.1",
     "@types/node": "^24.0.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "@deepseek-ai/dsh-jobs": "^0.0.1-rc.3"
   },
   "engines": {
     "node": ">=22.19"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-jobs": {
+      "optional": true
+    }
   }
 }

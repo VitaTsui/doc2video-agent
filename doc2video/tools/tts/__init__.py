@@ -16,13 +16,14 @@ from .base import (
     allocate_segments,
     estimate_duration,
     join_units,
+    retime_gaps,
     silences,
     weight_of,
 )
 from .edge import EdgeProvider
 from .kokoro import KokoroProvider
 from .pronounce import for_speech
-from .providers import AUTO_ORDER, resolve_provider
+from .providers import AUTO_ORDER, SilentProvider, resolve_provider
 from .units import plan_units
 
 log = get_logger(__name__)
@@ -31,6 +32,11 @@ log = get_logger(__name__)
 # leave the engine free to take another somewhere else; three passes was enough
 # to settle every clause measured on a 30-page deck.
 REPHRASE_ROUNDS = 3
+
+#: How many times one clip is asked for before the engine is given up on. A
+#: `say` timeout is a hung process, not a broken engine — and giving up cost a
+#: whole deck its voice once.
+SYNTHESIS_ATTEMPTS = 2
 
 
 # Which of the built-in voices is which. macOS reports no gender, and asking
@@ -126,6 +132,9 @@ class TTSTool:
     ) -> list[tuple[Path, float]]:
         """Speak one clause, and hand back the clips it actually took.
 
+        For engines with no markup of their own. One that can be asked to hold
+        a beat goes through `_speak_sentences` instead, and never gets here.
+
         A clause has no punctuation inside it, so every silence in its clip is
         one nobody asked for — the engine deciding on its own where a phrase
         ends, and getting it wrong on any term it does not know: 「一是供应链经营
@@ -173,6 +182,68 @@ class TTSTool:
             out.append((clip, unit.pause_before if order == 0 else 0.0))
         return out
 
+    def _speak_sentences(
+        self, units, work: Path, *, spoken, engine, voice: str, rate: float
+    ) -> tuple[list[Path], list[float], list[int]]:
+        """Speak one sentence per call, with its own beats written into it.
+
+        The clause is the right unit to *design* a pause on and the wrong unit
+        to synthesise: `say` gives every call a complete intonation — its own
+        opening pitch, its own falling close — so a page cut into thirty calls
+        is thirty utterances spliced together. Measured on a real film: 4930
+        characters in 511 calls, ten characters each. What that sounds like is
+        two people finishing each other's sentences, and it was reported as
+        exactly that.
+
+        So the sentence is spoken in one call and the beats inside it are
+        asked for in the engine's own markup, which keeps one arc across the
+        whole sentence. The beats *between* sentences stay exact silence
+        written by `join_units` — those are the ones the writing asked for, and
+        they are still ours.
+
+        Costs about 5% in length (60.3s against 63.6s on a 288-character page):
+        an engine renders its own marker a little longer than the arithmetic we
+        would have written. Worth it.
+        """
+        clips: list[Path] = []
+        pauses: list[float] = []
+        owners: list[int] = []
+        parts: list[str] = []
+        # Where the beats inside this sentence fall and how long they were
+        # designed to be. The engine is asked for them and then held to them:
+        # what it renders is its own idea of the length, about a tenth of a
+        # second longer, and below 200ms it ignores the number entirely.
+        marks: list[tuple[int, float]] = []
+        said = 0
+        sentence = units[0].sentence
+        gap = units[0].pause_before
+
+        def flush() -> None:
+            nonlocal said
+            if not parts:
+                return
+            clip = work / f"s{len(clips):03d}.wav"
+            self._speak_once("".join(parts), clip, voice=voice, rate=rate)
+            retime_gaps(clip, list(marks), said)
+            clips.append(clip)
+            pauses.append(gap)
+            owners.append(sentence)
+            parts.clear()
+            marks.clear()
+            said = 0
+
+        for unit in units:
+            if unit.sentence != sentence:
+                flush()
+                sentence, gap = unit.sentence, unit.pause_before
+            elif parts and not unit.breath:
+                marks.append((said, unit.pause_before))
+                parts.append(engine.pause_markup(unit.pause_before))
+            parts.append(spoken(unit.text))
+            said += len(unit.text)
+        flush()
+        return clips, pauses, owners
+
     def _speak_once(self, text: str, out_path: Path, *, voice: str, rate: float) -> float:
         """One clip, with a local voice standing by.
 
@@ -182,20 +253,39 @@ class TTSTool:
         and the rest of the deck is spoken by that one. Recorded as a
         degradation, because a video half in one voice and half in another is
         something the person who made it has to be told about.
+
+        Two things that switch is *not*. It is not a reason to give up on the
+        engine after one bad clip: `say` timed out once on page four of a deck
+        and the run went on to write twenty-seven pages of silence, because the
+        fallback had been made the current engine and every later page started
+        from it. So the engine is tried twice before anything is switched.
+
+        And it is not permanent when what it falls back to is silence. Another
+        voice is a voice, and staying on it keeps the film consistent; silence
+        is the absence of one, and the next page deserves the real engine again.
         """
-        self._provider = self._engine_for(voice)
-        try:
-            return self._provider.synthesize(text, out_path, voice=voice, rate=rate)
-        except Exception as exc:  # noqa: BLE001 - any failure, one answer
-            local = self._local_fallback()
-            if local is None:
-                raise
-            telemetry.record_degradation(
-                "配音", f"{self._provider.name} 合成失败，改用 {local.name}：{str(exc)[:120]}"
-            )
-            log.warning("%s 合成失败，改用 %s：%s", self._provider.name, local.name, exc)
+        engine = self._engine_for(voice)
+        self._provider = engine
+        last: Exception | None = None
+        for attempt in range(SYNTHESIS_ATTEMPTS):
+            try:
+                return engine.synthesize(text, out_path, voice=voice, rate=rate)
+            except Exception as exc:  # noqa: BLE001 - any failure, one answer
+                last = exc
+                if attempt + 1 < SYNTHESIS_ATTEMPTS:
+                    log.warning("%s 合成失败，重试一次：%s", engine.name, exc)
+
+        local = self._local_fallback()
+        if local is None:
+            raise last  # noqa: RSE102 - re-raise the engine's own failure
+        telemetry.record_degradation(
+            "配音", f"{engine.name} 合成失败，改用 {local.name}：{str(last)[:120]}"
+        )
+        log.warning("%s 合成失败，改用 %s：%s", engine.name, local.name, last)
+        # Silence is for this clip only; another voice is for the rest of the run.
+        if local.name != SilentProvider.name:
             self._provider = local
-            return local.synthesize(text, out_path, voice="", rate=local.natural_rate)
+        return local.synthesize(text, out_path, voice="", rate=local.natural_rate)
 
     def _local_fallback(self) -> TTSProvider | None:
         """The best voice on this machine, whatever the chosen one was."""
@@ -280,15 +370,21 @@ class TTSTool:
         voice: str,
         rate: float,
     ) -> tuple[list[Segment], float, str]:
-        """Write the clip, in units, and report exactly when each unit lands.
+        """Write the clip and report exactly when each sentence lands.
 
         A page spoken in one go comes back in one voice — the engine settles on
         an average pace and holds it, pausing the same length at every mark.
-        Spoken in units the beats between them are ours: longer before the
-        sentence the writer marked, longer where the script turns.
+        Broken up, the beats are ours: longer before the sentence the writer
+        marked, longer where the script turns.
 
-        The timing follows for free. Each unit is measured as it is written, so
-        every unit boundary is exact; only the sentences *inside* a unit still
+        Where it is broken depends on what the engine can be told. One that
+        holds on request is asked to, and speaks a sentence per call; one that
+        cannot is given a clause per call and the silence is written between
+        the clips. The first keeps a sentence in one intonation, which is what
+        「有两个人在说话」 turned out to be about — see `_speak_sentences`.
+
+        The timing follows for free. Every clip is measured as it is written,
+        so every boundary is exact; only the sentences *inside* one clip still
         need the ladder.
         """
         # What is spoken, which is not always what is written: a caption reads
@@ -309,7 +405,8 @@ class TTSTool:
         # engine happened to be loaded before the voice was looked at — the
         # record said the first page was spoken by `macos_say` when every page
         # including that one was spoken by Edge.
-        engine = self._engine_for(voice).name
+        provider = self._engine_for(voice)
+        engine = provider.name
         if len(units) <= 1:
             text = "".join(sentences)
             with ledger.call(f"tts:{engine}", f"{len(text)} 字"):
@@ -323,15 +420,25 @@ class TTSTool:
         pauses: list[float] = []
         owners: list[int] = []
         try:
-            for index, unit in enumerate(units):
-                with ledger.call(f"tts:{engine}", f"{len(unit.text)} 字"):
-                    spoken_clips = self._speak_unit(
-                        unit, work, index, spoken=spoken, voice=voice, rate=rate
+            if provider.honours_phrase_boundary:
+                # One call per sentence. The clause beats go inside it as the
+                # engine's own markup; see `_speak_sentences`.
+                with ledger.call(f"tts:{engine}", f"{len(''.join(sentences))} 字"):
+                    clips, pauses, owners = self._speak_sentences(
+                        units, work, spoken=spoken, engine=provider, voice=voice, rate=rate
                     )
-                for clip, pause in spoken_clips:
-                    clips.append(clip)
-                    pauses.append(pause)
-                    owners.append(unit.sentence)
+            else:
+                # No markup to put a beat in, so the clause is the call and the
+                # silence is written between the clips.
+                for index, unit in enumerate(units):
+                    with ledger.call(f"tts:{engine}", f"{len(unit.text)} 字"):
+                        spoken_clips = self._speak_unit(
+                            unit, work, index, spoken=spoken, voice=voice, rate=rate
+                        )
+                    for clip, pause in spoken_clips:
+                        clips.append(clip)
+                        pauses.append(pause)
+                        owners.append(unit.sentence)
 
             windows = join_units(clips, pauses, out_path)
             # A clause is what gets spoken; a sentence is what gets captioned and

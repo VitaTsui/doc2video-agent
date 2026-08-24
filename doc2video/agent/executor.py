@@ -115,6 +115,7 @@ _DIMENSION_OF = {
     "action_not_visible": "画面",
     "missing_visual": "完整度",
     "missing_audio": "完整度",
+    "silent_audio": "完整度",
     "uncovered_page": "完整度",
     "dangling_list": "完整度",
     "thin_coverage": "完整度",

@@ -11,6 +11,13 @@ choose rather than the engine's. Each unit's duration is also measured as it
 is written, so the sentence boundaries inside a scene are known exactly rather
 than inferred from the pauses in one long clip.
 
+A unit is where a beat is *decided*. It is not always where the audio is cut:
+an engine that can be asked to hold — `[[slnc N]]` and its equivalents — is
+asked, and speaks a whole sentence in one call, because a call is also one
+complete intonation and a page cut into thirty of them sounds like thirty
+utterances spliced together. Only an engine with nowhere to put the beat has
+its clauses spoken separately. Either way the beats are the ones chosen here.
+
 **The punctuation decides.** Two earlier rules did not. The first broke a unit
 whenever nine seconds had gone by, which put the long pause wherever the
 stopwatch happened to land — mid-sentence, mid-name. The second read the
@@ -126,6 +133,10 @@ class Unit:
 
     texts: list[str] = field(default_factory=list)
     pause_before: float = 0.0
+    #: True when the gap before this piece is a breath inside a clause rather
+    #: than a beat the punctuation asked for. An engine that speaks a whole
+    #: sentence in one call phrases it itself and does not want ours.
+    breath: bool = False
     #: Which of the caller's sentences this clause came out of. The captions and
     #: the camera are still cut by sentence; only the speaking is by clause.
     sentence: int = 0
@@ -235,7 +246,12 @@ def plan_units(
             # to the sentence, not to every clause inside it.
             own = _emphasis_of(piece, flags[index]) if position == 0 else 0.0
             units.append(
-                Unit(texts=[piece], pause_before=max(gap, own), sentence=index)
+                Unit(
+                    texts=[piece],
+                    pause_before=max(gap, own),
+                    sentence=index,
+                    breath=previous_mid and own <= 0.0,
+                )
             )
             previous, previous_mid = piece, _mid
 

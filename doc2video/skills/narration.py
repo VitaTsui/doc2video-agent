@@ -28,7 +28,7 @@ from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisu
 from ..tools.llm import model_schema
 from ..tools.tts import estimate_duration
 from .base import ProgressFn, Skill, load_prompt
-from .review import page_share_chars
+from .review import density, page_share_chars
 
 # Pages per model call. Small enough that a long deck cannot overrun the
 # output budget, large enough that each page can see its neighbours.
@@ -37,6 +37,15 @@ BATCH_SIZE = 4
 # Some slack on purpose: trimming a page costs it a sentence, and a video ten
 # percent long is not worth a sentence.
 DURATION_TOLERANCE = 0.10
+
+#: Roughly what naming one thing costs, when working out how many things a
+#: shortened page can still afford to name.
+MIN_ITEM_CHARS_FOR_FLOOR = 18
+
+#: How many times one page is asked to say itself shorter. One pass answers a
+#: 92-character budget with 159 — a real cut that is still nearly twice the
+#: number.
+COMPRESSION_ROUNDS = 3
 
 # Per-page-type weights for splitting the total duration budget.
 TYPE_WEIGHT = {
@@ -126,6 +135,44 @@ class PageNarration(BaseModel):
 
 class NarrationResult(BaseModel):
     pages: list[PageNarration]
+
+
+def _density_note(page, budget: int) -> str:
+    """How much of this page to tell, said as what to do rather than as a ratio.
+
+    Density used to be left to the writer to judge from the number of blocks it
+    could see, and blocks are the wrong measure: 「技术牵头方」 is four blocks —
+    three labels and one 342-character paragraph — so it read as a sparse page
+    and got read out in full. What matters is how much text there is against
+    what the budget can say.
+
+    Three bands rather than a switch. A page at 1.2× has to be tightened; a
+    page at 3× has to be chosen from; and telling a 1.2× page to 「挑重点」 is how
+    a script that was finally following the document starts summarising it
+    again.
+    """
+    # Cover, contents and section pages are not told by volume — they have
+    # their own rule, and it is the opposite of this one. A cover at 1.7× was
+    # handed 「每一处都要点到」 and read its four lines out one at a time,
+    # date included, which is precisely what its own instruction forbids.
+    if page.page_type in (PageType.COVER, PageType.AGENDA, PageType.SECTION):
+        return ""
+    ratio = density(page, budget)
+    if ratio <= 1.2:
+        return (
+            f"这一页文字 {ratio:.1f} 倍于预算，装得下：按页面原文讲，"
+            "一处一句，不要概括。"
+        )
+    if ratio <= 2.0:
+        return (
+            f"这一页文字 {ratio:.1f} 倍于预算，略微超出：每一处都要点到，"
+            "但长的那一两处只讲要点——名称、数字、结论，不要照读整段。"
+        )
+    return (
+        f"这一页文字 {ratio:.1f} 倍于预算，是密的页：挑重点讲。"
+        "先按骨架把每个板块点到（小标题、每一栏），长段落只取名称、数字和结论，"
+        "举例、括号里的补充、脚注可以不讲。没讲到的不要提。"
+    )
 
 
 class NarrationSkill(Skill):
@@ -389,12 +436,25 @@ class NarrationSkill(Skill):
                 # for the same page said in fewer words instead — one call, and
                 # it is the only way to honour both 「十五分钟」 and 「把这一页讲
                 #全」, which is what the person asked for on the same day.
-                rewritten = self._compress_with_model(page, draft, int(allowed * pace))
-                if rewritten is None:
+                # More than once, because one pass does not reach the number.
+                # Asked to bring 300 characters down to 92 the model answers
+                # with 159 — a real cut, and still 1.7× the budget. Measured
+                # across a 30-page deck: one round each took the film from 24
+                # minutes to 18.4 and left 14 pages over their ceiling.
+                ceiling = int(allowed * pace)
+                current = draft
+                for _round in range(COMPRESSION_ROUNDS):
+                    rewritten = self._compress_with_model(page, current, ceiling)
+                    if rewritten is None:
+                        break
+                    current = rewritten
+                    if len(current.narration) <= ceiling * (1 + DURATION_TOLERANCE):
+                        break
+                if current is draft:
                     self.log.info("第 %d 页压不动：剪会少讲内容，改写也没写短", index)
                     continue
-                total -= spoken(draft.narration) - spoken(rewritten.narration)
-                trimmed[index] = rewritten
+                total -= spoken(draft.narration) - spoken(current.narration)
+                trimmed[index] = current
                 continue
             total -= spoken(draft.narration) - spoken(shorter)
             trimmed[index] = PageNarration(index=index, narration=shorter, segments=[])
@@ -417,13 +477,35 @@ class NarrationSkill(Skill):
         if page is None or not self.llm.available:
             return None
 
-        from .review import missed_items
+        # How much of the page this rewrite still has to walk. A page whose
+        # own volume is far past what it can say is a page to summarise: told
+        # 「一处都不能少」 it has nothing left to give up and comes back the same
+        # length — six pages 「压不动」 on a real deck, the worst of them 2.6×
+        # over. A page that nearly fits keeps everything, because there the
+        # words are the fat.
+        from .review import (
+            DENSE_ENOUGH_TO_SUMMARISE,
+            density,
+            missed_items,
+            page_share_chars,
+            worth_naming,
+        )
 
+        may_summarise = density(page, page_share_chars(page)) > DENSE_ENOUGH_TO_SUMMARISE
+        if may_summarise:
+            keep = worth_naming(page)
+            give_up = (
+                f"这一页内容装不下，可以少讲——讲到 {keep} 处就够，"
+                "留骨架（小标题、每一栏的名称、数字和结论），"
+                "举例、括号里的补充、同一条里的展开可以整条不讲。\n"
+                "但**报了数就要点名**：说了「五部分」就得点出五个，装不下就别报数。\n"
+            )
+        else:
+            give_up = "**内容一处都不能少**：现在讲到的每一处，改写后还要讲到。\n"
         note = (
             f"这一页现在 {len(draft.narration)} 字，要压到 {allowed} 字以内。\n"
-            "**内容一处都不能少**：现在讲到的每一处，改写后还要讲到。\n"
-            "压的是字，不是信息——删修饰词、合并重复的说法、去掉可有可无的连接词、"
-            "报了数的地方，几项的名字一个都不能少（说了「五部分」就得点出五个）、"
+            + give_up
+            + "压的是字，也可以是句——删修饰词、合并重复的说法、去掉可有可无的连接词、"
             "把长句拆成短句。宁可每句只剩七八个字。\n\n"
             f"现在的讲稿：\n{draft.narration}"
         )
@@ -451,9 +533,14 @@ class NarrationSkill(Skill):
             # nine of its ten blocks where the rule says seven — and requiring
             # 「不比原来少」 rejected every rewrite of exactly the pages that
             # needed one: 2–2.5× over budget, and left alone.
-            from .review import _dangling_counts, worth_naming
+            from .review import _dangling_counts
 
             floor = min(missed_items(draft.narration, page)[0], worth_naming(page))
+            # A page allowed to summarise is allowed to name fewer things. The
+            # floor is what the page is worth walking at *this* length, not at
+            # the length it overran to.
+            if may_summarise:
+                floor = min(floor, max(1, allowed // MIN_ITEM_CHARS_FOR_FLOOR))
             if missed_items(candidate.narration, page)[0] < floor:
                 self.log.info("第 %d 页改写后少讲了内容，不采用", page.index)
                 continue
@@ -930,6 +1017,8 @@ class NarrationSkill(Skill):
                 "报了数就要点名：说了「三块」「四类」，就要把这几项的名字说出来，"
                 "装不下就别报数。"
             )
+            if note := _density_note(page, budget):
+                lines.append(note)
             # The page's own words come first and are named as the material.
             # They used to come last, under 「元素：」, after a summary and a
             # key-point list the understanding step had written — so the first
@@ -938,7 +1027,20 @@ class NarrationSkill(Skill):
             # this is most of it.
             elements = [e for e in page.elements if e.text]
             if elements:
-                lines.append(f"页面原文（{len(elements)} 处，讲稿的主要材料，按这个顺序讲）：")
+                # 「按这个顺序讲」 is right for a content page and wrong for a
+                # cover: it is the line that made a cover read its four lines
+                # out one at a time, date included, over the top of its own
+                # instruction not to. A cover's lines are typesetting.
+                if page.page_type is PageType.COVER:
+                    lines.append(
+                        f"页面原文（{len(elements)} 处）——这是排版不是句子，"
+                        "说成一到两句话：谁做的、做的是什么。"
+                        "日期、联系方式、单位后缀这类不用念出来："
+                    )
+                else:
+                    lines.append(
+                        f"页面原文（{len(elements)} 处，讲稿的主要材料，按这个顺序讲）："
+                    )
                 # Longer than it was: this is the source text now, not a hint
                 # about what the page is roughly about. A body paragraph cut at
                 # 120 characters is a paragraph the narration cannot read out,

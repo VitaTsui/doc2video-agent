@@ -54,11 +54,25 @@ dsh --profile <profile> --patch /绝对路径/integrations/dsh/plugin/cordis.pat
 - **预算是上限不是建议**。时长按字数估，超了成片就超时长，而**音频一旦合成，长度就改不动了**。
 - **渲染是分钟级的**，所以起任务的工具立刻返回 `job_id`，不阻塞对话。
 
+## 渲染是后台任务
+
+一份三十页的文档整轮下来十五到二十五分钟。放着不管，模型就会在这段时间里反复调 `doc2video_status`——每次都是一轮对话，间隔还是猜的。
+
+所以 `doc2video_render` 和 `doc2video_revise` 会把这次渲染挂进 dsh 自己的后台任务运行时（`ctx.jobs`）：**跑完会通知模型**，`job_list` 看得见，`job_kill` 停得掉（停是请求不是杀——正在渲的那一段会渲完，因为半截的片段会被下次增量渲染当成好的）。返回里多两个字段：
+
+```json
+{ "job_id": "job_03b1…", "dsh_job_id": "doc2video-1",
+  "note": "已挂到后台，跑完会通知你，不用反复查；想停用 job_kill。" }
+```
+
+没有 `ctx.jobs` 的组合也能用，只是退回轮询，`note` 会这么说。`jobs` 没有写进 `inject`——注入的名字是**要等**的名字，写了就会让没有后台任务的组合把这个插件一直挂着。
+
+一次性的 `dsh --profile headless "……"` 答完就退出，后台任务会跟着结束；要真的等它渲完，用 `tui` 或 `web`。
+
 ## 还没做的
 
-- **进度只能轮询**。后端有 `GET /jobs/{id}/events`（SSE），插件还没用上。
-- **没接 `ctx.jobs`**。接上之后就能用 dsh 自带的 `job_list` / `job_kill` 管渲染任务，现在得靠 `doc2video_status`。
-- **非 macOS 默认没有声音**。后端默认 `macos_say`，别的平台会静默落到静音引擎——时间轴、字幕、镜头全对，就是没声音。跨平台先用 `env` 指定 `D2V_TTS_PROVIDER=edge`。
+- **进度只能轮询**。后端有 `GET /jobs/{id}/events`（SSE），插件还在按 3 秒一次问。
+- **非 macOS 默认可能没有声音**。装了本地语音（kokoro / piper）就有；三个引擎都不可用时会落到静音占位——成片的时间轴和字幕都对，就是哑的。这件事后端现在会明说（日志、运行记录、质检各一条），但插件这边不会拦着不让你渲。跨平台可以用 `env` 指定 `D2V_TTS_PROVIDER=edge`。
 
 ## 开发
 
