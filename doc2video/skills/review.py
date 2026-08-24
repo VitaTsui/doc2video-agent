@@ -589,7 +589,7 @@ class ReviewSkill(Skill):
                     )
                 )
 
-            if (flat := _length_spread(scene.narration)) is not None:
+            if (flat := _length_spread(scene.narration, page)) is not None:
                 findings.append(
                     ReviewFinding(
                         severity="warning", kind="pacing", scene_id=scene.scene_id,
@@ -672,6 +672,13 @@ class ReviewSkill(Skill):
             for label, pattern, advice in AI_TICS:
                 if (hit := re.search(pattern, scene.narration)) is None:
                     continue
+                # The page's own words are not the writer's tic. 「未来不是慢一点，
+                # 是直接失去生存席位」 is on the slide, in those words, and the
+                # script even attributes it — 「页面最后一句话是……」. Marking it
+                # down is marking the script down for doing the one thing this
+                # whole dimension asks of it.
+                if page is not None and _quotes_page(hit.group(0), page.raw_text()):
+                    continue
                 findings.append(
                     ReviewFinding(
                         severity="warning", kind="ai_tic", scene_id=scene.scene_id,
@@ -709,19 +716,67 @@ def _overlap_ratio(narration: str, page_text: str) -> float:
     return len(narration_grams & page_grams) / len(narration_grams)
 
 
-def _length_spread(narration: str) -> float | None:
+#: How much of a flagged phrase has to appear in the page for it to be a quote.
+#: Not all of it: 「不是慢一点，是」 is the script's compression of the page's
+#: 「不是发展慢一点，是」, and both are the page speaking.
+QUOTE_OVERLAP = 0.7
+
+
+def _quotes_page(phrase: str, page_text: str) -> bool:
+    """Is this phrase the page talking, rather than the writer?
+
+    Compared as characters in order rather than as a substring, because the
+    script drops a word here and there while quoting — 「不是发展慢一点」 becomes
+    「不是慢一点」 — and a substring test calls that original writing.
+    """
+    stripped = re.sub(r"[，。、！？：；「」（）\s]", "", phrase)
+    if len(stripped) < 4:
+        return False
+    haystack = re.sub(r"[，。、！？：；「」（）\s]", "", page_text)
+    cursor = 0
+    matched = 0
+    for char in stripped:
+        found = haystack.find(char, cursor)
+        if found >= 0:
+            matched += 1
+            cursor = found + 1
+    return matched / len(stripped) >= QUOTE_OVERLAP
+
+
+def _spread(lengths: list[int]) -> float:
+    """Coefficient of variation: how unequal these lengths are. 0 is identical."""
+    if not lengths:
+        return 0.0
+    mean = sum(lengths) / len(lengths)
+    if mean <= 0:
+        return 0.0
+    return (sum((length - mean) ** 2 for length in lengths) / len(lengths)) ** 0.5 / mean
+
+
+def _length_spread(narration: str, page=None) -> float | None:
     """How varied this page's sentence lengths are, or None when they are fine.
 
-    Returns the coefficient of variation only when it is too low to pass —
-    a number a reader can act on ("0.11" says flatter than "0.28"), and
-    nothing at all when the rhythm is already varied.
+    Judged against the page rather than against a constant. A contents page of
+    five eleven-character lines *should* be told in five equal sentences; the
+    old fixed threshold called that 「念起来是平的」 and asked for variety the
+    page does not have. What is worth reporting is a script flatter than what
+    it is describing — a page holding a 56-character paragraph next to a
+    13-character label, told as four sentences of the same length, has flattened
+    the document, which is the defect every other check here is about.
+
+    Returns the coefficient of variation only when it is too low to pass — a
+    number a reader can act on ("0.11" says flatter than "0.28") — and nothing
+    at all when the rhythm is already varied.
     """
     lengths = [len(part) for part in re.split(r"[。！？；]", narration) if part.strip()]
     if len(lengths) < MIN_SENTENCES_FOR_RHYTHM:
         return None
-    mean = sum(lengths) / len(lengths)
-    if mean <= 0:
+    spread = _spread(lengths)
+    if spread >= MIN_LENGTH_SPREAD:
         return None
-    variance = sum((length - mean) ** 2 for length in lengths) / len(lengths)
-    spread = variance**0.5 / mean
-    return spread if spread < MIN_LENGTH_SPREAD else None
+    # A page with nothing to be varied about asks for nothing.
+    if page is not None:
+        blocks = [len(block.text.strip()) for block in blocks_of(page)]
+        if len(blocks) >= 2 and _spread(blocks) < MIN_LENGTH_SPREAD:
+            return None
+    return spread
