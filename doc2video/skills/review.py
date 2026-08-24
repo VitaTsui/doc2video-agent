@@ -17,8 +17,12 @@ from ..core import ledger, tuning
 from ..schemas import ElementKind, PageType, ReviewFinding
 from ..schemas.telemetry import QualityDimension, QualityReport
 from ..tools.renderer.base import SUBTITLE_BOTTOM_MARGIN
+from ..tools.tts.providers import SilentProvider
 from . import render_review, speech_review
 from .base import Skill
+
+# What a scene's recorded engine is when nothing spoke it.
+SILENT_PROVIDER = SilentProvider.name
 
 DURATION_TOLERANCE = 0.25
 LONG_SCENE_SECONDS = 90.0
@@ -337,6 +341,7 @@ class ReviewSkill(Skill):
         broken = (
             by_kind.get("missing_visual", 0)
             + by_kind.get("missing_audio", 0)
+            + by_kind.get("silent_audio", 0)
             + by_kind.get("dangling_list", 0)
             + by_kind.get("thin_coverage", 0)
             + uncovered
@@ -552,6 +557,23 @@ class ReviewSkill(Skill):
                     ReviewFinding(
                         severity="error", kind="missing_audio", scene_id=scene.scene_id,
                         message="场景缺少配音，会出现无声段",
+                    )
+                )
+            elif scene.audio.provider == SILENT_PROVIDER:
+                # The one defect the rest of this file cannot see. The silent
+                # provider writes a real file of exactly the right length, so
+                # every check here passes and the film scores full marks —
+                # while being mute. It exists so that a machine with no voice
+                # still produces a correctly timed video instead of failing at
+                # page nine, which is right; what was wrong is that nothing
+                # said so afterwards.
+                findings.append(
+                    ReviewFinding(
+                        severity="error", kind="silent_audio", scene_id=scene.scene_id,
+                        message=(
+                            "这一段是静音占位，不是配音——时间轴和字幕都对，但没有声音。"
+                            "装一个本地语音（doc2video voices install）或改用 edge 后重跑配音"
+                        ),
                     )
                 )
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from doc2video.core.config import Settings
 from doc2video.tools.parsers.slide_raster import FONT_CANDIDATES, font_candidates
 from doc2video.tools.tts.piper import PiperProvider
-from doc2video.tools.tts.providers import AUTO_ORDER, resolve_provider
+from doc2video.tools.tts.providers import AUTO_ORDER, SilentProvider, resolve_provider
 
 
 def test_every_platform_has_a_font_to_fall_back_on():
@@ -93,6 +93,66 @@ def test_an_unavailable_provider_never_leaves_the_pipeline_without_one():
     """Voicing must degrade to silence, not fail: the video is still watchable."""
     assert resolve_provider("piper").available()
     assert resolve_provider("nonexistent").available()
+
+
+def test_a_mute_film_is_reported_rather_than_scored_full_marks(tmp_path: Path, settings, store):
+    """The one defect the review could not see.
+
+    The silent provider writes a real clip of exactly the right length, so a
+    machine with no voice produced a film where every check passed — correct
+    timeline, correct subtitles, full marks — and no sound at all. Degrading to
+    silence is right; scoring it as a finished video is not.
+    """
+    from doc2video.schemas import Scene, SceneAudio, Source, SourceType, VideoProject
+    from doc2video.skills.base import SkillContext
+    from doc2video.skills.review import ReviewSkill
+
+    project = VideoProject(
+        project_id="proj_mute",
+        source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
+    )
+    clip = store.audio_dir(project.project_id) / "scn_1.wav"
+    clip.parent.mkdir(parents=True, exist_ok=True)
+    SilentProvider().synthesize("这一页讲的是产业链经营。", clip)
+    project.scenes = [
+        Scene(
+            scene_id="scn_1",
+            source_page=1,
+            narration="这一页讲的是产业链经营。",
+            duration=3.0,
+            audio=SceneAudio(path=f"audio/{clip.name}", duration=3.0, provider=SilentProvider.name),
+        )
+    ]
+
+    skill = ReviewSkill(SkillContext.build(project, store=store, settings=settings))
+    findings = skill._structural_checks()
+    silent = [f for f in findings if f.kind == "silent_audio"]
+    assert silent, "哑片必须被报出来"
+    assert "静音占位" in silent[0].message
+
+
+def test_what_stopped_the_voice_is_named_when_it_falls_through_to_silence(monkeypatch, caplog):
+    """A mute film is worth one loud sentence saying which engines refused.
+
+    Without it the only evidence is a video nobody can hear, and the fix
+    (install a voice) is not guessable from that.
+    """
+    import logging
+
+    from doc2video.tools.tts import providers
+
+    monkeypatch.setattr(providers.MacOSSayProvider, "available", lambda self: False)
+    monkeypatch.setattr(providers.KokoroProvider, "available", lambda self: False)
+    monkeypatch.setattr(providers.PiperProvider, "available", lambda self: False)
+    monkeypatch.setattr(providers.PiperProvider, "unavailable_reason", lambda self: "模型未安装")
+
+    with caplog.at_level(logging.WARNING):
+        provider = resolve_provider("auto")
+
+    assert provider.name == SilentProvider.name
+    said = " ".join(record.getMessage() for record in caplog.records)
+    assert "没有可用的配音引擎" in said
+    assert "模型未安装" in said, "要说清楚是哪一个引擎因为什么不能用"
 
 
 def test_the_cli_progress_printer_matches_what_the_pipeline_sends(capsys):

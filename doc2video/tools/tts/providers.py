@@ -13,6 +13,7 @@ import subprocess
 import wave
 from pathlib import Path
 
+from ...core import ledger
 from ...core.config import which
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
@@ -177,8 +178,24 @@ def resolve_provider(preference: str) -> TTSProvider:
                 f"（{reason}）" if reason else "",
             )
 
+    refused: list[str] = []
     for provider_cls in AUTO_ORDER:
         provider = provider_cls()
         if provider.available():
+            # Landing here is a mute film that passes every other check: the
+            # silent provider writes a real clip of exactly the right length,
+            # so nothing downstream can tell. Say it once, loudly, where the
+            # run record keeps it — the alternative is a machine with no voice
+            # quietly shipping a video nobody can hear.
+            if isinstance(provider, SilentProvider):
+                why = "；".join(refused) or "没有可用的引擎"
+                log.warning("没有可用的配音引擎，本次是静音占位：%s", why)
+                ledger.degradation(
+                    "没有可用的配音引擎",
+                    f"成片会是哑的（时间轴和字幕仍然正确）。{why}",
+                )
             return provider
+        reason = getattr(provider, "unavailable_reason", lambda: "")()
+        name = provider_cls.name
+        refused.append(f"{name}：{reason}" if reason else f"{name} 不可用")
     return SilentProvider()

@@ -125,6 +125,7 @@ class VoiceSkill(Skill):
           plot, not a stylistic choice.
         """
         from ..tools.tts.base import estimate_duration, silences
+        from ..tools.tts.providers import SilentProvider
 
         redone = 0
         for scene in self.project.scenes:
@@ -139,6 +140,13 @@ class VoiceSkill(Skill):
                 self.project.intent.speech_rate or self.ctx.settings.tts_speech_rate,
                 self.tts.chars_per_second,
             )
+            # Silence is what this engine produces; re-speaking it five times
+            # produces it five more times. The film being mute is real and is
+            # reported — by the review, once for the film, rather than here
+            # thirty times for nothing.
+            if scene.audio.provider == SilentProvider.name:
+                continue
+
             quiet = sum(length for _, length in silences(path, floor=0.2))
             wrong = (
                 spoken <= 0.2
