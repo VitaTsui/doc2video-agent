@@ -25,6 +25,7 @@ import { Sidebar } from './Sidebar'
 import { Artifacts } from './Artifacts'
 import type { ArtifactSet } from './Artifacts'
 import { Setup } from './Setup'
+import { readableTitle } from './naming'
 
 let counter = 0
 const nextId = () => `m${++counter}`
@@ -124,19 +125,21 @@ export function App() {
 
   /** Collect a project's outputs for the side panel. */
   const loadArtifacts = useCallback(async (projectId: string, rendered: boolean) => {
-    const [scenes, quality, chain] = await Promise.all([
+    const [scenes, quality, chain, past, audio] = await Promise.all([
       api.scenes(projectId).catch(() => []),
       api.quality(projectId).catch(() => null),
       api.ledger(projectId).catch(() => []),
+      api.pastRenders(projectId).catch(() => []),
+      api.narrationTrack(projectId).catch(() => null),
     ])
     // The deck is not re-fetched here; it belongs to the parse that produced
     // it, and dropping it would empty the tab someone is looking at.
     let carried: ArtifactSet['deck']
     setArtifacts((current) => {
       carried = current?.projectId === projectId ? current.deck : undefined
-      return { projectId, scenes, quality, ledger: chain, rendered, deck: carried }
+      return { projectId, scenes, quality, ledger: chain, rendered, past, audio, deck: carried }
     })
-    return { projectId, scenes, quality, ledger: chain, rendered, deck: carried }
+    return { projectId, scenes, quality, ledger: chain, rendered, past, audio, deck: carried }
   }, [])
 
   /**
@@ -190,9 +193,10 @@ export function App() {
           kind: 'deck',
           // Reopened: whoever set this length did so in a conversation that is
           // being restored, not in one being had — so state it, don't credit it.
-          text: `《${summary.title || summary.source}》共 ${deckPages.length} 页，`
+          text: `《${readableTitle(summary.title || summary.source)}》共 ${deckPages.length} 页，`
             + `目标时长大约 ${seconds} 秒。`,
           projectId: summary.project_id,
+          file: summary.title || summary.source,
           pages: deckPages,
           guide,
           hasModel,
@@ -344,7 +348,19 @@ export function App() {
       // one, so `card` is what is current rather than what was first — and
       // `from` is where its share of the account begins.
       let card = say({ role: 'assistant', kind: 'job', text: intro, job: null })
+      // Where this run's share of the account begins. Not −1: the record is
+      // filtered by the *latest* run id, and at the moment 「重新配音」 is
+      // pressed the latest entry still belongs to the run before it — so the
+      // new card opened showing the whole of the previous run's thinking and
+      // kept showing it until this one wrote its first line. Numbering
+      // continues across runs, so the last line already there is the mark.
       let from = -1
+      if (projectId) {
+        from = await api
+          .ledger(projectId)
+          .then((entries) => (entries.length ? entries[entries.length - 1].seq : -1))
+          .catch(() => -1)
+      }
       abort.current?.abort()
       abort.current = new AbortController()
 
@@ -588,13 +604,20 @@ export function App() {
   const acceptDeck = useCallback(
     async (file: File, brief: string, uploaded?: string) => {
       setBusy(true)
+      // Parsing is a request, not a job — there is nothing on the backend to
+      // cancel — so the way to stop it is to stop waiting for it. Without
+      // this the input drew a stop button through four minutes of parsing a
+      // thirty-page deck and pressing it did nothing at all.
+      abort.current?.abort()
+      abort.current = new AbortController()
+      const signal = abort.current.signal
       say({ role: 'user', kind: 'text', text: brief || '按默认来', file: file.name })
       const thinking = say({ role: 'assistant', kind: 'text', text: '正在解析…', pending: true })
       try {
         // Already on the backend if the picker managed it; only a failed
         // upload has to be repeated here.
-        const uploadId = uploaded ?? (await api.uploadSource(file))
-        const prepared = await api.prepare(uploadId, brief)
+        const uploadId = uploaded ?? (await api.uploadSource(file, signal))
+        const prepared = await api.prepare(uploadId, brief, signal)
         const guide = await api.narrationGuide(prepared.project_id)
         setProjectId(prepared.project_id)
         void loadProjects()
@@ -607,9 +630,13 @@ export function App() {
           // were the request is how a video comes back a different length than
           // the person thought they had asked for.
           text: prepared.duration_stated
-            ? `《${prepared.title}》共 ${prepared.pages.length} 页，按这个要求算下来大约 ${seconds} 秒。`
-            : `《${prepared.title}》共 ${prepared.pages.length} 页。你没说要多长，按这份文档的内容算下来大约 ${seconds} 秒——想要短一点直接说，比如「压到八分钟」。`,
+            ? `《${readableTitle(prepared.title)}》共 ${prepared.pages.length} 页，`
+              + `按这个要求算下来大约 ${seconds} 秒。`
+            : `《${readableTitle(prepared.title)}》共 ${prepared.pages.length} 页。`
+              + `你没说要多长，按这份文档的内容算下来大约 ${seconds} 秒——`
+              + '想要短一点直接说，比如「压到八分钟」。',
           projectId: prepared.project_id,
+          file: prepared.title || file.name,
           pages: prepared.pages,
           guide,
           hasModel,
@@ -635,7 +662,14 @@ export function App() {
         // boxes are empty and open, and 「生成讲稿」 fills in whatever is
         // still blank when they press it.
       } catch (error) {
-        amend(thinking, { pending: false, kind: 'text', text: `解析失败：${api.describeError(error)}` })
+        // Stopping on purpose is not a failure, and 「解析失败」 over a wait the
+        // person ended themselves is the window blaming them for a button it
+        // offered.
+        amend(thinking, {
+          pending: false,
+          kind: 'text',
+          text: signal.aborted ? '解析停下了。' : `解析失败：${api.describeError(error)}`,
+        })
       } finally {
         setBusy(false)
       }
@@ -774,12 +808,12 @@ export function App() {
    * nothing is rewritten, so the fifteen minutes the words cost are not spent
    * twice.
    */
-  const startRevoice = useCallback(async () => {
+  const startRevoice = useCallback(async (voice: string) => {
     if (!projectId) return
     setBusy(true)
     try {
-      const jobId = await api.revoice(projectId)
-      await follow(jobId, '同样的讲稿，重新念一遍。')
+      const jobId = await api.revoice(projectId, voice)
+      await follow(jobId, voice ? '换个声音，同样的讲稿重新念一遍。' : '同样的讲稿，重新念一遍。')
     } catch (error) {
       say({ role: 'assistant', kind: 'text', text: `没能重新配音：${api.describeError(error)}` })
     } finally {
@@ -943,8 +977,21 @@ export function App() {
               generated: Boolean(artifacts?.rendered),
               onRender: () => void startRender(),
               onDraft: () => void fillInScript(),
-              onRevoice: () => void startRevoice(),
+              onRevoice: (voice: string) => void startRevoice(voice),
             }}
+            // 「再说一次」: the last thing that was asked, asked again. Absent
+            // while something is running — a second run over the first is what
+            // the gate exists to prevent — and absent when nothing was asked,
+            // which is every turn the agent opened by itself.
+            onRetry={
+              running
+                ? undefined
+                : (() => {
+                    const asked = [...messages].reverse().find((m) => m.role === 'user')
+                    return asked?.text ? () => void acceptMessage(asked.text) : undefined
+                  })()
+            }
+            onSay={(text) => void acceptMessage(text)}
             onShow={(id) => {
               void loadArtifacts(id, true)
               setPanelOpen(true)
@@ -957,13 +1004,29 @@ export function App() {
           uploadAction={connection ? api.uploadUrl() : ''}
           onSend={acceptMessage}
           onStop={() => {
-            // A request, not a kill: the scene in flight finishes first,
-            // because a half-written clip is one the incremental render would
-            // later mistake for a good one.
-            if (!runningJob) return
-            void api.cancelJob(runningJob).catch((error) => {
-              say({ role: 'assistant', kind: 'text', text: `没能中止：${api.describeError(error)}` })
-            })
+            // Two different things are called 「停」 here, and the button has to
+            // do whichever one applies. A job on the backend is asked to stop
+            // rather than killed — the scene in flight finishes, because a
+            // half-written clip is one the incremental render would later
+            // mistake for a good one. A request that is merely being waited on
+            // — parsing, which is not a job — is stopped by stopping the wait.
+            //
+            // Doing only the first meant the button was drawn through four
+            // minutes of parsing and pressed nothing.
+            if (runningJob) {
+              void api.cancelJob(runningJob).catch((error) => {
+                say({
+                  role: 'assistant',
+                  kind: 'text',
+                  text: `没能中止：${api.describeError(error)}`,
+                })
+              })
+              return
+            }
+            // Whatever is being waited on says so itself when the wait ends;
+            // a second line here would be the same news twice.
+            abort.current?.abort()
+            setBusy(false)
           }}
           onDeck={acceptDeck}
           hint={projectId ? '想改哪里就直接说' : '说说你想要什么样的视频，并附上文档'}

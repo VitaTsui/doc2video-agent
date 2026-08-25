@@ -12,6 +12,7 @@
 
 // Deep import, as elsewhere: the barrel pulls half the library in with it.
 import SecondConf from '@hsu-react/ui/es/components/SecondConf'
+import { readableTitle } from './naming'
 
 import type { ProjectSummary } from './api'
 import { GearIcon, PanelIcon, PlusIcon, TrashIcon } from './Icon'
@@ -25,6 +26,27 @@ function when(iso: string | null): string {
   if (minutes < 60 * 24) return `${Math.round(minutes / 60)} 小时前`
   if (minutes < 60 * 24 * 30) return `${Math.round(minutes / 1440)} 天前`
   return `${then.getFullYear()}/${then.getMonth() + 1}/${then.getDate()}`
+}
+
+/**
+ * Which run of days a project belongs to.
+ *
+ * Thirteen rows of the same deck is what iterating on one document looks like,
+ * and no amount of naming makes them tell each other apart. What does is when
+ * they happened — the same thing every chat does with its history, and the
+ * reason its list is readable at thirty entries.
+ */
+function period(iso: string | null): string {
+  if (!iso) return '更早'
+  const then = new Date(iso)
+  const today = new Date()
+  const midnight = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const days = Math.floor((midnight.getTime() - then.getTime()) / 86_400_000)
+  if (days < 0) return '今天'
+  if (days < 1) return '昨天'
+  if (days < 7) return '最近七天'
+  if (days < 30) return '最近一个月'
+  return '更早'
 }
 
 export function Sidebar({
@@ -88,9 +110,13 @@ export function Sidebar({
             还没有工程。拖一份 PPT 或 PDF 进来就开始了。
           </p>
         ) : (
-          projects.map((project) => (
+          projects.map((project, index) => (
+            <div key={project.project_id}>
+            {period(project.updated_at) !== period(projects[index - 1]?.updated_at ?? null)
+              || index === 0 ? (
+              <div className="sidebar__period">{period(project.updated_at)}</div>
+            ) : null}
             <div
-              key={project.project_id}
               className={
                 project.project_id === current ? 'sidebar__row sidebar__row--on' : 'sidebar__row'
               }
@@ -99,9 +125,11 @@ export function Sidebar({
                 type="button"
                 className="sidebar__item"
                 onClick={() => onOpen(project.project_id)}
-                title={project.title || project.source}
+                title={readableTitle(project.title || project.source)}
               >
-                <span className="sidebar__title">{project.title || project.source || '未命名'}</span>
+                <span className="sidebar__title">
+                  {readableTitle(project.title || project.source) || '未命名'}
+                </span>
                 <span className="sidebar__meta">
                   {when(project.updated_at)}
                   {project.duration > 0 && ` · ${Math.round(project.duration)}s`}
@@ -120,7 +148,7 @@ export function Sidebar({
                   click from reaching the row underneath — which would
                   otherwise open the very project being deleted. */}
               <SecondConf
-                contentTitle={`删除《${project.title || project.source || '这个工程'}》`}
+                contentTitle={`删除《${readableTitle(project.title || project.source) || '这个工程'}》`}
                 contentText="生成出来的视频、讲稿和音频都会一起清掉，上传的原文件不动。"
                 okText="删除"
                 cancelText="不删了"
@@ -130,6 +158,7 @@ export function Sidebar({
                   <TrashIcon size={15} />
                 </button>
               </SecondConf>
+            </div>
             </div>
           ))
         )}

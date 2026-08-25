@@ -100,25 +100,140 @@ body {
   margin: 0 auto;
 }
 
+/* A turn is a row: who is speaking on the left, what they said beside it. The
+   assistant's mark is what makes a page of paragraphs legible as a
+   conversation — without it the reader has to remember whose turn they are
+   in, which is exactly the work a transcript should be doing for them. */
 .turn {
-  margin-bottom: 28px;
+  display: flex;
+  gap: 14px;
+  margin-bottom: 30px;
+  line-height: 1.75;
 }
 
+.turn__who {
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.turn__mark {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+  /* The letter is a shape here, not a word: centred by eye rather than by
+     baseline, which sits a hair low inside a circle. */
+  line-height: 1;
+  user-select: none;
+}
+
+.turn__body {
+  min-width: 0;
+  flex: 1;
+}
+
+/* The user's turn has no mark and does not need the column: their words are
+   the ones with a container around them, which is what makes a transcript
+   scannable — everything indented right is something you said. */
 .turn--user {
-  display: flex;
   justify-content: flex-end;
 }
 
 .turn--user .turn__body {
+  flex: 0 1 auto;
   background: var(--user-bg);
-  border-radius: var(--radius);
-  padding: 10px 16px;
-  max-width: 85%;
+  border-radius: 16px;
+  padding: 11px 16px;
+  max-width: 80%;
 }
 
-/* The assistant's turn is unadorned: no bubble, no border, just text. */
+/* The assistant's turn is unadorned: no bubble, no border, just text. The
+   newlines are kept — most replies are plain sentences, and a renderer that
+   reflowed them would be a downgrade. */
 .turn--assistant .turn__body {
   white-space: pre-wrap;
+}
+
+/* A paragraph inside a reply. The first has no space above it, so a one-
+   paragraph reply — which is most of them — sits exactly where it always did. */
+.prose__p {
+  margin: 0.85em 0 0;
+  white-space: pre-wrap;
+}
+
+.prose__p:first-child {
+  margin-top: 0;
+}
+
+.prose__list {
+  margin: 0.5em 0 0;
+  padding-left: 1.35em;
+  /* A list is a block; the surrounding pre-wrap would otherwise keep the
+     newlines that separated its items and double every gap. */
+  white-space: normal;
+}
+
+.prose__list li {
+  margin: 0.15em 0;
+}
+
+.turn__body code {
+  background: var(--user-bg);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+/* Successive assistant turns are one voice continuing, not two speakers. The
+   mark is drawn once and the ones under it keep the column without repeating
+   it — the way every chat renders a run of messages from the same side. */
+.turn--assistant + .turn--assistant {
+  margin-top: -18px;
+}
+
+.turn--assistant + .turn--assistant .turn__mark {
+  visibility: hidden;
+}
+
+/* Under the reply, and only while the pointer is on it. Always-on controls
+   under every paragraph make a transcript into a form. Kept in the layout even
+   while invisible, so nothing shifts when they appear. */
+.turnbar {
+  display: flex;
+  gap: 2px;
+  margin: 6px 0 -8px -6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.turn:hover .turnbar,
+.turnbar:focus-within {
+  opacity: 1;
+}
+
+.turnbar__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: none;
+  padding: 4px 7px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.turnbar__button:hover {
+  background: var(--user-bg);
+  color: var(--ink);
 }
 
 .turn__file {
@@ -130,6 +245,65 @@ body {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 1px 8px;
+}
+
+/* -- what a turn hands back --------------------------------------------- */
+
+/* A deck, a finished film. Both used to be a thin outlined pill with a line of
+   text in it, which reads as a button someone forgot to style. An attachment
+   gets a shape: a mark for what kind of thing it is, its name, and what is
+   worth knowing about it underneath. */
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 24rem;
+  margin-top: 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.attachment:hover {
+  border-color: var(--ink-soft);
+  background: var(--bg);
+}
+
+.attachment__icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: var(--user-bg);
+  color: var(--accent);
+}
+
+.attachment__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.attachment__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.attachment__meta {
+  color: var(--ink-soft);
+  font-size: 12.5px;
 }
 
 .card {
@@ -578,6 +752,117 @@ body {
   font-size: 26px;
   font-weight: 600;
   margin: 0 0 6px;
+}
+
+/* One thing you can set, with what it is and what it costs beside it. */
+.setting {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.setting__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* The path itself, in the shape a path has. Wraps rather than truncates: a
+   truncated path answers 「四点五个 G 在哪」 with most of the answer. */
+.setting__path {
+  margin: 8px 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--user-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* What you could say next. Quiet by design: these are an offer, not the
+   controls — the buttons above them are the controls. */
+.suggests {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 0 40px;
+}
+
+.suggests__chip {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.suggests__chip:hover {
+  color: var(--ink);
+  border-color: var(--ink-soft);
+}
+
+/* The line under the player: what the film is, and the one thing you might
+   want out of it that is not the film. */
+.panel__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.panel__downloads {
+  display: flex;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.panel__download {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.panel__download:hover {
+  text-decoration: underline;
+}
+
+/* Earlier films. Collapsed, and the player only loads when one is opened —
+   three hundred megabytes fetched to render a list nobody has expanded is
+   three hundred megabytes wasted. */
+.past {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.past__head {
+  margin-bottom: 6px;
+}
+
+.past__one summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  padding: 7px 0;
+  cursor: pointer;
+  font-size: 13.5px;
+}
+
+.past__one summary::-webkit-details-marker {
+  display: none;
+}
+
+.past__one + .past__one {
+  border-top: 1px solid var(--line);
 }
 
 /* -- settings dialog ----------------------------------------------------- */
@@ -1653,15 +1938,27 @@ body {
 /* What to do next, under the last reply. Not a card: it belongs to the
    conversation the way a toolbar belongs to a document — present, and not
    asking to be looked at. */
+/* What can be done next, under the last thing said. Aligned with the turns
+   above it rather than with the window: a row of buttons that starts at a
+   different left edge than every paragraph above reads as belonging to the
+   application rather than to the conversation.
+
+   Separated by a rule rather than by a box. A card here would be a third kind
+   of container in a column that already has two, and what this is is the end
+   of the transcript, not another thing in it. */
 .actionbar {
   display: flex;
   gap: 10px;
   align-items: center;
-  margin: 4px 0 8px;
+  flex-wrap: wrap;
+  margin: 6px 0 4px 40px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
 }
 
 .actionbar__hint {
   flex: 1;
+  min-width: 12rem;
   font-size: 12.5px;
 }
 
@@ -1734,6 +2031,61 @@ body {
    side-by-side instruction: turned on its side it stops meaning "top-aligned"
    and starts meaning "as narrow as your content", which left the script box a
    fraction of the width it had just been given. */
+/* One page of the deck, as a row you can run your eye down. It was a table:
+   「第 8 页  石化企业AI应用的紧迫性…  418/175」 at ten pixels of padding, thirty
+   times over. The page number is a number, not a sentence; the two counts were
+   a subtraction to do in your head. */
+.deck__row {
+  border-bottom: 1px solid var(--line);
+}
+
+.deck__row:last-child {
+  border-bottom: none;
+}
+
+.deck__row--open {
+  background: var(--bg);
+}
+
+.deck__head {
+  display: flex;
+  width: 100%;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.deck__head:hover {
+  background: var(--bg);
+}
+
+.deck__index {
+  flex-shrink: 0;
+  min-width: 1.6rem;
+  text-align: right;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.deck__count {
+  flex-shrink: 0;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Written well past what this page's own budget can say. Said in colour rather
+   than in a second number: the point is that it is long, not by how much. */
+.deck__count--over {
+  color: #b0562f;
+}
+
 .panel .page-row {
   flex-direction: column;
   align-items: stretch;
@@ -1841,6 +2193,18 @@ body {
 /* A row is the entry plus the control that removes it — the control floating
    over it rather than beside it. Laid out as a sibling it took width from a
    240px column, which squeezed the title and pushed the row into scrolling. */
+/* Which stretch of days the rows under it belong to. Small and quiet: it is
+   a divider that happens to have a word on it, not a heading. */
+.sidebar__period {
+  padding: 14px 12px 4px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.sidebar__list > div:first-child .sidebar__period {
+  padding-top: 2px;
+}
+
 .sidebar__row {
   position: relative;
   border-radius: 8px;

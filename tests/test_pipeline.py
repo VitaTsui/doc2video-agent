@@ -325,3 +325,25 @@ def test_writing_a_batch_touches_nothing_shared():
     source = inspect.getsource(NarrationSkill._write_batch)
     for forbidden in ("self.ctx.store.save", "drafts[", "_build_scenes"):
         assert forbidden not in source, f"_write_batch 不该碰 {forbidden}"
+
+
+def test_the_film_before_this_one_is_kept():
+    """「重新生成」 is a bet, and losing it used to be final.
+
+    A film takes twenty minutes to make and the script is rewritten each time,
+    so the old one could not be got back even slowly — it would not come back
+    the same. Bounded, because each is around a hundred megabytes.
+    """
+    from doc2video.agent.executor import KEEP_PAST_RENDERS
+    from doc2video.schemas import PastRender, RenderState
+
+    assert KEEP_PAST_RENDERS >= 1
+
+    state = RenderState()
+    assert state.past == [], "一次都没渲染过就没有旧的"
+
+    state.past.insert(
+        0, PastRender(path="out/past/20260825-101500.mp4", seconds=1058.0, score=84.5)
+    )
+    kept = state.past[0]
+    assert kept.score == 84.5, "两个版本要靠分数分辨，不只是时间戳"

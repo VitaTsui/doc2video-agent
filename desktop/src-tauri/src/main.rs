@@ -133,6 +133,69 @@ fn save_model_prefs(
     restart(&app, &state)
 }
 
+/// Where the files are kept, and how much is there.
+///
+/// Four and a half gigabytes had accumulated somewhere nobody could name, with
+/// nothing on screen saying where. A path you can read is the minimum; a path
+/// you can change is what makes an external disk possible.
+#[tauri::command]
+fn storage_info(app: tauri::AppHandle) -> Result<StorageInfo, String> {
+    let dir = app_data(&app)?;
+    let stored = prefs::load(&dir);
+    let paths = Paths::resolve_in(&dir, &stored.storage_dir).map_err(|e| format!("{e:#}"))?;
+    let bytes = folder_size(&paths.storage_dir);
+    Ok(StorageInfo {
+        path: paths.storage_dir.to_string_lossy().to_string(),
+        bytes,
+        chosen: !stored.storage_dir.trim().is_empty(),
+    })
+}
+
+/// Keep the files somewhere else from now on.
+///
+/// What is already made stays where it is: moving gigabytes while a render may
+/// be running is a good way to lose both. The window says so.
+#[tauri::command]
+fn choose_storage(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Connection, String> {
+    let dir = app_data(&app)?;
+    let wanted = path.trim().to_string();
+    if !wanted.is_empty() {
+        std::fs::create_dir_all(&wanted).map_err(|e| format!("这个目录用不了：{e}"))?;
+    }
+    let mut stored = prefs::load(&dir);
+    stored.storage_dir = wanted;
+    prefs::save(&dir, &stored)?;
+    restart(&app, &state)
+}
+
+#[derive(serde::Serialize)]
+struct StorageInfo {
+    path: String,
+    bytes: u64,
+    /// Whether this is somewhere chosen, or the app's own directory.
+    chosen: bool,
+}
+
+/// How much is in there. Walks the tree; a project directory is a few hundred
+/// files, so this is cheap next to the four gigabytes it is measuring.
+fn folder_size(dir: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => folder_size(&entry.path()),
+            Ok(_) => entry.metadata().map(|m| m.len()).unwrap_or(0),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
 fn app_data(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
         .path()
@@ -159,12 +222,14 @@ fn restart(app: &tauri::AppHandle, state: &State<'_, AppState>) -> Result<Connec
 
 fn start_backend(app: &tauri::AppHandle) -> Result<Backend, String> {
     let dir = app_data(app)?;
-    let paths = Paths::resolve(&dir).map_err(|e| format!("{e:#}"))?;
+    // Read before the paths are resolved: where the files go is one of the
+    // things it remembers.
+    let stored = prefs::load(&dir);
+    let paths = Paths::resolve_in(&dir, &stored.storage_dir).map_err(|e| format!("{e:#}"))?;
 
     // Keys from the keychain, the model choice from disk — both only reach the
     // backend as environment variables at spawn, which is why changing either
     // means starting a new one.
-    let stored = prefs::load(&dir);
     let mut env = secrets::as_env(&stored);
     env.extend(stored.as_env());
 
@@ -232,6 +297,8 @@ fn main() {
             save_key,
             model_prefs,
             save_model_prefs,
+            storage_info,
+            choose_storage,
             restart_backend,
             update::check_update,
             update::install_update

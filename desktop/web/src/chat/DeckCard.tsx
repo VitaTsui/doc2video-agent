@@ -58,34 +58,25 @@ export function DeckCard({
         const over = budget && draft.length > budget.target_chars * 1.15
         const expanded = open === page.index
         return (
-          <div key={page.index} style={{ borderBottom: '1px solid var(--line)' }}>
+          <div key={page.index} className={expanded ? 'deck__row deck__row--open' : 'deck__row'}>
             <button
               type="button"
+              className="deck__head"
               onClick={() => setOpen(expanded ? null : page.index)}
-              style={{
-                width: '100%',
-                display: 'flex',
-                gap: 10,
-                alignItems: 'center',
-                padding: '10px 16px',
-                border: 'none',
-                background: 'transparent',
-                font: 'inherit',
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
             >
-              <span style={{ color: 'var(--ink-soft)', flexShrink: 0 }}>第 {page.index} 页</span>
+              <span className="deck__index">{page.index}</span>
               {/* One line, clipped, with the full title on hover — the
                   library's own component, which is where the tooltip comes
                   from. A long title wrapped to three lines and pushed the
                   budget around it, so a list of thirty pages stopped being a
                   list you could run your eye down. */}
               <TextEllipsis className="deck__title">{page.title || '无标题'}</TextEllipsis>
-              <span className="muted" style={{ flexShrink: 0 }}>
+              {/* How full this page is. 「443/251」 was two numbers to subtract
+                  in your head; a page that overran should look like one. */}
+              <span className={over ? 'deck__count deck__count--over' : 'deck__count'}>
                 {hasModel && !draft
                   ? `约 ${budget?.target_chars} 字`
-                  : `${draft.length}/${budget?.target_chars}`}
+                  : `${draft.length} 字`}
               </span>
             </button>
 

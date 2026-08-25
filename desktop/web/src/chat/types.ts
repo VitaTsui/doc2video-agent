@@ -20,6 +20,8 @@ export type Message = {
   | {
       kind: 'deck'
       projectId: string
+      /** What the deck is called, for the card that stands for it. */
+      file?: string
       pages: PageView[]
       guide: GuideRow[]
       hasModel: boolean

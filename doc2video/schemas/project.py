@@ -80,6 +80,23 @@ class VideoIntent(BaseModel):
     pronunciation: dict[str, str] = Field(default_factory=dict)
 
 
+class PastRender(BaseModel):
+    """A film this project made before the one it has now.
+
+    Kept because 「重新生成」 is a bet: the new one may be worse, and the old one
+    took twenty minutes to make. Overwriting it meant the only way back was to
+    make it again — and it might not come back the same, since the script is
+    rewritten each time.
+    """
+
+    path: str
+    made_at: datetime = Field(default_factory=_now)
+    seconds: float = 0.0
+    #: What the review thought of it, so two versions can be told apart by more
+    #: than their timestamps.
+    score: float | None = None
+
+
 class RenderState(BaseModel):
     renderer: str = ""
     status: str = "idle"
@@ -89,6 +106,12 @@ class RenderState(BaseModel):
     rendered_scenes: dict[str, str] = Field(default_factory=dict)
     scene_clips: dict[str, str] = Field(default_factory=dict)
     last_render_at: datetime | None = None
+    #: The joined narration, as its own file. It is made on the way to the
+    #: film and then had no name, so there was nothing to offer anyone who
+    #: wanted the audio without the pictures.
+    audio_path: str | None = None
+    #: Earlier films, newest first. Bounded — see `KEEP_PAST_RENDERS`.
+    past: list[PastRender] = Field(default_factory=list)
     message: str = ""
 
 

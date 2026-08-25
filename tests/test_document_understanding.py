@@ -13,6 +13,8 @@ just a video that ends early. That is what these pin down.
 
 from __future__ import annotations
 
+import re
+
 from doc2video.core.config import Settings
 from doc2video.schemas import (
     BBox,
@@ -44,9 +46,17 @@ class _PerBatchModel(MockLLM):
     def __init__(self) -> None:
         self.calls = 0
 
+    @staticmethod
+    def asked_about(prompt: str) -> list[int]:
+        """The page numbers this prompt is asking about, in order."""
+        return [int(found) for found in re.findall(r"^## 第 (\d+) 页", prompt, re.M)]
+
     def complete_json(self, prompt: str, **kwargs):  # noqa: ARG002
-        first = self.calls * BATCH + 1
-        indexes = list(range(first, min(first + BATCH, PAGES + 1)))
+        # Which pages this call is about, read off the prompt rather than off a
+        # counter: batches are read several at a time, so the third call is not
+        # the third batch. A real model answers the prompt in front of it, and
+        # so does this.
+        indexes = self.asked_about(prompt)
         self.calls += 1
         return {
             "topic": "揭榜方案",
@@ -162,3 +172,34 @@ def test_one_unreadable_batch_costs_only_its_own_pages():
     assert titles[3] == "模型读过的第 3 页"
     assert titles[26] == "模型读过的第 26 页"
     assert len(project.document.presentation_order) == PAGES
+
+
+def test_batches_are_read_a_few_at_a_time():
+    """A batch sees only its own pages, so reading them in turn bought nothing.
+
+    Measured: five calls at 47 seconds each, four minutes of a forty-minute
+    film, and nothing one batch understood ever reached another.
+    """
+    from doc2video.skills.document import MAX_READERS, reading_workers
+
+    assert reading_workers(5, 0) > 1
+    assert reading_workers(5, 0) <= MAX_READERS, "上限是模型后面那道闸，不是机器"
+    assert reading_workers(5, 2) == 2
+    assert reading_workers(1, 8) == 1
+
+
+def test_what_a_batch_answers_is_applied_in_page_order():
+    """The first batch is the one that answers for the deck.
+
+    It holds the cover, and the ordering it returns is merged rather than
+    replaced — a batch that saw six pages of thirty must not be allowed to drop
+    the other twenty-four. Reading in parallel must not change which batch that
+    is, so the answers are applied in page order however they arrive.
+    """
+    import inspect
+
+    from doc2video.skills.document import DocumentSkill
+
+    source = inspect.getsource(DocumentSkill._read_batches)
+    assert "for start, _batch in batches:" in source, "结果要按页码顺序交回去"
+    assert "yield answers[start]" in source

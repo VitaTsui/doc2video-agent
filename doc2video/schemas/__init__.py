@@ -15,6 +15,7 @@ from .document import (
 )
 from .project import (
     HistoryEntry,
+    PastRender,
     ProjectStatus,
     RenderState,
     ReviewFinding,
@@ -47,6 +48,7 @@ __all__ = [
     "NarrationSegment",
     "PageType",
     "ProjectStatus",
+    "PastRender",
     "RenderState",
     "ReviewFinding",
     "Scene",

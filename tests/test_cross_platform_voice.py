@@ -503,3 +503,31 @@ def test_a_silent_page_is_spoken_again_when_the_machine_can_speak(tmp_path):
     assert skill._has_voice() is any(
         cls.name != SilentProvider.name and cls().available() for cls in AUTO_ORDER
     )
+
+
+def test_a_voice_engine_survives_an_update(monkeypatch, tmp_path):
+    """Installing a voice and then updating meant installing it again.
+
+    The engines went into the interpreter that was running, which for the
+    desktop app is the downloaded runtime — and an update replaces that whole
+    directory. The voices themselves were never the problem: the `.onnx` models
+    live beside the projects. It is the engine that reads them that was being
+    thrown away.
+    """
+    from doc2video.tools.tts.install import packages_dir
+
+    monkeypatch.delenv("D2V_PACKAGES_DIR", raising=False)
+    assert packages_dir() is None, "没有指定就装在原地，源码检出正是这种情况"
+
+    monkeypatch.setenv("D2V_PACKAGES_DIR", str(tmp_path / "packages"))
+    assert packages_dir() == tmp_path / "packages"
+
+
+def test_what_is_installed_there_is_importable():
+    """Put somewhere else and not looked for is the same as not installed."""
+    import inspect
+
+    from doc2video import cli
+
+    source = inspect.getsource(cli._use_installed_packages)
+    assert "sys.path.insert(0" in source, "要放在最前面：有意装的那个才是想用的"

@@ -19,6 +19,7 @@
 import Button from '@hsu-react/ui/es/components/Button'
 import Input from '@hsu-react/ui/es/components/Input'
 import Select from '@hsu-react/ui/es/components/Select'
+import { open } from '@tauri-apps/plugin-dialog'
 import { useEffect, useState } from 'react'
 
 import * as api from './api'
@@ -278,6 +279,12 @@ export function Settings({
           {tab === 'general' && (
             <>
               <h2 className="modal__title">环境</h2>
+
+              {/* Where the files are. Four and a half gigabytes had built up
+                  somewhere nobody could name — the app's own data directory,
+                  with nothing on screen saying so and no way to put it on a
+                  bigger disk. */}
+              <StorageSetting busy={busy} />
 
               {caps && (
                 <ul className="providers">
@@ -931,6 +938,74 @@ function inUse(state: Awaited<ReturnType<typeof api.voicePacks>>): string | null
     ? (pack?.voices.find((one) => one.id === state.voice)?.name ?? state.voice)
     : '系统默认音色'
   return `${engine}｜${voice}`
+}
+
+/**
+ * Where uploads and everything made from them are kept.
+ *
+ * Read-only was the first version of this and it was not enough: a film is a
+ * hundred megabytes and a deck's page renders are more, so the answer to
+ * 「四点五个 G 在哪」 has to come with a way to put it somewhere else.
+ *
+ * What is already made stays where it is. Moving gigabytes out from under a
+ * render that may be running is a good way to lose both, so the move is the
+ * person's to make with their own file manager, and this says so.
+ */
+function StorageSetting({ busy }: { busy: boolean }) {
+  const [info, setInfo] = useState<api.StorageInfo | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [failed, setFailed] = useState('')
+
+  useEffect(() => {
+    void api.storageInfo().then(setInfo).catch(() => undefined)
+  }, [])
+
+  const pick = async () => {
+    const chosen = await open({ directory: true, title: '把文件放在哪里' }).catch(() => null)
+    if (typeof chosen !== 'string') return
+    setSaving(true)
+    setFailed('')
+    try {
+      await api.chooseStorage(chosen)
+      setInfo(await api.storageInfo())
+    } catch (error) {
+      setFailed(api.describeError(error))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!info) return null
+
+  return (
+    <section className="setting">
+      <div className="setting__row">
+        <div>
+          <div>文件放在哪里</div>
+          <div className="muted">
+            {info.chosen ? '你选的位置' : '应用自己的数据目录'} · 已占用 {_size(info.bytes)}
+          </div>
+        </div>
+        <Button size="small" disabled={busy || saving} loading={saving} onClick={() => void pick()}>
+          换个位置
+        </Button>
+      </div>
+      <div className="setting__path">{info.path}</div>
+      <div className="muted">
+        投进来的文档、页面图、配音和成片都在这里。换位置之后新的文件写到新地方，
+        已经做好的留在原处——渲染可能正在跑，搬动几个 G 的东西不该由这里替你决定。
+      </div>
+      {busy && <div className="muted">正在生成，等这一次跑完再换。</div>}
+      {failed && <div className="muted" style={{ color: '#b0562f' }}>{failed}</div>}
+    </section>
+  )
+}
+
+/** Bytes as a person would say them. */
+function _size(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`
+  return `${Math.round(bytes / 1024)} KB`
 }
 
 function VoiceSettings({ busy }: { busy: boolean }) {

@@ -6,6 +6,9 @@ summaries, key points, narrative sections and an explaining order.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
+
 from pydantic import BaseModel, Field
 
 from ..core import ledger, telemetry, tuning
@@ -91,6 +94,21 @@ def _inside_number(text: str, index: int) -> bool:
     return before.isdigit() and after.isdigit()
 
 
+#: How many batches to read at once. The same ceiling as writing, and for
+#: the same reason: what limits this is whatever the model sits behind, not the
+#: machine.
+MAX_READERS = 3
+
+
+def reading_workers(count: int, configured: int) -> int:
+    """How many batches to understand at once."""
+    if count <= 1:
+        return 1
+    if configured > 0:
+        return max(1, min(configured, count))
+    return max(1, min(count, MAX_READERS))
+
+
 class DocumentSkill(Skill):
     name = "presentation-understanding"
     description = "理解整份演示文档的结构、重点和叙事逻辑"
@@ -138,28 +156,27 @@ class DocumentSkill(Skill):
         by_index = {p.index: p for p in pages}
 
         failures = 0
-        for start in range(0, len(pages), BATCH_SIZE):
-            batch = pages[start : start + BATCH_SIZE]
-            # One batch failing must not cost the others. It used to: the
-            # exception left the loop, and a single page whose title contained
-            # a quotation mark took the remaining batches with it — those
-            # pages fell back to heuristics for no reason of their own.
+        batches = [
+            (start, pages[start : start + BATCH_SIZE])
+            for start in range(0, len(pages), BATCH_SIZE)
+        ]
+
+        # Read several batches at once. Like the writing that follows it, a
+        # batch here sees only its own pages — nothing one batch understands
+        # reaches another — so reading them in turn bought nothing and cost
+        # four of a forty-minute film.
+        #
+        # Results are applied on this thread, in page order, because the first
+        # batch is the one that answers for the deck and the ordering it
+        # returns is merged rather than replaced.
+        for start, batch, result, exc in self._read_batches(batches):
             where = f"第 {batch[0].index}-{batch[-1].index} 页"
-            try:
-                with ledger.call(
-                    self.llm.source,
-                    where,
-                    covers=[ledger.page_key(p.index) for p in batch],
-                ):
-                    result = DeckUnderstanding.model_validate(
-                        self.llm.complete_json(
-                            self._prompt(batch),
-                            schema=model_schema(DeckUnderstanding),
-                            system=load_prompt("document_understanding"),
-                            images=self._images_for(batch),
-                        )
-                    )
-            except Exception as exc:  # noqa: BLE001 - one batch, not the deck
+            if exc is not None:
+                # One batch failing must not cost the others. It used to: the
+                # exception left the loop, and a single page whose title
+                # contained a quotation mark took the remaining batches with it
+                # — those pages fell back to heuristics for no reason of their
+                # own.
                 failures += 1
                 detail = f"{exc}"
                 self.log.warning("%s的理解失败，这几页改用启发式规则：%s", where, detail)
@@ -202,6 +219,53 @@ class DocumentSkill(Skill):
             # Nothing came back at all — say so as one degradation about the
             # stage rather than as a list of per-batch ones nobody reads.
             raise RuntimeError(f"{failures} 批全部失败，文档理解没有任何模型结果")
+
+    def _read_batches(self, batches):
+        """Each batch's answer, in page order, whether it worked or not.
+
+        Yields `(start, batch, result, exception)` — the caller decides what a
+        failure costs, and applies what came back on its own thread so that the
+        deck-level merge stays in one place and in order.
+        """
+        workers = reading_workers(len(batches), self.ctx.settings.understand_workers)
+
+        def read(batch):
+            where = f"第 {batch[0].index}-{batch[-1].index} 页"
+            with ledger.call(
+                self.llm.source, where, covers=[ledger.page_key(p.index) for p in batch]
+            ):
+                return DeckUnderstanding.model_validate(
+                    self.llm.complete_json(
+                        self._prompt(batch),
+                        schema=model_schema(DeckUnderstanding),
+                        system=load_prompt("document_understanding"),
+                        images=self._images_for(batch),
+                    )
+                )
+
+        if workers <= 1:
+            for start, batch in batches:
+                try:
+                    yield start, batch, read(batch), None
+                except Exception as exc:  # noqa: BLE001 - one batch, not the deck
+                    yield start, batch, None, exc
+            return
+
+        self.log.info("理解 %d 批，%d 批一起读", len(batches), workers)
+        answers: dict[int, tuple] = {}
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for start, batch in batches:
+                carried = copy_context()
+                futures[pool.submit(carried.run, read, batch)] = (start, batch)
+            for future in as_completed(futures):
+                start, batch = futures[future]
+                try:
+                    answers[start] = (start, batch, future.result(), None)
+                except Exception as exc:  # noqa: BLE001 - one batch, not the deck
+                    answers[start] = (start, batch, None, exc)
+        for start, _batch in batches:
+            yield answers[start]
 
     @staticmethod
     def _apply_understanding(page: DocumentPage, read: PageUnderstanding) -> None:
