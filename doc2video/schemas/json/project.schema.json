@@ -590,6 +590,42 @@
       "title": "PageType",
       "type": "string"
     },
+    "PastRender": {
+      "description": "A film this project made before the one it has now.\n\nKept because 「重新生成」 is a bet: the new one may be worse, and the old one\ntook twenty minutes to make. Overwriting it meant the only way back was to\nmake it again — and it might not come back the same, since the script is\nrewritten each time.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "made_at": {
+          "format": "date-time",
+          "title": "Made At",
+          "type": "string"
+        },
+        "seconds": {
+          "default": 0.0,
+          "title": "Seconds",
+          "type": "number"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "PastRender",
+      "type": "object"
+    },
     "ProjectStatus": {
       "enum": [
         "created",
@@ -713,6 +749,25 @@
           ],
           "default": null,
           "title": "Last Render At"
+        },
+        "audio_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audio Path"
+        },
+        "past": {
+          "items": {
+            "$ref": "#/$defs/PastRender"
+          },
+          "title": "Past",
+          "type": "array"
         },
         "message": {
           "default": "",

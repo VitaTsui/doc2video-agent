@@ -12,12 +12,13 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from contextvars import copy_context
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..core import ledger, telemetry
 from ..core.errors import Doc2VideoError, SkillFailed
 from ..core.logging import get_logger
-from ..schemas import HistoryEntry, ProjectStatus, Scene, VideoProject
+from ..schemas import HistoryEntry, PastRender, ProjectStatus, Scene, VideoProject
 from ..schemas.ledger import Artifact, ArtifactKind
 from ..skills import (
     DirectorSkill,
@@ -153,6 +154,11 @@ def drawing_workers(count: int, configured: int) -> int:
     if configured > 0:
         return max(1, min(configured, count))
     return max(1, min(count, (os.cpu_count() or 4) // 2))
+
+
+#: How many earlier films to keep. Each is around a hundred megabytes, and
+#: what anyone actually goes back to is the one before this one.
+KEEP_PAST_RENDERS = 3
 
 
 class Executor:
@@ -564,6 +570,47 @@ class Executor:
         self._assemble(project.scenes)
         project.render.status = "done"
 
+    def _keep_the_old_one(self, final: Path) -> None:
+        """Move the film this project already had out of the way of the new one.
+
+        「重新生成」 is a bet: the new one may be worse, and the old one took
+        twenty minutes to make. Overwriting it left no way back — and not even
+        a slow one, because the script is rewritten each time and would not
+        come back the same.
+
+        Bounded, because a film is a hundred megabytes: past `KEEP_PAST_RENDERS`
+        the oldest is deleted along with its file.
+        """
+        project = self.project
+        if not final.exists():
+            return
+        kept = final.parent / "past"
+        kept.mkdir(parents=True, exist_ok=True)
+        # Named for when it was made rather than numbered: a number would have
+        # to be renumbered as old ones fall off the end.
+        stamp = (project.render.last_render_at or datetime.now(UTC)).strftime("%Y%m%d-%H%M%S")
+        moved = kept / f"{stamp}.mp4"
+        try:
+            final.replace(moved)
+        except OSError as exc:  # noqa: BLE001 - keeping a copy is never worth a run
+            log.warning("旧成片没能留下：%s", exc)
+            return
+
+        project.render.past.insert(
+            0,
+            PastRender(
+                path=self.ctx.store.relativize(project.project_id, moved),
+                made_at=project.render.last_render_at or datetime.now(UTC),
+                seconds=project.total_duration(),
+                score=project.quality.score if project.quality else None,
+            ),
+        )
+        for dropped in project.render.past[KEEP_PAST_RENDERS:]:
+            stale = self.ctx.asset_path(dropped.path)
+            if stale is not None and stale.exists():
+                stale.unlink(missing_ok=True)
+        del project.render.past[KEEP_PAST_RENDERS:]
+
     def _assemble(self, scenes: list[Scene]) -> None:
         """Concatenate clips, build the narration track, and mux the final MP4."""
         project = self.project
@@ -590,11 +637,16 @@ class Executor:
         video_only = ffmpeg.concat(clip_paths, out_dir / "video.mp4", work_dir=out_dir)
 
         final = out_dir / "final.mp4"
+        self._keep_the_old_one(final)
         if audio_paths:
             track = ffmpeg.concat_audio(audio_paths, out_dir / "narration.m4a", work_dir=out_dir)
             ffmpeg.mux_audio(video_only, track, final)
+            # Named, so it can be offered. It was already being made here and
+            # then thrown away as an implementation detail of muxing.
+            project.render.audio_path = self.ctx.store.relativize(project.project_id, track)
         else:
             video_only.replace(final)
+            project.render.audio_path = None
 
         project.render.output_path = self.ctx.store.relativize(project.project_id, final)
         project.render.message = ""

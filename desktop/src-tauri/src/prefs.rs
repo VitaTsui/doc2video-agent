@@ -77,6 +77,13 @@ pub struct Prefs {
     pub provider: String,
     pub model: String,
     pub base_url: String,
+
+    /// Where uploads and everything made from them are kept. Empty means the
+    /// app's own data directory, which is where it always was — and where
+    /// nobody could find it: four and a half gigabytes under
+    /// `~/Library/Application Support`, with nothing on screen saying so and
+    /// no way to put it on a bigger disk.
+    pub storage_dir: String,
 }
 
 fn path(app_data: &Path) -> PathBuf {

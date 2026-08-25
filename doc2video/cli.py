@@ -26,6 +26,7 @@ from .tools.tts.install import install_into_runtime
 
 def main(argv: list[str] | None = None) -> int:
     use_utf8()
+    _use_installed_packages()
     parser = argparse.ArgumentParser(prog="doc2video", description="PDF / PPT 智能讲解视频 Agent")
     parser.add_argument("--log-level", default=None, help="DEBUG / INFO / WARNING")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -101,6 +102,26 @@ def main(argv: list[str] | None = None) -> int:
 # --------------------------------------------------------------------------
 # commands
 # --------------------------------------------------------------------------
+
+
+def _use_installed_packages() -> None:
+    """Make voice engines installed outside the runtime importable.
+
+    They are put there so that updating the app — which replaces the whole
+    runtime directory — does not take them with it. Prepended rather than
+    appended: an engine someone installed on purpose is the one they meant,
+    including when a stale copy is still sitting in the runtime.
+    """
+    import sys
+
+    from .tools.tts.install import packages_dir
+
+    into = packages_dir()
+    if into is None or not into.exists():
+        return
+    place = str(into)
+    if place not in sys.path:
+        sys.path.insert(0, place)
 
 
 def cmd_voices(args) -> int:

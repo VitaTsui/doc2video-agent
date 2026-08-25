@@ -81,6 +81,10 @@ impl Backend {
             .arg(port.to_string())
             .env("D2V_API_TOKEN", &token)
             .env("D2V_STORAGE_DIR", &paths.storage_dir)
+            // Voice engines are installed here rather than into the runtime,
+            // which an update replaces wholesale — installing a voice and then
+            // updating used to mean installing it again.
+            .env("D2V_PACKAGES_DIR", &paths.packages_dir)
             .env("D2V_NODE_DIR", &paths.node_dir)
             // The webview's origin is not the backend's, so without this every
             // request from the UI is blocked before it is ever sent.
@@ -228,6 +232,8 @@ fn stop_group(pid: u32) {
 pub struct Paths {
     pub program: Program,
     pub storage_dir: PathBuf,
+    /// Where voice engines go: outside the runtime, so an update keeps them.
+    pub packages_dir: PathBuf,
     pub node_dir: PathBuf,
     pub pid_file: PathBuf,
 }
@@ -272,9 +278,26 @@ impl Paths {
 
     /// Resolve from the app's own layout, preferring a downloaded runtime.
     pub fn resolve(app_data: &Path) -> Result<Self> {
-        let storage_dir = app_data.join("storage");
+        Self::resolve_in(app_data, "")
+    }
+
+    /// The same, with somewhere else to keep the files.
+    ///
+    /// `chosen` is what the person picked; empty is the app's own data
+    /// directory. A directory that cannot be created is not silently swapped
+    /// for the default — the films are already in one place and quietly
+    /// starting a second one is how half of them go missing.
+    pub fn resolve_in(app_data: &Path, chosen: &str) -> Result<Self> {
+        let storage_dir = if chosen.trim().is_empty() {
+            app_data.join("storage")
+        } else {
+            PathBuf::from(chosen.trim())
+        };
         std::fs::create_dir_all(&storage_dir).context("无法创建数据目录")?;
         let pid_file = app_data.join("backend.pid");
+        // Beside the runtime rather than inside it: `swap_in` renames the whole
+        // runtime directory away on update.
+        let packages_dir = app_data.join("packages");
 
         let runtime = app_data.join("runtime");
         if runtime.join("python").exists() {
@@ -284,6 +307,7 @@ impl Paths {
                 },
                 node_dir: runtime.join("node"),
                 storage_dir,
+                packages_dir: packages_dir.clone(),
                 pid_file,
             });
         }
@@ -301,6 +325,7 @@ impl Paths {
             program: Program::Source { repo: repo.clone() },
             node_dir: repo.join("renderer"),
             storage_dir,
+            packages_dir: packages_dir.clone(),
             pid_file,
         })
     }

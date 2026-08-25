@@ -266,6 +266,14 @@ export async function ledger(projectId: string) {
   return body.items
 }
 
+/** A film this project made before the one it has now. */
+export interface PastRender {
+  path: string
+  made_at: string
+  seconds: number
+  score: number | null
+}
+
 export interface ProjectSummary {
   project_id: string
   title: string
@@ -464,6 +472,20 @@ export async function revoice(projectId: string, voice = '', speechRate = 0) {
     body: JSON.stringify({ voice, speech_rate: speechRate }),
   })
   return body.job_id
+}
+
+/** The films this project made before the one it has now, newest first. */
+export async function pastRenders(projectId: string): Promise<PastRender[]> {
+  const body = await request<{ render?: { past?: PastRender[] } }>(`/projects/${projectId}`)
+  return body.render?.past ?? []
+}
+
+/** Where this project's joined narration lives, if it has been made. */
+export async function narrationTrack(projectId: string): Promise<string | null> {
+  const body = await request<{ render?: { audio_path?: string | null } }>(
+    `/projects/${projectId}`,
+  )
+  return body.render?.audio_path ?? null
 }
 
 export async function narrationGuide(projectId: string) {
@@ -734,6 +756,29 @@ export const PROTOCOLS: { id: string; label: string; note: string }[] = [
 
 export async function modelPrefs(): Promise<ModelPrefs> {
   return invoke<ModelPrefs>('model_prefs')
+}
+
+/** Where the files are kept, how much is there, and whether it was chosen. */
+export interface StorageInfo {
+  path: string
+  bytes: number
+  chosen: boolean
+}
+
+export async function storageInfo(): Promise<StorageInfo> {
+  return invoke<StorageInfo>('storage_info')
+}
+
+/**
+ * Keep them somewhere else from now on.
+ *
+ * Restarts the backend, because the storage directory reaches it as an
+ * environment variable at spawn — the same reason changing a model does.
+ */
+export async function chooseStorage(path: string): Promise<Connection> {
+  const next = await invoke<Connection>('choose_storage', { path })
+  reconnect(next)
+  return next
 }
 
 /** Choosing a model restarts the backend, which is why this returns a connection. */

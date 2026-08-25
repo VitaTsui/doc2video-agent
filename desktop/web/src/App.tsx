@@ -125,19 +125,21 @@ export function App() {
 
   /** Collect a project's outputs for the side panel. */
   const loadArtifacts = useCallback(async (projectId: string, rendered: boolean) => {
-    const [scenes, quality, chain] = await Promise.all([
+    const [scenes, quality, chain, past, audio] = await Promise.all([
       api.scenes(projectId).catch(() => []),
       api.quality(projectId).catch(() => null),
       api.ledger(projectId).catch(() => []),
+      api.pastRenders(projectId).catch(() => []),
+      api.narrationTrack(projectId).catch(() => null),
     ])
     // The deck is not re-fetched here; it belongs to the parse that produced
     // it, and dropping it would empty the tab someone is looking at.
     let carried: ArtifactSet['deck']
     setArtifacts((current) => {
       carried = current?.projectId === projectId ? current.deck : undefined
-      return { projectId, scenes, quality, ledger: chain, rendered, deck: carried }
+      return { projectId, scenes, quality, ledger: chain, rendered, past, audio, deck: carried }
     })
-    return { projectId, scenes, quality, ledger: chain, rendered, deck: carried }
+    return { projectId, scenes, quality, ledger: chain, rendered, past, audio, deck: carried }
   }, [])
 
   /**
@@ -346,7 +348,19 @@ export function App() {
       // one, so `card` is what is current rather than what was first — and
       // `from` is where its share of the account begins.
       let card = say({ role: 'assistant', kind: 'job', text: intro, job: null })
+      // Where this run's share of the account begins. Not −1: the record is
+      // filtered by the *latest* run id, and at the moment 「重新配音」 is
+      // pressed the latest entry still belongs to the run before it — so the
+      // new card opened showing the whole of the previous run's thinking and
+      // kept showing it until this one wrote its first line. Numbering
+      // continues across runs, so the last line already there is the mark.
       let from = -1
+      if (projectId) {
+        from = await api
+          .ledger(projectId)
+          .then((entries) => (entries.length ? entries[entries.length - 1].seq : -1))
+          .catch(() => -1)
+      }
       abort.current?.abort()
       abort.current = new AbortController()
 
@@ -794,12 +808,12 @@ export function App() {
    * nothing is rewritten, so the fifteen minutes the words cost are not spent
    * twice.
    */
-  const startRevoice = useCallback(async () => {
+  const startRevoice = useCallback(async (voice: string) => {
     if (!projectId) return
     setBusy(true)
     try {
-      const jobId = await api.revoice(projectId)
-      await follow(jobId, '同样的讲稿，重新念一遍。')
+      const jobId = await api.revoice(projectId, voice)
+      await follow(jobId, voice ? '换个声音，同样的讲稿重新念一遍。' : '同样的讲稿，重新念一遍。')
     } catch (error) {
       say({ role: 'assistant', kind: 'text', text: `没能重新配音：${api.describeError(error)}` })
     } finally {
@@ -963,7 +977,7 @@ export function App() {
               generated: Boolean(artifacts?.rendered),
               onRender: () => void startRender(),
               onDraft: () => void fillInScript(),
-              onRevoice: () => void startRevoice(),
+              onRevoice: (voice: string) => void startRevoice(voice),
             }}
             // 「再说一次」: the last thing that was asked, asked again. Absent
             // while something is running — a second run over the first is what

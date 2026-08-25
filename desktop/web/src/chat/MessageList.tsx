@@ -1,11 +1,12 @@
 /** The transcript. Scrolls itself as it grows. */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { readableTitle } from '../naming'
 import { Attachment, DeckMark, FilmMark } from './Attachment'
 import { Prose } from './Prose'
 import { Suggestions } from './Suggestions'
+import { VoicePicker } from './VoicePicker'
 import { TurnActions } from './TurnActions'
 import { Thinking } from './Thinking'
 import type { Message } from './types'
@@ -49,10 +50,11 @@ export function MessageList({
     onRender: () => void
     /** Write the pages nobody has written, keeping the ones they have. */
     onDraft: () => void
-    /** Say the existing script again — same words, made again. */
-    onRevoice: () => void
+    /** Say the existing script again. An empty voice means the same one. */
+    onRevoice: (voice: string) => void
   }
 }) {
+  const [pickingVoice, setPickingVoice] = useState(false)
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -181,7 +183,11 @@ export function MessageList({
                 shots stay, only the sound is done over. Before there is a
                 film there is nothing to re-voice. */}
             {deck.generated && (
-              <button type="button" className="deckgate__draft" onClick={deck.onRevoice}>
+              <button
+                type="button"
+                className="deckgate__draft"
+                onClick={() => setPickingVoice((open) => !open)}
+              >
                 重新配音
               </button>
             )}
@@ -189,6 +195,18 @@ export function MessageList({
               {deck.generated ? '重新生成' : '开始生成'}
             </button>
           </div>
+        )}
+
+        {/* Which voice to say it again in — the thing people actually ask
+            for, and the thing 「重新配音」 could not be told. */}
+        {pickingVoice && (
+          <VoicePicker
+            onClose={() => setPickingVoice(false)}
+            onPick={(voice) => {
+              setPickingVoice(false)
+              deck.onRevoice(voice)
+            }}
+          />
         )}
 
         {/* Under the buttons: what you could say, as something to press. */}

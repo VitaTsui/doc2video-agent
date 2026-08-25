@@ -47,8 +47,19 @@ export interface ArtifactSet {
   ledger: LedgerEntry[]
   /** Whether a render has actually produced a file. */
   rendered: boolean
+  /** Films this project made before this one, newest first. */
+  past?: api.PastRender[]
+  /** The joined narration, for anyone who wants the audio without the film. */
+  audio?: string | null
   /** The parsed deck, when this project has just been read. */
   deck?: { pages: PageView[]; guide: GuideRow[]; hasModel: boolean; locked: boolean }
+}
+
+/** When a past film was made, as a date someone would read. */
+function _when(iso: string): string {
+  const made = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${made.getMonth() + 1}月${made.getDate()}日 ${pad(made.getHours())}:${pad(made.getMinutes())}`
 }
 
 export function Artifacts({
@@ -138,9 +149,24 @@ export function Artifacts({
           (set.rendered ? (
             <>
               <video src={api.videoUrl(set.projectId)} controls className="panel__video" />
-              <div className="muted" style={{ marginTop: 8 }}>
-                {set.scenes.length} 个场景 · {Math.round(total)} 秒
-                {set.quality && ` · 质量分 ${set.quality.score}`}
+              <div className="panel__meta">
+                <span className="muted">
+                  {set.scenes.length} 个场景 · {Math.round(total)} 秒
+                  {set.quality && ` · 质量分 ${set.quality.score}`}
+                </span>
+                {/* The audio on its own. It was already being made on the way
+                    to the film and then thrown away as a detail of muxing, so
+                    anyone who wanted the narration without the pictures had
+                    nowhere to get it. */}
+                {set.audio && (
+                  <a
+                    className="panel__download"
+                    href={api.assetUrl(set.projectId, set.audio)}
+                    download
+                  >
+                    下载配音
+                  </a>
+                )}
               </div>
               {set.quality?.dimensions.map((dimension) => (
                 <div key={dimension.name} className="panel__dim">
@@ -151,6 +177,32 @@ export function Artifacts({
                   <span className="muted">{dimension.detail}</span>
                 </div>
               ))}
+
+              {/* What this project made before. 「重新生成」 is a bet — the new
+                  one may be worse, and the old one took twenty minutes — so
+                  the last few stay openable instead of being overwritten. */}
+              {set.past && set.past.length > 0 && (
+                <div className="past">
+                  <div className="past__head muted">之前的成片</div>
+                  {set.past.map((old) => (
+                    <details key={old.path} className="past__one">
+                      <summary>
+                        <span>{_when(old.made_at)}</span>
+                        <span className="muted">
+                          {Math.round(old.seconds)} 秒
+                          {old.score != null && ` · 质量分 ${old.score}`}
+                        </span>
+                      </summary>
+                      <video
+                        src={api.assetUrl(set.projectId, old.path)}
+                        controls
+                        preload="none"
+                        className="panel__video"
+                      />
+                    </details>
+                  ))}
+                </div>
+              )}
             </>
           ) : (
             <p className="muted">还没有成片。</p>
