@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 
 import { readableTitle } from '../naming'
 import { Attachment, DeckMark, FilmMark } from './Attachment'
+import { TurnActions } from './TurnActions'
 import { Thinking } from './Thinking'
 import type { Message } from './types'
 
@@ -17,11 +18,14 @@ function _minutes(seconds: number): string {
 export function MessageList({
   messages,
   onShow,
+  onRetry,
   deck,
 }: {
   messages: Message[]
   /** Open the artifacts panel on this project. */
   onShow: (projectId: string) => void
+  /** Ask the same thing again. Absent while something is already running. */
+  onRetry?: () => void
   /** The gate: how much of the script is written, and how to start.
    *
    * Writing the script reports through the same card a render does, in a line
@@ -80,8 +84,16 @@ export function MessageList({
               )}
               {message.kind === 'text' && message.file && (
                 <div>
-                  <span className="turn__file">{message.file}</span>
+                  <span className="turn__file">{readableTitle(message.file)}</span>
                 </div>
+              )}
+
+              {/* Under the words, on hover. Every chat has this and it is the
+                  cheapest useful thing in one: a reply worth acting on is a
+                  reply worth copying, and a wrong one is worth asking for
+                  again without retyping the question. */}
+              {message.role === 'assistant' && !message.pending && message.text && (
+                <TurnActions text={message.text} onRetry={onRetry} />
               )}
 
               {/* Every deck card is a record of what was said: the document,

@@ -965,6 +965,18 @@ export function App() {
               onDraft: () => void fillInScript(),
               onRevoice: () => void startRevoice(),
             }}
+            // 「再说一次」: the last thing that was asked, asked again. Absent
+            // while something is running — a second run over the first is what
+            // the gate exists to prevent — and absent when nothing was asked,
+            // which is every turn the agent opened by itself.
+            onRetry={
+              running
+                ? undefined
+                : (() => {
+                    const asked = [...messages].reverse().find((m) => m.role === 'user')
+                    return asked?.text ? () => void acceptMessage(asked.text) : undefined
+                  })()
+            }
             onShow={(id) => {
               void loadArtifacts(id, true)
               setPanelOpen(true)
