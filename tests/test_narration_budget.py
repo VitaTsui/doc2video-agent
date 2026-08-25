@@ -350,3 +350,20 @@ def test_density_is_measured_in_words_not_in_boxes():
     assert dense > 2 > sparse, f"四块的密页 {dense:.1f}，八块的稀疏页 {sparse:.1f}"
     assert "挑重点" in _density_note(few_but_long, page_share_chars(few_but_long))
     assert "挑重点" not in _density_note(many_but_short, page_share_chars(many_but_short))
+
+
+def test_another_round_is_only_worth_it_when_there_is_a_long_way_to_go():
+    """Every round is a model call, and they add up to longer than the render.
+
+    Three rounds over twenty-five over-budget pages is seventy-five calls —
+    measured at over fifty minutes for one script. A page already near its
+    number is near enough; the last few characters are not worth the minute.
+    """
+    from doc2video.skills.narration import COMPRESSION_ROUNDS, KEEP_COMPRESSING
+
+    ceiling = 100
+    # What a first pass typically lands on: a real cut, still well over.
+    assert 170 > ceiling * KEEP_COMPRESSING, "还差得远，值得再压一轮"
+    # And what a second lands on: close enough to stop.
+    assert 120 <= ceiling * KEEP_COMPRESSING, "已经接近了，不该再花一次调用"
+    assert COMPRESSION_ROUNDS >= 2, "一轮到不了预算"

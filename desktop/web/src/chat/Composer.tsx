@@ -30,6 +30,7 @@ export function Composer({
   prefs,
   onPick,
   onSend,
+  onStop,
   onDeck,
   uploadAction,
 }: {
@@ -38,6 +39,8 @@ export function Composer({
   prefs: api.ModelPrefs
   onPick: (providerId: string, modelId: string) => void
   onSend: (text: string) => void | Promise<void>
+  /** Stop whatever is running. The send button is the stop button while it is. */
+  onStop?: () => void
   onDeck: (file: File, brief: string, uploadId?: string) => void | Promise<void>
   /** Where the picker posts. Carries the token, which it cannot send as a header. */
   uploadAction: string
@@ -58,6 +61,11 @@ export function Composer({
           wrapperClassName="composer__wrap"
           placeholder={hint}
           assistanting={disabled}
+          // The send button *is* the stop button while something runs — which
+          // is what every chat does, and what this box was already drawing.
+          // Only the handler was missing, so it looked stoppable and was not,
+          // and stopping lived in a second control up in the transcript.
+          onStop={onStop}
           fileList={files}
           onFileListChange={setFiles}
           // A real address, not just an accept filter: without one the picker

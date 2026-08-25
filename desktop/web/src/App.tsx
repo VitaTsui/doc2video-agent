@@ -61,6 +61,8 @@ export function App() {
   /** The model writing the script, and how far it has got. Null when it isn't. */
   const [redoing, setRedoing] = useState<number | null>(null)
   const [running, setRunning] = useState(false)
+  /** The job the send button will stop, while one is in flight. */
+  const [runningJob, setRunningJob] = useState<string | null>(null)
   const [greeting, setGreeting] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
@@ -350,6 +352,7 @@ export function App() {
       // that explain a slow run into things you could only consult once the
       // run was over.
       setRunning(true)
+      setRunningJob(jobId)
       setPanelOpen(true)
       // Which project to read while it works — taken from the job rather than
       // from state, because the first run of all creates its project inside
@@ -422,6 +425,7 @@ export function App() {
       } finally {
         window.clearInterval(poll)
         setRunning(false)
+        setRunningJob(null)
       }
       amend(card, { job: final })
       // One last read of the record. The last step of a run is written after
@@ -908,13 +912,6 @@ export function App() {
               onDraft: () => void fillInScript(),
               onRevoice: () => void startRevoice(),
             }}
-            onStop={(jobId) => {
-              // A request, not a kill: the scene in flight finishes, and the
-              // card says 「正在停…」 until it does.
-              void api.cancelJob(jobId).catch((error) => {
-                say({ role: 'assistant', kind: 'text', text: `没能中止：${api.describeError(error)}` })
-              })
-            }}
             onShow={(id) => {
               void loadArtifacts(id, true)
               setPanelOpen(true)
@@ -926,6 +923,15 @@ export function App() {
           disabled={!connection || busy}
           uploadAction={connection ? api.uploadUrl() : ''}
           onSend={acceptMessage}
+          onStop={() => {
+            // A request, not a kill: the scene in flight finishes first,
+            // because a half-written clip is one the incremental render would
+            // later mistake for a good one.
+            if (!runningJob) return
+            void api.cancelJob(runningJob).catch((error) => {
+              say({ role: 'assistant', kind: 'text', text: `没能中止：${api.describeError(error)}` })
+            })
+          }}
           onDeck={acceptDeck}
           hint={projectId ? '想改哪里就直接说' : '说说你想要什么样的视频，并附上文档'}
           prefs={prefs}

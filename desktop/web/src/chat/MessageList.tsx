@@ -8,14 +8,11 @@ import type { Message } from './types'
 export function MessageList({
   messages,
   onShow,
-  onStop,
   deck,
 }: {
   messages: Message[]
   /** Open the artifacts panel on this project. */
   onShow: (projectId: string) => void
-  /** Ask the running job to stop. */
-  onStop: (jobId: string) => void
   /** The gate: how much of the script is written, and how to start.
    *
    * Writing the script reports through the same card a render does, in a line
@@ -99,7 +96,6 @@ export function MessageList({
                   entries={message.steps ?? []}
                   job={message.job}
                   settled={message.settled}
-                  onStop={message.job ? () => onStop(message.job!.job_id) : undefined}
                 />
               )}
               {/* A reference, not the thing itself. Unrolling a player, a
