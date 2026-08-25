@@ -175,41 +175,6 @@ body {
   margin-top: -18px;
 }
 
-/* Under the reply, and only while the pointer is on it. Always-on controls
-   under every paragraph make a transcript into a form. Kept in the layout even
-   while invisible, so nothing shifts when they appear. */
-.turnbar {
-  display: flex;
-  gap: 2px;
-  margin: 6px 0 -8px -6px;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.turn:hover .turnbar,
-.turnbar:focus-within {
-  opacity: 1;
-}
-
-.turnbar__button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: none;
-  background: none;
-  padding: 4px 7px;
-  border-radius: 7px;
-  font: inherit;
-  font-size: 12.5px;
-  color: var(--ink-soft);
-  cursor: pointer;
-}
-
-.turnbar__button:hover {
-  background: var(--user-bg);
-  color: var(--ink);
-}
-
 .turn__file {
   display: inline-block;
   margin-top: 6px;
