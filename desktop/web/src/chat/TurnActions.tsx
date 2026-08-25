@@ -1,16 +1,21 @@
 /**
  * What you can do with a reply, once it is finished.
  *
- * Hidden until the turn is under the pointer: a row of controls under every
- * paragraph is a toolbar, and a transcript with a toolbar per line stops
- * reading as a conversation. The one that matters is copy — a reply worth
- * acting on is worth taking somewhere else — and 「再说一次」 for the ones that
- * came out wrong, which otherwise costs retyping the question.
+ * Copy, and nothing else. Hidden until the turn is under the pointer: a row of
+ * controls under every paragraph is a toolbar, and a transcript with a toolbar
+ * per line stops reading as a conversation.
+ *
+ * A chat also offers 「再说一次」 there, and this had one. It does not belong:
+ * the replies here are reports of what was done — the deck that was read, the
+ * film that came out — and saying one again would say the same thing, because
+ * nothing about it was generated afresh. What is worth doing again is the
+ * work, and the work has its own buttons: 「重新生成」, 「重新配音」, and 「重做
+ * 本页」 next to the page.
  */
 
 import { useState } from 'react'
 
-export function TurnActions({ text, onRetry }: { text: string; onRetry?: () => void }) {
+export function TurnActions({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
 
   return (
@@ -33,12 +38,6 @@ export function TurnActions({ text, onRetry }: { text: string; onRetry?: () => v
         {copied ? <TickMark /> : <CopyMark />}
         {copied ? '已复制' : '复制'}
       </button>
-      {onRetry && (
-        <button type="button" className="turnbar__button" onClick={onRetry}>
-          <RetryMark />
-          再说一次
-        </button>
-      )}
     </div>
   )
 }
@@ -61,12 +60,5 @@ const CopyMark = () => (
 const TickMark = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" {...stroke}>
     <path d="m5 13 4 4L19 7" />
-  </svg>
-)
-
-const RetryMark = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" {...stroke}>
-    <path d="M21 12a9 9 0 1 1-3-6.7" />
-    <path d="M21 4v5h-5" />
   </svg>
 )

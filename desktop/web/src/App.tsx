@@ -979,18 +979,6 @@ export function App() {
               onDraft: () => void fillInScript(),
               onRevoice: (voice: string) => void startRevoice(voice),
             }}
-            // 「再说一次」: the last thing that was asked, asked again. Absent
-            // while something is running — a second run over the first is what
-            // the gate exists to prevent — and absent when nothing was asked,
-            // which is every turn the agent opened by itself.
-            onRetry={
-              running
-                ? undefined
-                : (() => {
-                    const asked = [...messages].reverse().find((m) => m.role === 'user')
-                    return asked?.text ? () => void acceptMessage(asked.text) : undefined
-                  })()
-            }
             onSay={(text) => void acceptMessage(text)}
             onShow={(id) => {
               void loadArtifacts(id, true)
@@ -1000,7 +988,14 @@ export function App() {
         )}
 
         <Composer
-          disabled={!connection || busy}
+          // Two separate facts, and the button needs either: `busy` is a
+          // request being waited on (parsing, switching model), `running` is a
+          // job on the backend. Only `busy` was asked, and every caller had to
+          // remember to set it — 「生成讲稿」 and 「重做本页」 did not, so through
+          // the longest step of the whole thing the box drew a send button and
+          // there was no way to stop. `running` is set in one place, by
+          // `follow`, for every job there is.
+          disabled={!connection || busy || running}
           uploadAction={connection ? api.uploadUrl() : ''}
           onSend={acceptMessage}
           onStop={() => {

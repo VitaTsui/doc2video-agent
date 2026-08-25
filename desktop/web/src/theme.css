@@ -100,36 +100,15 @@ body {
   margin: 0 auto;
 }
 
-/* A turn is a row: who is speaking on the left, what they said beside it. The
-   assistant's mark is what makes a page of paragraphs legible as a
-   conversation — without it the reader has to remember whose turn they are
-   in, which is exactly the work a transcript should be doing for them. */
+/* A turn is a row. Nobody wears a badge: the reply is plain text on the page
+   and what you said is in a container, and that difference is already the
+   whole of who-said-what — which is how Claude and ChatGPT both draw it. An
+   avatar beside every reply is a third of an inch of margin spent restating
+   what the shape of the line has said. */
 .turn {
   display: flex;
-  gap: 14px;
   margin-bottom: 30px;
   line-height: 1.75;
-}
-
-.turn__who {
-  flex-shrink: 0;
-  padding-top: 1px;
-}
-
-.turn__mark {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 13px;
-  font-weight: 600;
-  /* The letter is a shape here, not a word: centred by eye rather than by
-     baseline, which sits a hair low inside a circle. */
-  line-height: 1;
-  user-select: none;
 }
 
 .turn__body {
@@ -137,9 +116,9 @@ body {
   flex: 1;
 }
 
-/* The user's turn has no mark and does not need the column: their words are
-   the ones with a container around them, which is what makes a transcript
-   scannable — everything indented right is something you said. */
+/* The user's turn: their words are the ones with a container around them,
+   which is what makes a transcript scannable — everything indented right is
+   something you said. */
 .turn--user {
   justify-content: flex-end;
 }
@@ -190,15 +169,10 @@ body {
   font-size: 0.9em;
 }
 
-/* Successive assistant turns are one voice continuing, not two speakers. The
-   mark is drawn once and the ones under it keep the column without repeating
-   it — the way every chat renders a run of messages from the same side. */
+/* Successive assistant turns are one voice continuing, not two speakers, so
+   they sit closer together than two turns of a dialogue do. */
 .turn--assistant + .turn--assistant {
   margin-top: -18px;
-}
-
-.turn--assistant + .turn--assistant .turn__mark {
-  visibility: hidden;
 }
 
 /* Under the reply, and only while the pointer is on it. Always-on controls
