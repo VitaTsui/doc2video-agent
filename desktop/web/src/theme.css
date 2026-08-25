@@ -1887,6 +1887,61 @@ body {
    side-by-side instruction: turned on its side it stops meaning "top-aligned"
    and starts meaning "as narrow as your content", which left the script box a
    fraction of the width it had just been given. */
+/* One page of the deck, as a row you can run your eye down. It was a table:
+   「第 8 页  石化企业AI应用的紧迫性…  418/175」 at ten pixels of padding, thirty
+   times over. The page number is a number, not a sentence; the two counts were
+   a subtraction to do in your head. */
+.deck__row {
+  border-bottom: 1px solid var(--line);
+}
+
+.deck__row:last-child {
+  border-bottom: none;
+}
+
+.deck__row--open {
+  background: var(--bg);
+}
+
+.deck__head {
+  display: flex;
+  width: 100%;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.deck__head:hover {
+  background: var(--bg);
+}
+
+.deck__index {
+  flex-shrink: 0;
+  min-width: 1.6rem;
+  text-align: right;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.deck__count {
+  flex-shrink: 0;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Written well past what this page's own budget can say. Said in colour rather
+   than in a second number: the point is that it is long, not by how much. */
+.deck__count--over {
+  color: #b0562f;
+}
+
 .panel .page-row {
   flex-direction: column;
   align-items: stretch;
