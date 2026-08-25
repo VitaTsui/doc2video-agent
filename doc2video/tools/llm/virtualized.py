@@ -7,18 +7,22 @@ Space the host declares. See ``docs/model-provider-protocol.md`` in that repo.
 
 Two things about this integration are deliberate:
 
-**The Action Space is empty.** We want a model, not an agent: the prompt already
-carries everything — page text, element ids, the character budget — and there is
-nothing on this machine the deck's narration should be reading. Declaring no
-tools is what makes "use a CLI agent as a model" mean the same thing as "call an
-API". A ``tool.call`` should therefore never arrive; if one does it is answered
-with a failure rather than ignored, because the bridge suspends the CLI loop
-until the host replies and silence would hang the run until it timed out.
+**The Action Space holds one tool, and only when there is an image.** We want a
+model, not an agent: the prompt already carries everything — page text, element
+ids, the character budget — and there is nothing on this machine the deck's
+narration should be reading. A text-only turn therefore declares no tools at
+all, which is what makes "use a CLI agent as a model" mean the same thing as
+"call an API"; a ``tool.call`` arriving in that turn is answered with a failure
+rather than ignored, because the bridge suspends the CLI loop until the host
+replies and silence would hang the run until it timed out.
 
-**No images.** The protocol carries a task string, not attachments, so
-``supports_images`` is False and the understanding step sends text only. A CLI
-agent could read a PNG off disk if given the tool, but that means handing it a
-filesystem capability to save one round trip.
+**Images travel in band.** The sandbox hides our filesystem from the CLI, so a
+page render cannot be handed over as a path — it would name a file the CLI
+cannot open. A turn that carries images declares ``view_image`` instead, and
+answers the call with the bytes themselves: ``tool.result.blocks`` projects onto
+native MCP image content (agent-virtualization >= 0.1.3). The alternative was to
+grant a filesystem capability and pass paths; this hands over the one image that
+was asked for rather than the disk it sits on.
 
 One bridge process serves exactly one ``model.run`` and then closes, so each
 call spawns a process. That is the protocol's design — it is what lets the CLI
@@ -28,6 +32,7 @@ batch, which is why the batches are pages-at-a-time rather than page-at-a-time.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -75,6 +80,32 @@ MAX_LINE_BYTES = 8 * 1024 * 1024
 STDERR_LINES = 40
 EVENT_LINES = 12
 
+# The only tool this provider ever declares. Named for what it does to the CLI,
+# not for what it does to us: it does not read a file, it shows a picture.
+VIEW_IMAGE_TOOL = "view_image"
+
+# What the bridge will carry. Anything else is refused at its process boundary,
+# so it is refused here first — as one answered tool call rather than as a
+# protocol error that takes the whole batch down with it.
+IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+# The bridge's own per-image ceiling, mirrored. Ours are page renders at 1920px
+# and land well under it; a deck that somehow renders larger should lose one
+# image, not the turn.
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+IMAGE_NOTE = (
+    "\n\n本次随任务附了这些图：{names}。"
+    f"用 {VIEW_IMAGE_TOOL} 工具按名字取，图会直接作为图像交给你。"
+    "凡是文字不足以判断的地方——图表、示意图、只有配图没有文字的页——先看图再回答，"
+    "不要凭标题猜。"
+)
+
 
 class VirtualizedCLILLM(LLMTool):
     """Claude Code / Codex on this machine, addressed as a model."""
@@ -99,20 +130,23 @@ class VirtualizedCLILLM(LLMTool):
         *,
         schema: dict,
         system: str = "",
-        images: list[Path] | None = None,  # noqa: ARG002 - see module docstring
+        images: list[Path] | None = None,
         max_tokens: int | None = None,  # noqa: ARG002 - the CLI budgets itself
     ) -> dict[str, Any]:
-        task = prompt + JSON_INSTRUCTION + json.dumps(schema, ensure_ascii=False)
-        return parse_json_reply(self._run(task, system), source=PACKAGE)
+        attached = _attachments(images)
+        # The note goes before the schema, not after: the last thing the task
+        # says should still be "answer with JSON".
+        task = prompt + _image_note(attached) + JSON_INSTRUCTION + json.dumps(schema, ensure_ascii=False)
+        return parse_json_reply(self._run(task, system, attached), source=PACKAGE)
 
     def complete_text(self, prompt: str, *, system: str = "", max_tokens: int = 2000) -> str:  # noqa: ARG002
-        return self._run(prompt, system)
+        return self._run(prompt, system, {})
 
     def supports_images(self) -> bool:
-        return False
+        return True
 
     # -- the bridge ----------------------------------------------------
-    def _run(self, task: str, system: str) -> str:
+    def _run(self, task: str, system: str, attached: dict[str, Path]) -> str:
         self._workspace.mkdir(parents=True, exist_ok=True)
         request_id = f"d2v-{uuid.uuid4().hex[:8]}"
         request: dict[str, Any] = {
@@ -121,7 +155,7 @@ class VirtualizedCLILLM(LLMTool):
             "requestId": request_id,
             "task": task,
             "workspace": str(self._workspace.resolve()),
-            "tools": [],
+            "tools": _tools_for(attached),
             "metadata": {"provider": PACKAGE, "model": self.model},
         }
         if system:
@@ -146,7 +180,7 @@ class VirtualizedCLILLM(LLMTool):
             threading.Thread(target=self._collect, args=(process.stderr,), daemon=True).start()
 
         try:
-            output = self._exchange(process, request, request_id)
+            output = self._exchange(process, request, request_id, attached)
         finally:
             # Closing stdin cancels any pending wait and disposes the run; kill
             # the tree if it does not go quietly.
@@ -196,7 +230,13 @@ class VirtualizedCLILLM(LLMTool):
         """Recent stderr from the bridge and the CLI under it."""
         return "\n".join(self._stderr)
 
-    def _exchange(self, process: subprocess.Popen, request: dict, request_id: str) -> str:
+    def _exchange(
+        self,
+        process: subprocess.Popen,
+        request: dict,
+        request_id: str,
+        attached: dict[str, Path],
+    ) -> str:
         assert process.stdin is not None and process.stdout is not None
         _send(process.stdin, request)
 
@@ -224,19 +264,9 @@ class VirtualizedCLILLM(LLMTool):
                 reason = str(message.get("error"))[:300]
                 raise ToolFailed(f"{PACKAGE} 报错：{reason}", detail={"error": reason})
             if kind == "tool.call":
-                # Should not happen with an empty Action Space, but the CLI loop
-                # is suspended until we answer — never leave it hanging.
-                _send(
-                    process.stdin,
-                    {
-                        "protocol": PROTOCOL,
-                        "type": "tool.result",
-                        "requestId": request_id,
-                        "callId": message.get("callId"),
-                        "success": False,
-                        "content": "本次调用没有开放任何工具，请直接给出答案。",
-                    },
-                )
+                # The CLI loop is suspended until we answer — every branch of
+                # `_tool_result` returns something, and none of them may raise.
+                _send(process.stdin, _tool_result(request_id, message, attached))
             elif kind == "model.event":
                 event = str(message.get("event"))[:300]
                 log.debug("agent 事件：%s", event)
@@ -252,7 +282,113 @@ def _send(stream, message: dict) -> None:
     stream.flush()
 
 
+def _attachments(images: list[Path] | None) -> dict[str, Path]:
+    """The images this turn can show, keyed by the name the CLI will ask for.
 
+    Their own file names: a page render is ``page_007.png``, which is what the
+    prompt calls that page anyway, so the model does not have to be taught a
+    second naming scheme. A name already taken keeps the first path — the second
+    file would be unaddressable either way, and dropping it silently beats
+    answering with the wrong picture.
+    """
+    attached: dict[str, Path] = {}
+    for path in images or []:
+        if path.suffix.lower() not in IMAGE_MEDIA_TYPES:
+            log.debug("%s 不是能随协议传的图片格式，跳过", path.name)
+            continue
+        if path.name not in attached and path.exists():
+            attached[path.name] = path
+    return attached
+
+
+def _image_note(attached: dict[str, Path]) -> str:
+    return IMAGE_NOTE.format(names="、".join(attached)) if attached else ""
+
+
+def _tools_for(attached: dict[str, Path]) -> list[dict[str, Any]]:
+    """The turn's Action Space: one tool if there is anything to show, else none.
+
+    The attached names are the schema's enum, so a name we never attached is
+    refused by the bridge's own argument validation and never reaches us.
+    """
+    if not attached:
+        return []
+    return [
+        {
+            "name": VIEW_IMAGE_TOOL,
+            "description": "看一眼随本次任务附上的某张图，返回图本身。",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "enum": sorted(attached),
+                        "description": "图片名，取自任务里列出的那几个。",
+                    },
+                },
+                "required": ["name"],
+            },
+        }
+    ]
+
+
+def _tool_result(request_id: str, message: dict, attached: dict[str, Path]) -> dict[str, Any]:
+    """Answer one suspended tool call — with the image, or with why there isn't one.
+
+    Every path returns a message and none of them raises: the CLI's loop stays
+    suspended until this reply is written, so a failure has to be a failed call
+    it can read and work around, never an exception that leaves it waiting for
+    the timeout.
+    """
+    reply: dict[str, Any] = {
+        "protocol": PROTOCOL,
+        "type": "tool.result",
+        "requestId": request_id,
+        "callId": message.get("callId"),
+    }
+    if message.get("name") != VIEW_IMAGE_TOOL:
+        return {**reply, "success": False, "content": "本次调用没有开放这个工具，请直接给出答案。"}
+
+    arguments = message.get("arguments")
+    asked = arguments.get("name") if isinstance(arguments, dict) else None
+    path = attached.get(asked) if isinstance(asked, str) else None
+    if path is None:
+        return {
+            **reply,
+            "success": False,
+            "content": f"没有这张图。本次附上的是：{'、'.join(attached)}",
+        }
+
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        return {**reply, "success": False, "content": f"读不到 {asked}：{exc}"}
+    if len(payload) > MAX_IMAGE_BYTES:
+        # Refused here rather than sent: the bridge rejects an oversized result
+        # with a protocol error, which would end the whole turn instead of this
+        # one look at one image.
+        return {
+            **reply,
+            "success": False,
+            "content": f"{asked} 有 {len(payload) // 1024} KiB，超过了单张图的上限，看不了。",
+        }
+
+    log.debug("给 CLI 看了 %s（%d KiB）", asked, len(payload) // 1024)
+    return {
+        **reply,
+        "success": True,
+        # The text projection of this result. The bytes ride in `blocks`, and
+        # keeping them out of here is what keeps base64 out of the audit log.
+        "content": asked,
+        "blocks": [
+            {
+                "type": "image",
+                "mimeType": IMAGE_MEDIA_TYPES[path.suffix.lower()],
+                "data": base64.b64encode(payload).decode("ascii"),
+            }
+        ],
+    }
 
 
 def _terminate(process: subprocess.Popen) -> None:
@@ -378,12 +514,14 @@ IDENTITY_VARS = ("USER", "LOGNAME")
 
 
 def _default_config(runtime: str, settings: Settings, binary: Path) -> dict[str, Any]:
-    """No tools, no network restriction, nothing writable that matters.
+    """No capabilities, no network restriction, nothing writable that matters.
 
     The CLI is being used as a model, so every capability it might be given is
     one it does not need. The workspace still has to exist and be writable —
     the runtimes put their own scratch state there — but nothing we care about
-    lives in it.
+    lives in it. The one tool a turn may declare is not configured here: in
+    model-provider mode the request's ``tools`` replace the visible Action
+    Space outright, so it is composed per turn and lives no longer than that.
 
     Credential inheritance is the one thing the two runtimes disagree about,
     and getting it wrong looks identical from the outside: a CLI the user is
@@ -398,7 +536,10 @@ def _default_config(runtime: str, settings: Settings, binary: Path) -> dict[str,
             else {"type": "codex", "inheritHostCredentials": True}
         ),
         "environment": {
-            "instructions": "直接给出答案，不要使用任何工具。",
+            # "no tools at all" was the instruction until a turn could carry
+            # images: it now has exactly one, and telling the CLI to ignore its
+            # own Action Space would talk it out of looking at them.
+            "instructions": "直接给出答案。除了本次开放给你的工具，不要尝试任何其他动作。",
             "capabilities": [],
             "policy": {"defaultDecision": "deny", "escalation": "deny", "rules": []},
             "workspace": {"root": str(workspace), "writableRoots": [str(workspace)]},
