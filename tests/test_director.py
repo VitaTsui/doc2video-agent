@@ -582,6 +582,30 @@ def test_a_label_with_nothing_under_it_is_still_a_target(
     assert [a.target for a in scene.actions if a.target] == ["one"]
 
 
+def _two_block_page() -> DocumentPage:
+    """Two blocks far enough apart that neither is part of the other."""
+    return DocumentPage(
+        index=1,
+        title="页",
+        width=1920,
+        height=1080,
+        elements=[
+            SlideElement(
+                id="e1",
+                kind=ElementKind.PARAGRAPH,
+                text="第一块讲的内容",
+                bbox=BBox(x=100, y=100, w=600, h=60),
+            ),
+            SlideElement(
+                id="e2",
+                kind=ElementKind.PARAGRAPH,
+                text="第二块讲的内容",
+                bbox=BBox(x=1100, y=700, w=600, h=60),
+            ),
+        ],
+    )
+
+
 def test_one_look_per_block_and_at_the_moment_it_is_described():
     """Three complaints, one cause.
 
@@ -604,7 +628,7 @@ def test_one_look_per_block_and_at_the_moment_it_is_described():
     other = ActionChoice(segment_id="s2", type=ActionType.HIGHLIGHT, target="e2", match=0.5)
     described = ActionChoice(segment_id="s3", type=ActionType.HIGHLIGHT, target="e1", match=0.62)
 
-    kept = _merge_runs([brushed, other, described], segments)
+    kept = _merge_runs([brushed, other, described], segments, _two_block_page())
 
     targets = [c.target for c in kept]
     assert targets.count("e1") == 1, f"同一块只该框一次：{targets}"
@@ -626,6 +650,7 @@ def test_a_run_of_the_same_block_still_holds_rather_than_blinking():
             ActionChoice(segment_id="s2", type=ActionType.HIGHLIGHT, target="e1", match=0.3),
         ],
         segments,
+        _two_block_page(),
     )
     assert len(kept) == 1
     assert kept[0].holds_until == 9.0, "连着讲同一块，框就一直框着"

@@ -11,12 +11,19 @@ import re
 from math import ceil
 from pathlib import Path
 
-from ..schemas import BBox, DocumentPage, Scene, SubtitleCue
+from ..schemas import BBox, DocumentPage, PageType, Scene, SubtitleCue
 
 # One comfortable line of CJK subtitle at 1080p. Measured against a
 # hand-written subtitle track for a deck of this kind: 78 captions, median 21
 # characters, longest 32.
 MAX_SUBTITLE_CHARS = 28
+#: How far over that a clause may run before it is worth cutting. 28 is where
+#: a line is comfortable, not where it stops being readable, and cutting a
+#: 31-character clause to respect it cost more than the three characters were
+#: worth: 「…中试基地制造」 / 「领域石化化工方向…」 — a cut that is a real word
+#: boundary and still reads as a name that ended early. A clause within a
+#: quarter of the target stays whole.
+SUBTITLE_STRETCH = 1.25
 MIN_CUE_SECONDS = 0.8
 
 # Where a caption may break: the marks a speaker actually stops on. `、` and
@@ -27,7 +34,16 @@ CLAUSE_SPLIT = re.compile(r"(?<=[，,。！？!?；;…])")
 PUNCTUATION = "，,。！？!?；;、：:…—－·「」『』（）()《》〈〉【】\"'“”‘’ "
 
 
-def build_subtitles(scene: Scene, audio: Path | None = None) -> list[SubtitleCue]:
+#: Pages a caption has nothing to add to. A cover is four lines set large,
+#: and the narration is those four lines read aloud; a caption under them is
+#: the same words a second time, in a grey box, over the one part of the deck
+#: that is composed rather than filled in. 「封面页这种，就不要压字了。」
+NO_SUBTITLES = (PageType.COVER,)
+
+
+def build_subtitles(
+    scene: Scene, audio: Path | None = None, *, page_type: PageType | None = None
+) -> list[SubtitleCue]:
     """Split each narration segment into readable cues within its own window.
 
     `audio` is the scene's own clip, when there is one. Clauses are joined up
@@ -38,6 +54,8 @@ def build_subtitles(scene: Scene, audio: Path | None = None) -> list[SubtitleCue
     reads as one continuous sentence while the narrator audibly stops in the
     middle of it.
     """
+    if page_type in NO_SUBTITLES:
+        return []
     pauses = _pauses_in(audio)
     cues: list[SubtitleCue] = []
     for segment in scene.segments:
@@ -177,15 +195,18 @@ def _chunk(text: str) -> list[str]:
     # with a pause in the audio.
     marks: list[bool] = []
     for chunk in pieces:
-        parts = ceil(len(chunk) / MAX_SUBTITLE_CHARS)
+        parts = (
+            1
+            if len(chunk) <= MAX_SUBTITLE_CHARS * SUBTITLE_STRETCH
+            else ceil(len(chunk) / MAX_SUBTITLE_CHARS)
+        )
         if parts <= 1:
             split.append(chunk)
             marks.append(True)
             continue
-        size = ceil(len(chunk) / parts)
-        for offset in range(0, len(chunk), size):
-            split.append(chunk[offset : offset + size])
-            marks.append(offset == 0)
+        for index, part in enumerate(_break_evenly(chunk, parts)):
+            split.append(part)
+            marks.append(index == 0)
 
     merged: list[str] = []
     for chunk, at_mark in zip(split, marks, strict=True):
@@ -194,6 +215,46 @@ def _chunk(text: str) -> list[str]:
         else:
             merged.append(chunk)
     return merged or [text.strip(PUNCTUATION) or text]
+
+
+
+def _break_evenly(text: str, parts: int) -> list[str]:
+    """Cut a too-long clause into `parts`, never through a word.
+
+    Chinese has no spaces, so a cut by character count lands wherever the
+    arithmetic says: 「面向国家人工智能应用中试基地制造领域石化化工方向的应用场景
+    揭榜」 is thirty-one characters, and cutting at twenty-eight put 「制造」 at
+    the end of one caption and 「领域」 at the start of the next. A name broken
+    across two captions reads as a different, shorter name — which is how
+    「宁波城知产业链数据科技有限公司」 came out looking like it stopped at 「科技」.
+
+    The same segmenter the speech side uses, for the same reason: it is the
+    only thing here that knows where one word ends. Words are packed up to the
+    target size and the cut falls between two of them. A single word longer
+    than the target still has to be cut through — but there is no such word in
+    a deck, and the arithmetic is the fallback rather than the rule.
+    """
+    from ..tools.tts.phrasing import words
+
+    size = ceil(len(text) / parts)
+    tokens = [word for word, _start, _end in words(text)] or list(text)
+    out: list[str] = []
+    current = ""
+    for word in tokens:
+        if current and len(current) + len(word) > size:
+            out.append(current)
+            current = word
+        elif len(word) > size and not current:
+            # Longer than a whole caption on its own: the only case where the
+            # arithmetic has to win.
+            for offset in range(0, len(word), size):
+                out.append(word[offset : offset + size])
+            current = out.pop() if out else ""
+        else:
+            current += word
+    if current:
+        out.append(current)
+    return out or [text]
 
 
 def to_frame_area(bbox: BBox, page: DocumentPage, width: int, height: int) -> BBox:

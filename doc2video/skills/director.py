@@ -444,7 +444,7 @@ class DirectorSkill(Skill):
         # blinking while the narration never left the block. Merged, the box
         # goes up when the block is first mentioned and stays until the
         # narration moves on.
-        choices = _merge_runs(choices, segments)
+        choices = _merge_runs(choices, segments, page)
 
         last_target: str | None = None
         for index, choice in enumerate(choices):
@@ -520,6 +520,10 @@ MAX_GROUP_COVERAGE = 0.30
 # unrelated.
 GROUP_SLACK = 0.02
 
+#: How much wider than a box something has to be before it counts as spanning
+#: it rather than sitting beside it, as a share of the box's own width.
+SIBLING_WIDTH_TOLERANCE = 0.02
+
 
 def focus_box(element, page: DocumentPage) -> BBox:
     """The box to draw around this element — usually the block it belongs to.
@@ -549,6 +553,7 @@ def focus_box(element, page: DocumentPage) -> BBox:
         and other.bbox.w > 0
         and not _is_banner(other, page)
         and not _is_backdrop(other, page)
+        and not _is_container(other, page)
     ]
 
     # One at a time, smallest first, so the box grows as far as it can rather
@@ -559,7 +564,10 @@ def focus_box(element, page: DocumentPage) -> BBox:
         fits = [
             grown
             for other in others
-            if _belongs(box, other.bbox, gap=gap, slack=slack)
+            if (
+                _belongs(box, other.bbox, gap=gap, slack=slack)
+                or _labels(box, other, gap=gap, slack=slack)
+            )
             # Something already inside the box unions to the box itself, and
             # that is the smallest candidate there is — taken, it would win
             # every round and the box would never grow at all.
@@ -578,12 +586,88 @@ def _belongs(box: BBox, near: BBox, *, gap: float, slack: float) -> bool:
     It has to span the box horizontally — that is what a figure does to its
     caption and a card to its contents — and either touch it or sit within a
     caption's distance above or below.
+
+    Spanning means wider, not as wide. A column of paragraphs set to one
+    measure all span each other exactly, so each is its neighbour's container
+    and the box climbs the whole stack: a frame meant for 「行业洗牌加速」 ended
+    up starting three items above it. Siblings are the same width; a thing you
+    are part of is wider than you.
     """
-    spans = near.x <= box.x + slack and near.x + near.w >= box.x + box.w - slack
+    # Wider by a little, measured against the box rather than by the alignment
+    # slack: the second line of a caption is twenty pixels wider than the
+    # first, and a slide's slack is thirty-eight.
+    wider = near.w > box.w + max(1.0, box.w * SIBLING_WIDTH_TOLERANCE)
+    spans = near.x <= box.x + slack and near.x + near.w >= box.x + box.w - slack and wider
     above = 0 <= box.y - (near.y + near.h) <= gap
     below = 0 <= near.y - (box.y + box.h) <= gap
     overlaps = near.y < box.y + box.h and near.y + near.h > box.y
     return spans and (above or below or overlaps)
+
+
+#: How many things something has to hold before it is a container rather than
+#: a companion.
+HOLDS_ENOUGH_TO_BE_A_CONTAINER = 3
+
+
+def _is_container(element, page: DocumentPage) -> bool:
+    """Whether this is the card a thing sits in rather than a thing beside it.
+
+    Grouping exists for companions: a figure and its caption, a card and the
+    two lines under it. A column card holding eight paragraphs is neither —
+    absorbed, it turns 「这一句」 into 「这一整栏」, and on a three-column page
+    that made four consecutive highlights draw the identical rectangle. Which
+    is what 「框选会在一段内容中重复框选」 looks like from the outside: the frame
+    never moves.
+
+    Holding three or more of the page's other blocks is the test. A caption
+    holds nothing; a figure holds nothing; the card holds the column.
+    """
+    box = element.bbox
+    if box.w <= 0 or box.h <= 0:
+        return False
+    inside = 0
+    for other in page.elements:
+        if other.id == element.id or not (other.text or "").strip():
+            continue
+        at = other.bbox
+        if (
+            at.x >= box.x
+            and at.y >= box.y
+            and at.x + at.w <= box.x + box.w
+            and at.y + at.h <= box.y + box.h
+        ):
+            inside += 1
+            if inside >= HOLDS_ENOUGH_TO_BE_A_CONTAINER:
+                return True
+    return False
+
+
+#: How long a lead-in can be and still be a lead-in rather than a paragraph.
+LABEL_CHARS = 20
+
+
+def _labels(box: BBox, near, *, gap: float, slack: float) -> bool:
+    """Whether `near` is the lead-in that `box` is the body of.
+
+    `_belongs` asks whether the neighbour *spans* the box, which is the shape a
+    figure has over its caption and a card over its contents. A lead-in has the
+    opposite shape: 「同行差距放大：」 is seven characters over a two-line
+    paragraph, so it is narrower than the thing it introduces and no amount of
+    spanning will ever find it. The frame came out around the paragraph with
+    the words naming it sitting just outside the line — which reads as a box
+    that missed.
+
+    So the other shape is named too: flush to the same left edge, directly
+    above within a caption's distance, no wider, and short enough to be a
+    label. Its own line, not the paragraph before it.
+    """
+    text = (getattr(near, "text", "") or "").strip()
+    if not text or len(text) > LABEL_CHARS:
+        return False
+    at = near.bbox
+    aligned = abs(at.x - box.x) <= slack
+    above = 0 <= box.y - (at.y + at.h) <= gap
+    return aligned and above and at.w <= box.w and at.h <= box.h
 
 
 def _is_backdrop(element, page: DocumentPage) -> bool:
@@ -637,30 +721,59 @@ def _is_label(element, page: DocumentPage) -> bool:
     return False
 
 
-def _merge_runs(choices: list[ActionChoice], segments: dict) -> list[ActionChoice]:
+def _frame_key(target: str | None, page: DocumentPage) -> str | None:
+    """What will actually be drawn for this target, as something comparable.
+
+    Not the element id. A lead-in and the paragraph under it are two elements
+    and one block, so two segments pointing at them separately produce two
+    actions that draw the identical rectangle — the box goes up, goes down, and
+    comes back in exactly the same place. From a seat in front of the film that
+    is the same complaint as framing something twice, because it *is* framing
+    it twice.
+    """
+    if not target:
+        return None
+    element = page.element(target)
+    if element is None:
+        return target
+    box = focus_box(element, page)
+    return f"{round(box.x)},{round(box.y)},{round(box.w)},{round(box.h)}"
+
+
+def _merge_runs(
+    choices: list[ActionChoice], segments: dict, page: DocumentPage
+) -> list[ActionChoice]:
     """One look per thing: consecutive ones become a hold, later ones are dropped.
 
     Two rules, and they are the same rule — 「要么就一直框着，要么就框一开始一
     下，不要讲一会框一下」.
 
-    Consecutive looks at the same element are one box that stays up. Looks that
+    Consecutive looks at the same block are one box that stays up. Looks that
     come back to it later are not: on one slide the same block was framed at
     15s, again at 43s and again at 62s, which reads as the camera losing its
     place and going back. The first time it was framed is when it was
     introduced; after that the page has moved on, and drawing nothing is the
     honest answer.
+
+    「Same」 is by the box that gets drawn, not by the element that was matched
+    — see `_frame_key`.
     """
+    keys = [_frame_key(choice.target, page) for choice in choices]
     merged: list[ActionChoice] = []
-    for choice in choices:
+    merged_keys: list[str | None] = []
+    for index, choice in enumerate(choices):
+        key = keys[index]
         segment = segments.get(choice.segment_id)
         if segment is None:
             merged.append(choice)
+            merged_keys.append(key)
             continue
         end = segment.end
-        if merged and merged[-1].target and merged[-1].target == choice.target:
+        if merged and merged_keys[-1] and merged_keys[-1] == key:
             merged[-1] = merged[-1].model_copy(update={"holds_until": end})
             continue
         merged.append(choice.model_copy(update={"holds_until": end}))
+        merged_keys.append(key)
 
     # Now the repeats. Which one to keep is not 「the first」: a page whose
     # opening sentence says 「用进出口数据找海外机会」 brushes past the card headed
@@ -669,15 +782,16 @@ def _merge_runs(choices: list[ActionChoice], segments: dict) -> list[ActionChoic
     # matches best is the one the narration is about.
     best: dict[str, int] = {}
     for index, choice in enumerate(merged):
-        if not choice.target:
+        key = merged_keys[index]
+        if not key:
             continue
-        keep = best.get(choice.target)
+        keep = best.get(key)
         if keep is None or choice.match > merged[keep].match:
-            best[choice.target] = index
+            best[key] = index
     return [
         choice
         for index, choice in enumerate(merged)
-        if not choice.target or best.get(choice.target) == index
+        if not merged_keys[index] or best.get(merged_keys[index]) == index
     ]
 
 
