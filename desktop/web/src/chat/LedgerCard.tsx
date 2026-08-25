@@ -268,9 +268,23 @@ function CallRow({
         style={{ cursor: made.length > 0 ? 'pointer' : 'default' }}
         onClick={() => setOpen((v) => !v)}
       >
-        <span style={{ color: failed ? '#b0562f' : 'inherit' }}>{call.name}</span>
-        {call.detail && <span className="muted">{call.detail}</span>}
-        <span className="muted" style={{ marginLeft: 'auto' }}>
+        <span className="ledger__tool" style={{ color: failed ? '#b0562f' : 'inherit' }}>
+          {call.name}
+        </span>
+        {/* Broken at its own seams. The sentence is 「第 1 页｜0.0–16.5s｜5 条
+            字幕｜1 个动作」 and CJK wraps between any two characters, so a
+            narrow panel split it as 「1 个动／作」. Each piece is kept whole and
+            the row folds between them instead. */}
+        {call.detail && (
+          <span className="muted ledger__what">
+            {call.detail.split('｜').map((part, index) => (
+              <span key={index} className="ledger__part">
+                {part}
+              </span>
+            ))}
+          </span>
+        )}
+        <span className="muted ledger__meta">
           {[
             made.length > 0 ? (open ? '收起' : `${made.length} 项`) : '',
             call.duration_s >= 0.05 ? `${call.duration_s.toFixed(1)}s` : '',

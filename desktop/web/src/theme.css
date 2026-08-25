@@ -1839,6 +1839,46 @@ body {
   color: var(--accent);
 }
 
+/* Three things on one row in a panel that can be three hundred points wide.
+   Left to themselves they all shrink together, and every one of them breaks:
+   the tool name splits across two lines as 「timelin／e」, the sentence breaks
+   mid-word at 「1 个动／作」, and 「1 项」 goes with them. Only the middle one
+   has anything to gain from wrapping, so only the middle one may: the name and
+   the counts keep their width, and the sentence takes what is left and folds
+   inside its own column. */
+.ledger__tool {
+  flex-shrink: 0;
+}
+
+.ledger__what {
+  flex: 1;
+  /* Without this a flex child refuses to go narrower than its content, which
+     is how the other two got squeezed in the first place. */
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.ledger__part {
+  white-space: nowrap;
+}
+
+/* The separator hangs off the end of the piece before it, never off the front
+   of the piece after. Attached the other way it wrapped along with whatever
+   followed and started the second line as 「｜1 个动作」; a break belongs after
+   the mark, which is where a line ending in 「…5 条字幕｜」 puts it. */
+.ledger__part:not(:last-child)::after {
+  content: '｜';
+  opacity: 0.5;
+}
+
+.ledger__meta {
+  flex-shrink: 0;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 .ledger__made {
   display: flex;
   flex-direction: column;
