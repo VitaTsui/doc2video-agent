@@ -20,15 +20,12 @@ function _minutes(seconds: number): string {
 export function MessageList({
   messages,
   onShow,
-  onRetry,
   onSay,
   deck,
 }: {
   messages: Message[]
   /** Open the artifacts panel on this project. */
   onShow: (projectId: string) => void
-  /** Ask the same thing again. Absent while something is already running. */
-  onRetry?: () => void
   /** Say one of the suggested sentences. */
   onSay?: (text: string) => void
   /** The gate: how much of the script is written, and how to start.
@@ -66,15 +63,6 @@ export function MessageList({
             key={message.id}
             className={`turn turn--${message.role}`}
           >
-            {/* Which of the two is speaking, said once at the top of the turn
-                rather than left to the indentation. A transcript of bare
-                paragraphs is readable only while you remember whose they
-                are. */}
-            {message.role === 'assistant' && (
-              <div className="turn__who" aria-hidden="true">
-                <span className="turn__mark">D</span>
-              </div>
-            )}
             <div className="turn__body">
               {/* A turn that is still being worked on says so with the same
                   ring the progress card uses, so the wait never looks like a
@@ -85,7 +73,10 @@ export function MessageList({
                   {message.text}
                 </span>
               ) : message.role === 'assistant' ? (
-                <Prose text={message.text} />
+                // A replayed chain has no sentence above it: nobody said one
+                // at the time, and inventing one now would put words in its
+                // mouth about a run that is already over.
+                message.text ? <Prose text={message.text} /> : null
               ) : (
                 message.text
               )}
@@ -95,13 +86,16 @@ export function MessageList({
                 </div>
               )}
 
-              {/* Under the words, on hover. Every chat has this and it is the
-                  cheapest useful thing in one: a reply worth acting on is a
-                  reply worth copying, and a wrong one is worth asking for
-                  again without retyping the question. */}
-              {message.role === 'assistant' && !message.pending && message.text && (
-                <TurnActions text={message.text} onRetry={onRetry} />
-              )}
+              {/* Under the words, on hover — and only under words. A reply
+                  that is a document, or an account of what is being thought,
+                  is not something anyone copies as text: the document is the
+                  card next to it, and the chain is a view of the record. Both
+                  had a 「复制」 under them that would have yielded one line of
+                  preamble. */}
+              {message.role === 'assistant' &&
+                message.kind === 'text' &&
+                !message.pending &&
+                message.text && <TurnActions text={message.text} />}
 
               {/* Every deck card is a record of what was said: the document,
                   openable. What can be *done* is not here — it moved to the
