@@ -130,6 +130,7 @@ const STAGE_DONE: Record<string, (stage: LedgerEntry, tally: Tally) => string> =
   生成讲稿: (s) => `讲稿写完了，${s.artifacts.length} 页`,
   采用讲稿: (s) => `用了你写的讲稿，${s.artifacts.length} 页`,
   配音: (_s, t) => `念完了，${t.groups} 段，${t.chars} 字`,
+  重新配音: (_s, t) => `重新念完了，${t.groups} 段，${t.chars} 字`,
   设计镜头: (_s, t) => `${t.groups} 页的框选都想好了`,
   编排时间轴: (_s, t) => `时间轴排好了，${t.subtitles} 条字幕`,
   渲染合成: (_s, t) => `渲染完了，${t.groups} 段`,

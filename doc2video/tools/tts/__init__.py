@@ -8,7 +8,7 @@ from pathlib import Path
 from ...core import ledger, telemetry
 from ...core.config import Settings, get_settings
 from ...core.logging import get_logger
-from . import align, phrasing
+from . import align
 from .base import (
     Segment,
     TTSProvider,
@@ -17,7 +17,6 @@ from .base import (
     estimate_duration,
     join_units,
     retime_gaps,
-    silences,
     weight_of,
 )
 from .edge import EdgeProvider
@@ -31,8 +30,6 @@ log = get_logger(__name__)
 # How many times to measure a clause and cut it again. Cutting one silence can
 # leave the engine free to take another somewhere else; three passes was enough
 # to settle every clause measured on a 30-page deck.
-REPHRASE_ROUNDS = 3
-
 #: How many times one clip is asked for before the engine is given up on. A
 #: `say` timeout is a hung process, not a broken engine — and giving up cost a
 #: whole deck its voice once.
@@ -126,61 +123,6 @@ class TTSTool:
     def _for_engine(self, text: str, pronunciation: dict[str, str] | None = None) -> str:
         """The words as the engine should receive them, before its own markers."""
         return for_speech(text, self._pronunciation if pronunciation is None else pronunciation)
-
-    def _speak_unit(
-        self, unit, work: Path, index: int, *, spoken, voice: str, rate: float
-    ) -> list[tuple[Path, float]]:
-        """Speak one clause, and hand back the clips it actually took.
-
-        For engines with no markup of their own. One that can be asked to hold
-        a beat goes through `_speak_sentences` instead, and never gets here.
-
-        A clause has no punctuation inside it, so every silence in its clip is
-        one nobody asked for — the engine deciding on its own where a phrase
-        ends, and getting it wrong on any term it does not know: 「一是供应链经营
-        风险可控化」 came back with 0.14 seconds after 一是供应.
-
-        So the clip is measured, cut at the nearest word boundary to each
-        silence, and each piece spoken on its own. Rejoined with their quiet
-        edges trimmed, the silence is gone rather than moved — two pieces run
-        *shorter* than the original (2.47s against 2.51s), while telling the
-        engine where the boundary is costs 19% more length, because `say`
-        re-plans its prosody around a marker.
-
-        Repeated until the pieces come back clean, because cutting one silence
-        can leave the engine free to invent another somewhere else.
-        """
-        pieces = [unit.text]
-        for _round in range(REPHRASE_ROUNDS):
-            clips, again = [], False
-            for order, piece in enumerate(pieces):
-                clip = work / f"{index:02d}_{order}.wav"
-                duration = self._speak_once(spoken(piece), clip, voice=voice, rate=rate)
-                clips.append((piece, clip, duration))
-            rewritten: list[str] = []
-            for piece, clip, duration in clips:
-                cuts = phrasing.cuts_for(piece, silences(clip), duration)
-                parts = phrasing.split(piece, cuts) if cuts else [piece]
-                if len(parts) > 1:
-                    log.debug("断词修复：%s → %s", piece, " | ".join(parts))
-                    again = True
-                rewritten.extend(parts)
-            if not again:
-                return [
-                    (clip, unit.pause_before if order == 0 else 0.0)
-                    for order, (_piece, clip, _duration) in enumerate(clips)
-                ]
-            for _piece, clip, _duration in clips:
-                clip.unlink(missing_ok=True)
-            pieces = rewritten
-
-        # Out of rounds: speak what we have and let the last measurement stand.
-        out: list[tuple[Path, float]] = []
-        for order, piece in enumerate(pieces):
-            clip = work / f"{index:02d}_{order}.wav"
-            self._speak_once(spoken(piece), clip, voice=voice, rate=rate)
-            out.append((clip, unit.pause_before if order == 0 else 0.0))
-        return out
 
     def _speak_sentences(
         self, units, work: Path, *, spoken, engine, voice: str, rate: float
@@ -420,25 +362,22 @@ class TTSTool:
         pauses: list[float] = []
         owners: list[int] = []
         try:
-            if provider.honours_phrase_boundary:
-                # One call per sentence. The clause beats go inside it as the
-                # engine's own markup; see `_speak_sentences`.
-                with ledger.call(f"tts:{engine}", f"{len(''.join(sentences))} 字"):
-                    clips, pauses, owners = self._speak_sentences(
-                        units, work, spoken=spoken, engine=provider, voice=voice, rate=rate
-                    )
-            else:
-                # No markup to put a beat in, so the clause is the call and the
-                # silence is written between the clips.
-                for index, unit in enumerate(units):
-                    with ledger.call(f"tts:{engine}", f"{len(unit.text)} 字"):
-                        spoken_clips = self._speak_unit(
-                            unit, work, index, spoken=spoken, voice=voice, rate=rate
-                        )
-                    for clip, pause in spoken_clips:
-                        clips.append(clip)
-                        pauses.append(pause)
-                        owners.append(unit.sentence)
+            # One call per sentence, whatever the engine. Every call is a
+            # complete intonation — its own opening pitch, its own falling
+            # close — so a page cut into thirty calls is thirty utterances
+            # spliced together, and what that sounds like is two people
+            # finishing each other's sentences.
+            #
+            # This used to be done only for engines with pause markup of their
+            # own, which meant only `say`. The desktop app's default voice is
+            # Edge's, so the app never got the fix and still sounded like the
+            # thing that was reported. The markup was never what made this
+            # work: an engine that has none simply gets none, and the beats are
+            # cut to their designed lengths afterwards either way.
+            with ledger.call(f"tts:{engine}", f"{len(''.join(sentences))} 字"):
+                clips, pauses, owners = self._speak_sentences(
+                    units, work, spoken=spoken, engine=provider, voice=voice, rate=rate
+                )
 
             windows = join_units(clips, pauses, out_path)
             # A clause is what gets spoken; a sentence is what gets captioned and

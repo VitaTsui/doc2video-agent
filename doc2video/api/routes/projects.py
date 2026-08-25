@@ -35,6 +35,13 @@ class SceneNarrationsIn(BaseModel):
 class ChatIn(BaseModel):
     message: str
 
+
+class RevoiceIn(BaseModel):
+    """A new voice and pace, or neither: empty keeps what the project has."""
+
+    voice: str = ""
+    speech_rate: float = 0.0
+
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
@@ -165,6 +172,38 @@ def revise_scenes(project_id: str, body: SceneNarrationsIn) -> dict:
             project_id=project_id,
             scene_narrations=dict(body.scenes),
         )
+    )
+    return {"job_id": job.id, "status": job.status}
+
+
+@router.post("/{project_id}/revoice")
+def revoice(project_id: str, body: RevoiceIn) -> dict:
+    """Speak the existing script again, and rebuild what depends on it.
+
+    The capability existed and had no door: a voice that came out wrong — a
+    hung engine, a fix to how the words are broken up, a voice worth changing —
+    could only be re-run by *telling the agent about it*, so a window with a
+    button had nowhere to send the button. Recovering from it by hand meant
+    editing the project file, which is not a thing anyone should have to do.
+
+    The script is not touched. The picture is: captions are drawn into the
+    frames and the camera moves are timed to sentence boundaries, so a clip of
+    a different length moves both.
+    """
+    project = _load(project_id)
+    if not project.scenes:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "nothing_to_voice", "message": "这个工程还没有讲稿"},
+        )
+    if body.voice:
+        project.intent.voice = body.voice
+    if body.speech_rate:
+        project.intent.speech_rate = body.speech_rate
+    if body.voice or body.speech_rate:
+        get_agent().store.save(project)
+    job = get_jobs().submit(
+        JobRequest(message="重新配音", project_id=project_id, revoice=True)
     )
     return {"job_id": job.id, "status": job.status}
 

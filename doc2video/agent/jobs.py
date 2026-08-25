@@ -65,6 +65,9 @@ class JobRequest:
     # Set when the job's only work is writing a first script, for a deck that
     # has already been parsed.
     draft: bool = False
+    # Set when the job says the same words in a different voice. The script is
+    # not touched; everything downstream of the audio is made again.
+    revoice: bool = False
     # Whether `message` is a person's own words, and so belongs in the
     # project's conversation. False for the job labels this queue invents.
     remember: bool = False
@@ -299,6 +302,7 @@ class JobManager:
                     narrations=job.request.narrations,
                     scene_narrations=job.request.scene_narrations,
                     draft=job.request.draft,
+                    revoice=job.request.revoice,
                     remember=job.request.remember,
                 )
             job.result = result
