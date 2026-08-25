@@ -7,6 +7,7 @@ must degrade to MockLLM, and MockLLM must be something the pipeline can hold.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -102,6 +103,20 @@ elif mode == "tool":
     emit({"protocol": PROTOCOL, "type": "model.result", "requestId": rid,
           "result": {"status": "completed",
                      "output": json.dumps({"answered": reply["success"] is False})}})
+elif mode == "image":
+    emit({"protocol": PROTOCOL, "type": "tool.call", "requestId": rid,
+          "callId": "c1", "name": "view_image", "arguments": {"name": "page_001.png"}})
+    reply = json.loads(sys.stdin.readline())
+    block = (reply.get("blocks") or [{}])[0]
+    emit({"protocol": PROTOCOL, "type": "model.result", "requestId": rid,
+          "result": {"status": "completed", "output": json.dumps({
+              "declared": [tool["name"] for tool in request["tools"]],
+              "offered": request["task"].count("page_001.png"),
+              "type": block.get("type"),
+              "mime": block.get("mimeType"),
+              "bytes": len(block.get("data") or ""),
+              "text": reply.get("content"),
+          })}})
 else:
     emit({"protocol": PROTOCOL, "type": "model.event", "requestId": rid, "event": {"t": "noise"}})
     emit({"protocol": PROTOCOL, "type": "model.result", "requestId": rid,
@@ -134,16 +149,47 @@ def test_the_bridge_answer_is_parsed_and_labelled(tmp_path: Path):
     tool = VirtualizedCLILLM(_bridge_settings(tmp_path, "ok"))
 
     assert tool.model == "claude-code"  # the runtime behind it, not "the CLI"
-    assert tool.supports_images() is False
+    assert tool.supports_images() is True
     # Events on the way past are ignored, and prose around the object survives.
     assert tool.complete_json("讲讲这一页", schema={"type": "object"}) == {"task": "讲讲这一页"}
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="用 sh 启动的桩进程")
 def test_a_tool_request_is_refused_instead_of_hanging(tmp_path: Path):
-    """The CLI loop is suspended until the host replies; silence would deadlock."""
+    """The CLI loop is suspended until the host replies; silence would deadlock.
+
+    A turn with no images declares no tools at all, so this call is outside the
+    Action Space however it got made.
+    """
     tool = VirtualizedCLILLM(_bridge_settings(tmp_path, "tool"))
     assert tool.complete_json("写点东西", schema={"type": "object"}) == {"answered": True}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="用 sh 启动的桩进程")
+def test_an_attached_image_reaches_the_cli_as_image_content(tmp_path: Path):
+    """The picture itself, not a path into a filesystem the CLI cannot see.
+
+    A one-pixel PNG, so what is asserted is the shape of the round trip: the
+    tool is declared only because an image came with the turn, the task names
+    what can be asked for, and the answer carries the bytes as an image block
+    while `content` stays text.
+    """
+    png = tmp_path / "page_001.png"
+    png.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    ))
+    tool = VirtualizedCLILLM(_bridge_settings(tmp_path, "image"))
+
+    seen = tool.complete_json("这一页没有文字", schema={"type": "object"}, images=[png])
+
+    assert seen["declared"] == ["view_image"]
+    assert seen["offered"] == 1  # the task says which names can be asked for
+    assert seen["type"] == "image"
+    assert seen["mime"] == "image/png"
+    assert seen["bytes"] > 0
+    # Base64 rides in the block alone: `content` is the text projection, and is
+    # what the bridge writes to its audit record.
+    assert seen["text"] == "page_001.png"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="用 sh 启动的桩进程")
@@ -256,7 +302,7 @@ def test_the_bridges_own_words_survive_the_exception(tmp_path):
     )
     try:
         with pytest.raises(ToolFailed) as caught:
-            llm._exchange(process, json_module.loads(reply), "r1")
+            llm._exchange(process, json_module.loads(reply), "r1", {})
     finally:
         process.kill()
 

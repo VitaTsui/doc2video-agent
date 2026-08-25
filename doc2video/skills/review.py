@@ -415,6 +415,14 @@ class ReviewSkill(Skill):
                 detail=(
                     f"{by_kind.get('ungrounded', 0)} 个场景脱离了页面内容，"
                     f"{by_kind.get('ai_tic', 0)} 个场景有 AI 腔句式"
+                    # What this score did not look at. Without it a deck of
+                    # scanned pages reports a clean 100 here, which is true of
+                    # the checks that ran and false of the video.
+                    + (
+                        f"（另有 {ungroundable} 个场景所在的页没有文字可比对，未参与判断）"
+                        if (ungroundable := by_kind.get("ungroundable", 0))
+                        else ""
+                    )
                 ),
             ),
             QualityDimension(
@@ -673,6 +681,18 @@ class ReviewSkill(Skill):
                             ),
                         )
                     )
+            elif page is not None:
+                # Silence here used to read as a pass. A page with no text to
+                # compare against cannot clear this check — it can only skip
+                # it — and a deck of nothing but pictures skipped every one of
+                # them and scored 100 for grounding. Said out loud instead, so
+                # the number comes with what it did and did not look at.
+                findings.append(
+                    ReviewFinding(
+                        severity="info", kind="ungroundable", scene_id=scene.scene_id,
+                        message="这一页没有足够的文字可比对，讲稿贴不贴页面，这里判断不了",
+                    )
+                )
 
             for label, pattern, advice in AI_TICS:
                 if (hit := re.search(pattern, scene.narration)) is None:

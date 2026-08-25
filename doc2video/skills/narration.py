@@ -19,6 +19,8 @@ render path, not for a video anyone would watch).
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
@@ -178,6 +180,22 @@ def _density_note(page, budget: int) -> str:
         "先按骨架把每个板块点到（小标题、每一栏），长段落只取名称、数字和结论，"
         "举例、括号里的补充、脚注可以不讲。没讲到的不要提。"
     )
+
+
+#: How many batches to write at once. Small on purpose: measured at 59s
+#: against 37s for two, which is worth having, but the ceiling here is not the
+#: machine — it is whatever the model sits behind, and one transient failure
+#: while probing this was reminder enough.
+MAX_WRITERS = 3
+
+
+def writing_workers(count: int, configured: int) -> int:
+    """How many batches to write at once."""
+    if count <= 1:
+        return 1
+    if configured > 0:
+        return max(1, min(configured, count))
+    return max(1, min(count, MAX_WRITERS))
 
 
 class NarrationSkill(Skill):
@@ -914,10 +932,28 @@ class NarrationSkill(Skill):
         drafts: dict[int, PageNarration] = {
             index: _as_draft(index, text) for index, text in kept.items()
         }
-        for start in range(0, len(pages), BATCH_SIZE):
-            batch = pages[start : start + BATCH_SIZE]
-            if all(page.index in kept for page in batch):
-                continue
+        wanted_batches = [
+            (start, pages[start : start + BATCH_SIZE])
+            for start in range(0, len(pages), BATCH_SIZE)
+            if not all(page.index in kept for page in pages[start : start + BATCH_SIZE])
+        ]
+
+        # Batches do not see each other. Each is given its own pages and the
+        # ones a person already wrote; nothing a batch produces reaches the
+        # next one. So writing them one after another bought no continuity —
+        # it only spent fifteen minutes of a forty-minute film waiting.
+        #
+        # Kept small on purpose. Measured at 59s against 37s for two batches,
+        # which is worth having; the ceiling is not the machine but whatever
+        # the model is behind, and one transient failure while probing this was
+        # reminder enough that asking for more is asking for a rate limit.
+        workers = writing_workers(len(wanted_batches), self.ctx.settings.narrate_workers)
+        if workers > 1:
+            self.log.info("写 %d 批，%d 批一起写", len(wanted_batches), workers)
+            self._write_together(wanted_batches, drafts, budgets, kept, pages, workers, progress)
+            return self._filled_in(drafts, pages, budgets, kept)
+
+        for start, batch in wanted_batches:
             # Said before the call, not after. A batch is one model call and
             # takes a minute or more; a count that only moves when a call
             # returns sits still for that whole minute, and the window has no
@@ -953,6 +989,94 @@ class NarrationSkill(Skill):
             self._build_scenes(pages, drafts)
             self.ctx.store.save(self.project)
 
+        return self._filled_in(drafts, pages, budgets, kept)
+
+    def _write_together(
+        self,
+        batches: list[tuple[int, list[DocumentPage]]],
+        drafts: dict[int, PageNarration],
+        budgets: dict[int, float],
+        kept: dict[int, str],
+        pages: list[DocumentPage],
+        workers: int,
+        progress: ProgressFn | None,
+    ) -> None:
+        """Write several batches at once, saving each as it lands.
+
+        The account of a run is kept on a context variable, so a batch written
+        in a thread that does not carry the calling context records its call
+        nowhere. Each task runs inside a copy of the context it came from.
+
+        Saving stays on this thread. Two batches writing the project file at
+        the same moment is a corrupted file, and the point of saving early is
+        that a reader can watch the pages fill in — which one writer at a time
+        does perfectly well.
+        """
+        done = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for start, batch in batches:
+                carried = copy_context()
+                futures[
+                    pool.submit(carried.run, self._write_batch, batch, budgets, start, kept, pages)
+                ] = batch
+            for future in as_completed(futures):
+                batch = futures[future]
+                done += 1
+                try:
+                    written = future.result()
+                except Exception:
+                    # One batch's failure costs those pages their model draft,
+                    # not the deck: the heuristic writer fills them below.
+                    self.log.exception("第 %d-%d 页写作失败", batch[0].index, batch[-1].index)
+                    continue
+                for page in written:
+                    if page.narration.strip() and page.index not in kept:
+                        drafts[page.index] = page
+                # Said after the pages land, not before the call: several
+                # batches are in flight at once, so 「正在写第 5-8 页」 would be
+                # one of three true answers. How many pages exist now is the
+                # one answer that is not a guess.
+                if progress is not None:
+                    progress(
+                        "narrate",
+                        f"第 {batch[0].index}-{batch[-1].index} 页",
+                        len(drafts),
+                        len(pages),
+                    )
+                self._build_scenes(pages, drafts)
+                self.ctx.store.save(self.project)
+
+    def _write_batch(
+        self,
+        batch: list[DocumentPage],
+        budgets: dict[int, float],
+        start: int,
+        kept: dict[int, str],
+        pages: list[DocumentPage],
+    ) -> list[PageNarration]:
+        """One batch, asked for and validated. Nothing here touches the project."""
+        with ledger.call(
+            self.llm.source,
+            f"第 {batch[0].index}-{batch[-1].index} 页",
+            covers=[ledger.page_key(page.index) for page in batch if page.index not in kept],
+        ):
+            result = self.llm.complete_json(
+                self._prompt(batch, budgets, position=start, kept=kept, pages=pages),
+                schema=model_schema(NarrationResult),
+                system=load_prompt("narration"),
+                max_tokens=self.ctx.settings.llm_max_tokens,
+            )
+        return list(NarrationResult.model_validate(result).pages)
+
+    def _filled_in(
+        self,
+        drafts: dict[int, PageNarration],
+        pages: list[DocumentPage],
+        budgets: dict[int, float],
+        kept: dict[int, str],
+    ) -> dict[int, PageNarration]:
+        """Whatever the model did not write, written heuristically."""
         wanted = {p.index for p in pages}
         missing = sorted(wanted - drafts.keys())
         if missing:

@@ -340,9 +340,11 @@ export function App() {
    */
   const follow = useCallback(
     async (jobId: string, intro: string, expectsVideo = true) => {
-      // The card the record is written onto. It moves: voicing and rendering
-      // each get one, so `card` is what is current rather than what was first.
+      // The card the record is written onto. It moves: each long stage gets
+      // one, so `card` is what is current rather than what was first — and
+      // `from` is where its share of the account begins.
       let card = say({ role: 'assistant', kind: 'job', text: intro, job: null })
+      let from = -1
       abort.current?.abort()
       abort.current = new AbortController()
 
@@ -380,7 +382,14 @@ export function App() {
           // past than about what is happening now.
           if (entries?.length) {
             const latest = entries[entries.length - 1].run_id
-            amend(card, { steps: entries.filter((e) => e.run_id === latest), projectId: id })
+            // Only this card's share of the run. A card shows how long it
+            // thought, and handing every card the whole account made all four
+            // of them say the same number — 「已思考 7 分 16 秒」 three times over
+            // three stages that took seven minutes between them.
+            amend(card, {
+              steps: entries.filter((e) => e.run_id === latest && e.seq > from),
+              projectId: id,
+            })
           }
         })
       }, 1500)
@@ -419,12 +428,17 @@ export function App() {
               // before closing it.
               const closing = card
               const known = watching.current
+              const since = from
               amend(closing, { settled: true })
               if (known) {
                 void api.ledger(known).then((entries) => {
                   if (!entries.length) return
                   const latest = entries[entries.length - 1].run_id
-                  amend(closing, { steps: entries.filter((e) => e.run_id === latest) })
+                  const mine = entries.filter((e) => e.run_id === latest && e.seq > since)
+                  amend(closing, { steps: mine })
+                  // Where the next card's share starts: everything written by
+                  // the time this one closed belongs to this one.
+                  from = mine.length ? mine[mine.length - 1].seq : since
                 }).catch(() => undefined)
               }
               say({ role: 'assistant', kind: 'text', text: HANDOVER[state.stage] })
@@ -453,7 +467,10 @@ export function App() {
         const entries = await api.ledger(done).catch(() => null)
         if (entries?.length) {
           const latest = entries[entries.length - 1].run_id
-          amend(card, { steps: entries.filter((e) => e.run_id === latest), projectId: done })
+          amend(card, {
+            steps: entries.filter((e) => e.run_id === latest && e.seq > from),
+            projectId: done,
+          })
         }
       }
       // A finished turn changes a project's duration, its output, and its

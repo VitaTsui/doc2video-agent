@@ -3,3 +3,8 @@
 # non-interactive and reproducible in CI.
 allowBuilds:
   esbuild: true
+# pnpm holds a freshly published version back until it has aged. This one is
+# ours, released for this repo's own use — the image content blocks the CLI-agent
+# provider needs — so waiting out the quarantine would only stall our own change.
+minimumReleaseAgeExclude:
+  - agent-virtualization@0.1.3

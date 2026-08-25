@@ -503,3 +503,26 @@ def test_too_fast_means_faster_than_asked_for():
     assert 350 > TOO_FAST
     # …and inside it once the machine was asked to speak 5% quicker.
     assert 350 < TOO_FAST * 1.05
+def test_a_page_with_no_text_says_so_instead_of_scoring_a_pass(score):
+    """100 for grounding used to mean "checked nothing and found nothing".
+
+    A deck of scanned pages has no text on any page, so the overlap check
+    skipped every scene — and skipping read exactly like passing. That is how a
+    nine-page video with no content in it came back at 95.5 with grounding on
+    100. The score still cannot judge what it cannot compare, but it now says
+    which scenes those were.
+    """
+    project = _project([_scene(i) for i in range(1, 6)])
+    for page in project.document.pages:
+        # What a scanned page parses into: the picture is there, the words are
+        # not. Not an empty element list, which is a different defect.
+        page.elements[0].kind = ElementKind.IMAGE
+        page.elements[0].text = ""
+
+    report = score(project)
+    grounding = next(d for d in report.dimensions if d.name == "grounding")
+
+    # The score cannot judge what it cannot compare, so it stays where it was.
+    assert grounding.score == 100
+    # But it no longer reads as five scenes that passed.
+    assert "5 个场景所在的页没有文字可比对" in grounding.detail
