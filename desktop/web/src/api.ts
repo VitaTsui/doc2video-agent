@@ -446,6 +446,21 @@ export async function draftScript(projectId: string, written: Record<string, str
   return body.job_id
 }
 
+/**
+ * Say the existing script again, and rebuild what depends on it.
+ *
+ * The words are not touched. The picture is: captions are drawn into the
+ * frames and the camera moves are timed to sentence boundaries, so a clip of a
+ * different length moves both.
+ */
+export async function revoice(projectId: string, voice = '', speechRate = 0) {
+  const body = await request<{ job_id: string }>(`/projects/${projectId}/revoice`, {
+    method: 'POST',
+    body: JSON.stringify({ voice, speech_rate: speechRate }),
+  })
+  return body.job_id
+}
+
 export async function narrationGuide(projectId: string) {
   const body = await request<{ items: GuideRow[] }>(`/projects/${projectId}/narration-guide`)
   return body.items

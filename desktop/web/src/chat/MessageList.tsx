@@ -34,6 +34,8 @@ export function MessageList({
     onRender: () => void
     /** Write the pages nobody has written, keeping the ones they have. */
     onDraft: () => void
+    /** Say the existing script again — same words, made again. */
+    onRevoice: () => void
   }
 }) {
   const end = useRef<HTMLDivElement>(null)
@@ -140,6 +142,15 @@ export function MessageList({
                   : deck.written < deck.pages
                     ? `补齐剩下 ${deck.pages - deck.written} 页`
                     : '重写讲稿'}
+              </button>
+            )}
+            {/* Made once already: saying it again is a different job from
+                making it again, and much the shorter one — the words and the
+                shots stay, only the sound is done over. Before there is a
+                film there is nothing to re-voice. */}
+            {deck.generated && (
+              <button type="button" className="deckgate__draft" onClick={deck.onRevoice}>
+                重新配音
               </button>
             )}
             <button type="button" className="deckgate__go" onClick={deck.onRender}>

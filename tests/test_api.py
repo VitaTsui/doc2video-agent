@@ -501,3 +501,18 @@ def test_the_plugin_list_is_plugins_and_not_plumbing(client):
     """
     found = [p["id"] for p in client.get("/health/plugins").json()["plugins"]]
     assert not [p for p in found if p.startswith("bin:")], found
+
+
+def test_saying_it_again_does_not_mean_writing_it_again(client: TestClient):
+    """Re-voicing had the capability and no door.
+
+    A voice that came out wrong — a hung engine, a fix to how the words are
+    broken up, a voice worth changing — could only be re-run by telling the
+    agent about it in a sentence, so a window with a button had nowhere to send
+    the button, and recovering by hand meant editing the project file.
+    """
+    missing = client.post("/projects/proj_nope/revoice", json={})
+    assert missing.status_code == 404
+
+    # A voice and a pace are optional; neither means "the same again".
+    assert client.post("/projects/proj_nope/revoice", json={"voice": "Tingting"}).status_code == 404

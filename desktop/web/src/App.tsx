@@ -338,7 +338,9 @@ export function App() {
    */
   const follow = useCallback(
     async (jobId: string, intro: string, expectsVideo = true) => {
-      const card = say({ role: 'assistant', kind: 'job', text: intro, job: null })
+      // The card the record is written onto. It moves: voicing and rendering
+      // each get one, so `card` is what is current rather than what was first.
+      let card = say({ role: 'assistant', kind: 'job', text: intro, job: null })
       abort.current?.abort()
       abort.current = new AbortController()
 
@@ -381,11 +383,25 @@ export function App() {
       }, 1500)
 
       let final: JobState
+      // Voicing and rendering are one job and two waits — twenty minutes of
+      // speaking, then twenty of drawing — and the card's count runs 0→30
+      // twice, which reads as one thing starting over. So the conversation
+      // says where one ends and the other begins, and each gets its own card.
+      let stage = ''
+      const HANDOVER: Record<string, string> = {
+        direct: '念完了。接下来定镜头、排时间轴，然后渲染。',
+        render: '开始渲染，一段一段来。',
+      }
       try {
         final = await api.watchJob(
           jobId,
           (state) => {
             if (state.project_id) watching.current = state.project_id
+            if (state.stage !== stage && HANDOVER[state.stage] && stage) {
+              say({ role: 'assistant', kind: 'text', text: HANDOVER[state.stage] })
+              card = say({ role: 'assistant', kind: 'job', text: '', job: state })
+            }
+            stage = state.stage
             amend(card, { job: state })
           },
           abort.current.signal,
@@ -701,6 +717,29 @@ export function App() {
     [follow, projectId, say],
   )
 
+  /**
+   * Say the existing script again — same words, made again.
+   *
+   * Its own action because it is its own job, and much the shorter one: the
+   * script and the shots are what someone already approved, and only the sound
+   * is done over. The picture still has to be made again — captions are drawn
+   * into the frames and the camera moves are timed to sentence boundaries — but
+   * nothing is rewritten, so the fifteen minutes the words cost are not spent
+   * twice.
+   */
+  const startRevoice = useCallback(async () => {
+    if (!projectId) return
+    setBusy(true)
+    try {
+      const jobId = await api.revoice(projectId)
+      await follow(jobId, '同样的讲稿，重新念一遍。')
+    } catch (error) {
+      say({ role: 'assistant', kind: 'text', text: `没能重新配音：${api.describeError(error)}` })
+    } finally {
+      setBusy(false)
+    }
+  }, [follow, projectId, say])
+
   const startRender = useCallback(
     async () => {
       if (!projectId) return
@@ -857,6 +896,7 @@ export function App() {
               generated: Boolean(artifacts?.rendered),
               onRender: () => void startRender(),
               onDraft: () => void fillInScript(),
+              onRevoice: () => void startRevoice(),
             }}
             onStop={(jobId) => {
               // A request, not a kill: the scene in flight finishes, and the
