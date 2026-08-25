@@ -170,3 +170,63 @@ def test_a_caption_is_cut_where_the_narrator_stops(tmp_path):
     assert [cue.text for cue in cut] == ["再谈痛点和思路", "落到建设内容与商业价值"]
     # And the cut lands in the silence, not at a guessed position.
     assert cut[0].end == pytest.approx(2.3, abs=0.25)
+
+
+def test_a_page_is_listed_the_way_it_is_read():
+    """A parser hands back what the file draws, and a slide is not drawn in order.
+
+    Measured on one deck's page 8 — three columns headed 市场 / 经营 / 发展 left
+    to right — the headings came back 经营, 发展, 市场, because that is the order
+    PowerPoint laid them down; the bodies underneath came back the other way.
+    Nothing downstream can recover from that: the writer is told to walk the
+    page in order and walks it middle, right, left, and the camera follows the
+    sentences across the slide and back.
+    """
+    from doc2video.schemas import BBox, ElementKind, SlideElement
+    from doc2video.tools.parsers.reading_order import in_reading_order
+
+    def at(name: str, x: float, y: float, w: float = 380) -> SlideElement:
+        return SlideElement(
+            id=name, kind=ElementKind.PARAGRAPH, text=name, bbox=BBox(x=x, y=y, w=w, h=40)
+        )
+
+    page = [
+        at("标题", 204, 57, 1360),
+        at("导语", 99, 187, 1729),
+        # Drawn middle, right, left — which is the bug this fixes.
+        at("经营", 723, 441),
+        at("发展", 1304, 441),
+        at("市场", 147, 441),
+        at("市场一", 149, 530),
+        at("经营一", 722, 530),
+        at("发展一", 1307, 530),
+        at("市场二", 149, 642),
+        at("经营二", 722, 650),
+        at("发展二", 1307, 650),
+        at("结尾", 412, 943, 1072),
+    ]
+
+    read = [element.text for element in in_reading_order(page, 1920, 1080)]
+
+    assert read[:2] == ["标题", "导语"], read
+    assert read[-1] == "结尾", "横跨几栏的收尾句不属于任何一栏"
+    # Column by column, not line by line across all three.
+    assert read[2:5] == ["市场", "市场一", "市场二"], read
+    assert read[5:8] == ["经营", "经营一", "经营二"], read
+    assert read[8:11] == ["发展", "发展一", "发展二"], read
+
+
+def test_a_single_column_page_is_simply_top_to_bottom():
+    """The rule has to be invisible on the pages that never had the problem."""
+    from doc2video.schemas import BBox, ElementKind, SlideElement
+    from doc2video.tools.parsers.reading_order import in_reading_order
+
+    page = [
+        SlideElement(
+            id=f"e{i}", kind=ElementKind.PARAGRAPH, text=f"第{i}行",
+            bbox=BBox(x=120, y=100 + i * 90, w=1600, h=60),
+        )
+        for i in range(5)
+    ]
+    read = [element.text for element in in_reading_order(page, 1920, 1080)]
+    assert read == [f"第{i}行" for i in range(5)]

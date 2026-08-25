@@ -15,6 +15,7 @@ from ...core import ledger
 from ...core.ids import element_id
 from ...core.logging import get_logger
 from ...schemas import BBox, DocumentModel, DocumentPage, ElementKind, SlideElement
+from .reading_order import in_reading_order
 
 log = get_logger(__name__)
 
@@ -43,6 +44,9 @@ def parse_pdf(path: Path, assets_dir: Path, *, target_width: int = 1920) -> Docu
 
                 elements = _extract_elements(page, page_number, zoom)
             title = _guess_title(elements)
+            # The order a person reads it, not the order the file draws it —
+            # see `reading_order`. Everything downstream walks this list.
+            elements = in_reading_order(elements, float(pixmap.width), float(pixmap.height))
 
             pages.append(
                 DocumentPage(

@@ -408,9 +408,25 @@ export function App() {
             if (state.stage !== stage && HANDOVER[state.stage] && stage) {
               // The half that just ended has to be told it ended. Without this
               // it keeps the last running state it was given and sits there
-              // saying 「正在思考…」 with a 「中止」 beside it for the rest of the
-              // run — two blocks claiming to be in flight while a third works.
-              amend(card, { settled: true })
+              // saying 「正在思考…」 for the rest of the run — two blocks
+              // claiming to be in flight while a third works.
+              //
+              // And it has to be told what it did, which is not in hand yet: a
+              // step is written to the record *after* it finishes, so at the
+              // moment the stage changes the polling has the run minus the step
+              // that just ended. Settling on that showed 「已思考 0 秒」 over a
+              // block that had been speaking for twenty minutes. One more read
+              // before closing it.
+              const closing = card
+              const known = watching.current
+              amend(closing, { settled: true })
+              if (known) {
+                void api.ledger(known).then((entries) => {
+                  if (!entries.length) return
+                  const latest = entries[entries.length - 1].run_id
+                  amend(closing, { steps: entries.filter((e) => e.run_id === latest) })
+                }).catch(() => undefined)
+              }
               say({ role: 'assistant', kind: 'text', text: HANDOVER[state.stage] })
               card = say({ role: 'assistant', kind: 'job', text: '', job: state })
             }

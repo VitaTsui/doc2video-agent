@@ -32,6 +32,7 @@ from ...schemas import (
     ElementKind,
     SlideElement,
 )
+from .reading_order import in_reading_order
 from .slide_raster import rasterize_page
 
 log = get_logger(__name__)
@@ -74,6 +75,9 @@ def parse_ppt(
                 slide, index, slide_w, slide_h, px_w, px_h, assets_dir, theme
             )
             diagram = _diagram_facts(slide, elements)
+        # The order a person reads it, not the order the file draws it — see
+        # `reading_order`. Everything downstream walks this list.
+        elements = in_reading_order(elements, float(px_w), float(px_h))
         pages.append(
             DocumentPage(
                 index=index,
