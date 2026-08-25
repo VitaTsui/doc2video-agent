@@ -26,14 +26,11 @@ export function Thinking({
   entries,
   job,
   settled,
-  onStop,
 }: {
   entries: LedgerEntry[]
   job: JobState | null
   /** This half is over even though the job is not: the next half has begun. */
   settled?: boolean
-  /** Ask the run to stop. Sits in the header, where the run is. */
-  onStop?: () => void
 }) {
   const running =
     !settled && (!job || job.status === 'queued' || job.status === 'running')
@@ -77,18 +74,13 @@ export function Thinking({
             </span>
           )}
         </button>
-        {/* How far through, and the way out. They used to sit in a bordered
-            card of their own above this — a control panel dropped into a
-            conversation. Minutes of work still need a way to be taken back;
-            they do not need a frame around them. */}
-        {running && (
+        {/* How far through. Not how to stop — that is the send button, which
+            is where a chat puts it and which was already drawing itself as a
+            stop button while this ran. Two ways to stop one thing, one of them
+            in the middle of the transcript, is one too many. */}
+        {running && job && job.total > 0 && (
           <span className="chain__aside muted">
-            {job && job.total > 0 && <span className="chain__time">{`${job.done}/${job.total}`}</span>}
-            {onStop && (
-              <button type="button" className="chain__stop" disabled={job?.stopping} onClick={onStop}>
-                {job?.stopping ? '正在停…' : '中止'}
-              </button>
-            )}
+            <span className="chain__time">{`${job.done}/${job.total}`}</span>
           </span>
         )}
       </div>
