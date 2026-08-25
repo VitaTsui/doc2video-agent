@@ -47,6 +47,11 @@ MIN_ITEM_CHARS_FOR_FLOOR = 18
 #: number.
 COMPRESSION_ROUNDS = 3
 
+#: How far past its ceiling a page has to be to be worth another round. A page
+#: at 1.2× is close enough — the round it would cost is a minute of waiting for
+#: a handful of characters.
+KEEP_COMPRESSING = 1.5
+
 # Per-page-type weights for splitting the total duration budget.
 TYPE_WEIGHT = {
     PageType.COVER: 0.35,
@@ -436,11 +441,16 @@ class NarrationSkill(Skill):
                 # for the same page said in fewer words instead — one call, and
                 # it is the only way to honour both 「十五分钟」 and 「把这一页讲
                 #全」, which is what the person asked for on the same day.
-                # More than once, because one pass does not reach the number.
-                # Asked to bring 300 characters down to 92 the model answers
-                # with 159 — a real cut, and still 1.7× the budget. Measured
-                # across a 30-page deck: one round each took the film from 24
-                # minutes to 18.4 and left 14 pages over their ceiling.
+                # More than once, because one pass does not reach the number:
+                # asked to bring 300 characters down to 92 the model answers
+                # with 159, a real cut and still 1.7× the budget.
+                #
+                # But only while there is a long way to go. Every round is a
+                # model call, and three rounds over twenty-five over-budget
+                # pages is seventy-five of them — measured at over fifty
+                # minutes for one script, which is longer than the render. A
+                # page already close to its number is close enough; the last
+                # few characters are not worth another minute of waiting.
                 ceiling = int(allowed * pace)
                 current = draft
                 for _round in range(COMPRESSION_ROUNDS):
@@ -450,7 +460,7 @@ class NarrationSkill(Skill):
                     if rewritten is None:
                         break
                     current = rewritten
-                    if len(current.narration) <= ceiling * (1 + DURATION_TOLERANCE):
+                    if len(current.narration) <= ceiling * KEEP_COMPRESSING:
                         break
                 if current is draft:
                     self.log.info("第 %d 页压不动：剪会少讲内容，改写也没写短", index)
