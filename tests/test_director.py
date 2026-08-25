@@ -580,3 +580,74 @@ def test_a_label_with_nothing_under_it_is_still_a_target(
     scene = _run(page, _scene([segment]), settings, store)
 
     assert [a.target for a in scene.actions if a.target] == ["one"]
+
+
+def test_one_look_per_block_and_at_the_moment_it_is_described():
+    """Three complaints, one cause.
+
+    A block was framed at 15s, again at 43s and again at 62s on the same page —
+    the camera losing its place and going back. And the one look that survived
+    could be the wrong one: a page whose opening sentence says 「用进出口数据找
+    海外机会」 brushes past the card headed 「海外机会清单」 nine seconds before
+    the script describes it, so keeping the first framed the right card at the
+    wrong moment.
+    """
+    from doc2video.schemas import NarrationSegment
+    from doc2video.skills.director import ActionChoice, ActionType, _merge_runs
+
+    segments = {
+        "s1": NarrationSegment(id="s1", text="a", start=0.0, end=4.0),
+        "s2": NarrationSegment(id="s2", text="b", start=4.0, end=8.0),
+        "s3": NarrationSegment(id="s3", text="c", start=8.0, end=12.0),
+    }
+    brushed = ActionChoice(segment_id="s1", type=ActionType.HIGHLIGHT, target="e1", match=0.18)
+    other = ActionChoice(segment_id="s2", type=ActionType.HIGHLIGHT, target="e2", match=0.5)
+    described = ActionChoice(segment_id="s3", type=ActionType.HIGHLIGHT, target="e1", match=0.62)
+
+    kept = _merge_runs([brushed, other, described], segments)
+
+    targets = [c.target for c in kept]
+    assert targets.count("e1") == 1, f"同一块只该框一次：{targets}"
+    assert [c.segment_id for c in kept if c.target == "e1"] == ["s3"], "该留讲到它的那一次"
+
+
+def test_a_run_of_the_same_block_still_holds_rather_than_blinking():
+    """Consecutive looks are one box that stays up, not one that is redrawn."""
+    from doc2video.schemas import NarrationSegment
+    from doc2video.skills.director import ActionChoice, ActionType, _merge_runs
+
+    segments = {
+        "s1": NarrationSegment(id="s1", text="a", start=0.0, end=4.0),
+        "s2": NarrationSegment(id="s2", text="b", start=4.0, end=9.0),
+    }
+    kept = _merge_runs(
+        [
+            ActionChoice(segment_id="s1", type=ActionType.HIGHLIGHT, target="e1", match=0.4),
+            ActionChoice(segment_id="s2", type=ActionType.HIGHLIGHT, target="e1", match=0.3),
+        ],
+        segments,
+    )
+    assert len(kept) == 1
+    assert kept[0].holds_until == 9.0, "连着讲同一块，框就一直框着"
+
+
+def test_length_stops_deciding_which_block_the_camera_frames():
+    """Counting shared pairs hands the page to whichever element has most text.
+
+    All three strings are what was actually on the slide and in the script. The
+    sprawling block shares more pairs with the sentence than the card does, so
+    by count the block wins — and it did, three separate times on that one
+    page, while the card the sentence is naming went unframed.
+    """
+    from doc2video.skills.director import _match, _shared_grams
+
+    said = '横向覆盖研发、供产销、人才、资金，也就是创新链、产业链、人才链、资金链四条链。'
+    card = '研发·供产销·人才·资金'
+    sprawl = (
+        '构建覆盖石化行业创新链、产业链、人才链、资金链的全链路分层数据集体系，包含预训练'
+        '、指令微调、强化学习偏好与基准测试四类数据，支 撑 AI 模型从基础训练到质检评'
+        '估的全流程建设，并深度参与石化领域数据标准与接口规范的制定落地。'
+    )
+
+    assert _shared_grams(sprawl, said)[0] > _shared_grams(card, said)[0], "按个数是长的赢"
+    assert _match(card, said) > _match(sprawl, said), "两边一起比，选真正在讲的那张卡"

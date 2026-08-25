@@ -388,8 +388,13 @@ export function App() {
       // twice, which reads as one thing starting over. So the conversation
       // says where one ends and the other begins, and each gets its own card.
       let stage = ''
+      // Each of the long stages is its own beat in the conversation, because
+      // each is its own wait: twenty minutes of speaking, then the shots, then
+      // the timeline, then twenty of drawing. One card for all of it counted
+      // 0→30 four times over and read as one thing starting again.
       const HANDOVER: Record<string, string> = {
-        direct: '念完了。接下来定镜头、排时间轴，然后渲染。',
+        direct: '念完了。接下来看每一句该框哪里。',
+        motion: '镜头定好了，把字幕和动作排进时间轴。',
         render: '开始渲染，一段一段来。',
       }
       try {
@@ -398,6 +403,11 @@ export function App() {
           (state) => {
             if (state.project_id) watching.current = state.project_id
             if (state.stage !== stage && HANDOVER[state.stage] && stage) {
+              // The half that just ended has to be told it ended. Without this
+              // it keeps the last running state it was given and sits there
+              // saying 「正在思考…」 with a 「中止」 beside it for the rest of the
+              // run — two blocks claiming to be in flight while a third works.
+              amend(card, { settled: true })
               say({ role: 'assistant', kind: 'text', text: HANDOVER[state.stage] })
               card = say({ role: 'assistant', kind: 'job', text: '', job: state })
             }

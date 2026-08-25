@@ -98,6 +98,7 @@ export function MessageList({
                 <Thinking
                   entries={message.steps ?? []}
                   job={message.job}
+                  settled={message.settled}
                   onStop={message.job ? () => onStop(message.job!.job_id) : undefined}
                 />
               )}

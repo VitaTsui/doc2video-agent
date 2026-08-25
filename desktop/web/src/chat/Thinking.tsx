@@ -25,14 +25,18 @@ type Thought = { key: string; text: string; lead?: boolean }
 export function Thinking({
   entries,
   job,
+  settled,
   onStop,
 }: {
   entries: LedgerEntry[]
   job: JobState | null
+  /** This half is over even though the job is not: the next half has begun. */
+  settled?: boolean
   /** Ask the run to stop. Sits in the header, where the run is. */
   onStop?: () => void
 }) {
-  const running = !job || job.status === 'queued' || job.status === 'running'
+  const running =
+    !settled && (!job || job.status === 'queued' || job.status === 'running')
   // `null` means "whatever the run is doing": open while it works, folded once
   // it stops. A click pins it either way — someone reading step twelve should
   // not have the panel shut under them the moment the render finishes.
@@ -89,17 +93,11 @@ export function Thinking({
         )}
       </div>
 
-      {/* A hairline, not a bar in a box: something to glance at, under the
-          line that already says what is happening. */}
-      {running && (
-        <div className="chain__track">
-          {job && job.total > 0 ? (
-            <div className="chain__fill" style={{ width: `${(job.done / job.total) * 100}%` }} />
-          ) : (
-            <div className="chain__fill chain__fill--pulse" />
-          )}
-        </div>
-      )}
+      {/* No bar. There was one here — a hairline under the header — and at
+          28/30 it is a full-width accent rule directly beneath the title,
+          which reads as an underline rather than as progress. The header
+          already carries the count, and the live line shimmers; a chat does
+          not draw a progress bar into the middle of a sentence. */}
 
       {open && (
         <div ref={body} className={running ? 'chain__body chain__body--live' : 'chain__body'}>
@@ -275,9 +273,14 @@ function say(call: LedgerEntry, charCount: number, parts: number, at: number): s
   if (call.name.startsWith('renderer:')) return `渲染第 ${at} 段${failed}`
   if (call.name.startsWith('check:')) return `查了${call.name.slice(6)}：${call.detail}${failed}`
 
-  // Anything else is the model being asked something, and the call already
-  // says what for: 「第 7 页｜返工」, 「第 3 页｜压到 180 字」.
+  // Anything else is the model being asked something. The call's own words
+  // are a label, not a sentence — 「第 17-20 页」 on its own line says nothing
+  // about what is being done to those pages — so the ones that come up often
+  // get a verb.
   const what = call.detail.replace(/｜/g, '，')
+  if (/^第\s*\d+(-\d+)?\s*页$/.test(call.detail)) return `写${call.detail}${failed}`
+  if (call.detail.endsWith('返工')) return `${call.detail.replace('，返工', '').replace('｜返工', '')}没写全，重写一遍${failed}`
+  if (call.detail.includes('压到')) return `${what.replace('，压到', '，压到 ')}${failed}`.replace('压到  ', '压到 ')
   return what ? `${what}${failed}` : `想了想${failed}`
 }
 
