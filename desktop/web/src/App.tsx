@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from './api'
 import type { Connection, JobState, ProjectSummary } from './api'
 import { Composer } from './chat/Composer'
+import { parsedIn, replay } from './chat/replay'
 import { MessageList } from './chat/MessageList'
 import type { Message, MessageDraft, MessagePatch } from './chat/types'
 import { Settings } from './Settings'
@@ -145,10 +146,12 @@ export function App() {
   /**
    * Put one project's conversation on screen, replacing whatever is there.
    *
-   * Only the replies are replayed. Each turn of the loop also records the
-   * reason behind its decision and what the tools did, and those already have
-   * a home — the ledger under the video, where they sit next to the render
-   * they caused. Repeating them here would be the same story told twice.
+   * What is replayed is the replies *and* the work. The conversation alone is
+   * almost nothing — a finished project often holds one line, the sentence
+   * someone typed — because everything after it was written to the ledger
+   * rather than said out loud. Reopening used to show that one line, a
+   * document card, and a film, with the forty minutes in between missing.
+   * The record is read back into the same chains it was watched in.
    */
   const openProject = useCallback(
     async (summary: ProjectSummary, greeting?: string) => {
@@ -182,6 +185,20 @@ export function App() {
         api.narrationGuide(summary.project_id).catch(() => []),
       ])
       const set = await loadArtifacts(summary.project_id, Boolean(summary.output))
+
+      // What it did, in the beats it did them in. Folded: this is a run being
+      // remembered, not one being waited on, so each chain opens as its one
+      // line — 「已思考 10 分 32 秒」 — and unfolds if that is the question.
+      const cards = replay(set.ledger)
+      const afterParse = parsedIn(cards)
+      const showChain = (card: (typeof cards)[number]) =>
+        say({ role: 'assistant', kind: 'job', text: '', job: null, steps: card, settled: true })
+
+      // The document card goes where it was said: straight after the run that
+      // read the document. Everything since is what was done to it.
+      cards.slice(0, afterParse + 1).forEach(showChain)
+      const rest = cards.slice(afterParse + 1)
+
       if (deckPages.length > 0) {
         // The deck card, back in the conversation it was said in. Only the
         // panel was being restored, so a reopened project had its pages but
@@ -221,11 +238,13 @@ export function App() {
         // pages someone came back to look at.
         setPanelOpen(true)
       }
+      rest.forEach(showChain)
+
       if (summary.output) {
         say({
           role: 'assistant',
           kind: 'video',
-          text: `《${summary.title || summary.source}》，${Math.round(summary.duration)} 秒。`,
+          text: `《${readableTitle(summary.title || summary.source)}》，${Math.round(summary.duration)} 秒。`,
           projectId: summary.project_id,
           scenes: set.scenes,
           quality: set.quality,

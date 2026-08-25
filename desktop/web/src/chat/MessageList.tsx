@@ -73,7 +73,10 @@ export function MessageList({
                   {message.text}
                 </span>
               ) : message.role === 'assistant' ? (
-                <Prose text={message.text} />
+                // A replayed chain has no sentence above it: nobody said one
+                // at the time, and inventing one now would put words in its
+                // mouth about a run that is already over.
+                message.text ? <Prose text={message.text} /> : null
               ) : (
                 message.text
               )}
