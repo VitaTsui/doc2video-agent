@@ -9,6 +9,9 @@ guess at timing.
 from __future__ import annotations
 
 import hashlib
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 
 from ..core import ledger, tuning
 from ..core.logging import get_logger
@@ -28,6 +31,20 @@ WRONG_LENGTH_HIGH = 1.9
 MAX_REDO = 5
 
 
+def speaking_workers(count: int, configured: int) -> int:
+    """How many pages to speak at once: what was asked for, bounded by the machine.
+
+    Speaking is mostly waiting on another process, so a worker per core is
+    reasonable — but each one holds a synthesiser with a voice loaded, so this
+    does not go unbounded.
+    """
+    if count <= 1:
+        return 1
+    if configured > 0:
+        return max(1, min(configured, count))
+    return max(1, min(count, os.cpu_count() or 4))
+
+
 class VoiceSkill(Skill):
     name = "presentation-voice"
     description = "TTS 配音，并给出句级时间戳"
@@ -41,9 +58,9 @@ class VoiceSkill(Skill):
         synthesized = skipped = 0
         total = len(self.project.scenes)
 
-        for done, scene in enumerate(self.project.scenes):
-            if progress is not None:
-                progress("voice", f"配音 {scene.scene_id}", done, total)
+        # What actually has to be spoken, once the unchanged pages are out.
+        todo: list[tuple[Scene, str]] = []
+        for scene in self.project.scenes:
             fingerprint = self._fingerprint(scene)
             existing = self.ctx.asset_path(scene.audio.path)
             if (
@@ -54,9 +71,21 @@ class VoiceSkill(Skill):
             ):
                 skipped += 1
                 continue
+            todo.append((scene, fingerprint))
 
-            self._voice_scene(scene, audio_dir, fingerprint)
-            synthesized += 1
+        # Thirty pages spoken one after another was nine minutes of a forty
+        # minute film, and no page waits on any other: each is its own text,
+        # its own file, its own engine process.
+        workers = speaking_workers(len(todo), self.ctx.settings.voice_workers)
+        if workers > 1:
+            self.log.info("配音 %d 页，%d 页一起念", len(todo), workers)
+            synthesized += self._voice_together(todo, audio_dir, workers, progress, total)
+        else:
+            for done, (scene, fingerprint) in enumerate(todo):
+                if progress is not None:
+                    progress("voice", f"配音 {scene.scene_id}", done, total)
+                self._voice_scene(scene, audio_dir, fingerprint)
+                synthesized += 1
 
         self._check_and_redo(progress=progress)
 
@@ -66,6 +95,44 @@ class VoiceSkill(Skill):
             skipped,
             self.project.total_duration(),
         )
+
+    def _voice_together(
+        self,
+        todo: list[tuple[Scene, str]],
+        audio_dir,
+        workers: int,
+        progress: ProgressFn | None,
+        total: int,
+    ) -> int:
+        """Speak several pages at once, reporting each as it lands.
+
+        The account of a run is kept on a context variable, so work handed to a
+        thread that does not carry the calling context records its calls
+        nowhere — a parallel run would leave an empty ledger. Each task runs
+        inside a copy of the context it was submitted from.
+        """
+        done = 0
+        spoken = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for scene, fingerprint in todo:
+                carried = copy_context()
+                futures[
+                    pool.submit(carried.run, self._voice_scene, scene, audio_dir, fingerprint)
+                ] = scene
+            for future in as_completed(futures):
+                scene = futures[future]
+                done += 1
+                if progress is not None:
+                    progress("voice", f"配音 {scene.scene_id}", done, total)
+                try:
+                    future.result()
+                    spoken += 1
+                except Exception:
+                    # One page's failure is that page's. The rest of the deck is
+                    # already in flight, and the review says what is missing.
+                    self.log.exception("第 %s 页配音失败", scene.source_page)
+        return spoken
 
     def _voice_scene(self, scene: Scene, audio_dir, fingerprint: str) -> None:
         """Speak one page, and write down when each of its sentences happens."""

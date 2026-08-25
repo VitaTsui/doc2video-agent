@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     # The rest of what 「快」 means is the gaps, and those are ours to set: see
     # `voice.pause_comma`, `voice.pause_enum`, `voice.pause_sentence`.
     tts_speech_rate: float = 1.0
+    # How many pages to speak, and how many scenes to draw, at once. Both are
+    # per-page work that spends its time waiting on a subprocess, and doing
+    # them one at a time was nineteen minutes of a forty-minute film. Zero
+    # means as many as this machine can take.
+    voice_workers: int = 0
+    render_workers: int = 0
     # Silence around each page's narration, so pages do not cut into one
     # another and nobody speaks over a slide that is still fading in. Part of
     # the scene's own clip, so subtitles stay inside the speech.

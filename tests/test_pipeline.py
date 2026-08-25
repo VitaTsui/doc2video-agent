@@ -244,3 +244,54 @@ def test_a_deck_that_parsed_normally_is_left_alone(settings: Settings, store: Pr
     executor = _scan(settings, store, _Blind(), pages=9, words="这一页是有字的")
 
     executor._check_the_deck_was_read()  # does not raise
+
+
+
+def test_pages_are_spoken_several_at_a_time():
+    """Thirty pages one after another was nine minutes of a forty-minute film.
+
+    No page waits on any other — each is its own text, its own file, its own
+    engine process — so the only reason it took that long was that nothing
+    asked for them at once.
+    """
+    from doc2video.skills.voice import speaking_workers
+
+    assert speaking_workers(30, 0) > 1, "默认就该并行"
+    assert speaking_workers(30, 4) == 4, "配置了就听配置的"
+    assert speaking_workers(1, 8) == 1, "只有一页就没什么好并的"
+    assert speaking_workers(2, 8) == 2, "不会开得比页数还多"
+
+
+def test_scenes_are_drawn_fewer_at_a_time_than_pages_are_spoken():
+    """Drawing is a browser and an encoder; speaking is mostly waiting.
+
+    Running as many browsers as there are cores leaves nothing for the encode
+    each of them ends with.
+    """
+    import os
+
+    from doc2video.agent.executor import drawing_workers
+    from doc2video.skills.voice import speaking_workers
+
+    cores = os.cpu_count() or 4
+    if cores >= 4:
+        assert drawing_workers(30, 0) < speaking_workers(30, 0)
+    assert drawing_workers(30, 3) == 3
+    assert drawing_workers(1, 8) == 1
+
+
+def test_a_worker_still_writes_to_the_account():
+    """The record lives on a context variable.
+
+    Work handed to a thread that does not carry the calling context records its
+    calls nowhere, and a parallel run would leave an empty ledger — the one
+    thing that explains where a slow run spent its time.
+    """
+    import inspect
+
+    from doc2video.agent import executor
+    from doc2video.skills import voice
+
+    for module in (voice, executor):
+        source = inspect.getsource(module)
+        assert "copy_context()" in source, f"{module.__name__} 没有把账本上下文带进线程"

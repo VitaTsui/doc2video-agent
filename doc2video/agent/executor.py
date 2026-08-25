@@ -7,8 +7,11 @@ stage so a failed run can resume instead of starting over.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
+from contextvars import copy_context
 from pathlib import Path
 
 from ..core import ledger, telemetry
@@ -136,6 +139,20 @@ _DIMENSION_OF = {
     "subtitle": "字幕",
     "duration": "节奏",
 }
+
+
+def drawing_workers(count: int, configured: int) -> int:
+    """How many scenes to draw at once.
+
+    Half the cores rather than all of them: each one is a headless browser
+    drawing a thousand frames and then encoding them, so the machine needs
+    something left over for the encode.
+    """
+    if count <= 1:
+        return 1
+    if configured > 0:
+        return max(1, min(configured, count))
+    return max(1, min(count, (os.cpu_count() or 4) // 2))
 
 
 class Executor:
@@ -502,17 +519,47 @@ class Executor:
 
         clips_dir = self.ctx.store.clips_dir(project.project_id)
 
-        for done, scene in enumerate(dirty):
-            scene_plan = plans.get(scene.scene_id)
-            if scene_plan is None:
-                continue
-            self._progress("render", f"渲染场景 {scene.scene_id}", done, len(dirty))
-            clip_path = clips_dir / f"{scene.scene_id}.mp4"
-            adapter.render_scene(scene_plan, clip_path)
+        jobs = [
+            (scene, plans[scene.scene_id], clips_dir / f"{scene.scene_id}.mp4")
+            for scene in dirty
+            if scene.scene_id in plans
+        ]
+
+        def keep(scene: Scene, scene_plan, clip_path) -> None:
             project.render.scene_clips[scene.scene_id] = self.ctx.store.relativize(
                 project.project_id, clip_path
             )
             project.render.rendered_scenes[scene.scene_id] = scene_plan.fingerprint()
+
+        # A scene is drawn by a headless browser that knows nothing about the
+        # scene before it, so nothing here is in anyone's way. Thirty of them
+        # one after another was ten minutes of a forty-minute film.
+        #
+        # Fewer at a time than the pages are spoken at, though: this is a
+        # browser rendering a thousand frames, and running as many as there are
+        # cores leaves nothing for the encode each of them ends with.
+        workers = drawing_workers(len(jobs), self.ctx.settings.render_workers)
+        if workers > 1:
+            log.info("渲染 %d 个场景，%d 个一起画", len(jobs), workers)
+            done = 0
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {}
+                for scene, scene_plan, clip_path in jobs:
+                    carried = copy_context()
+                    futures[
+                        pool.submit(carried.run, adapter.render_scene, scene_plan, clip_path)
+                    ] = (scene, scene_plan, clip_path)
+                for future in as_completed(futures):
+                    scene, scene_plan, clip_path = futures[future]
+                    done += 1
+                    self._progress("render", f"渲染场景 {scene.scene_id}", done, len(jobs))
+                    future.result()
+                    keep(scene, scene_plan, clip_path)
+        else:
+            for done, (scene, scene_plan, clip_path) in enumerate(jobs):
+                self._progress("render", f"渲染场景 {scene.scene_id}", done, len(jobs))
+                adapter.render_scene(scene_plan, clip_path)
+                keep(scene, scene_plan, clip_path)
 
         self._assemble(project.scenes)
         project.render.status = "done"
