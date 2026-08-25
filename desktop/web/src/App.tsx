@@ -588,13 +588,20 @@ export function App() {
   const acceptDeck = useCallback(
     async (file: File, brief: string, uploaded?: string) => {
       setBusy(true)
+      // Parsing is a request, not a job — there is nothing on the backend to
+      // cancel — so the way to stop it is to stop waiting for it. Without
+      // this the input drew a stop button through four minutes of parsing a
+      // thirty-page deck and pressing it did nothing at all.
+      abort.current?.abort()
+      abort.current = new AbortController()
+      const signal = abort.current.signal
       say({ role: 'user', kind: 'text', text: brief || '按默认来', file: file.name })
       const thinking = say({ role: 'assistant', kind: 'text', text: '正在解析…', pending: true })
       try {
         // Already on the backend if the picker managed it; only a failed
         // upload has to be repeated here.
-        const uploadId = uploaded ?? (await api.uploadSource(file))
-        const prepared = await api.prepare(uploadId, brief)
+        const uploadId = uploaded ?? (await api.uploadSource(file, signal))
+        const prepared = await api.prepare(uploadId, brief, signal)
         const guide = await api.narrationGuide(prepared.project_id)
         setProjectId(prepared.project_id)
         void loadProjects()
@@ -635,7 +642,14 @@ export function App() {
         // boxes are empty and open, and 「生成讲稿」 fills in whatever is
         // still blank when they press it.
       } catch (error) {
-        amend(thinking, { pending: false, kind: 'text', text: `解析失败：${api.describeError(error)}` })
+        // Stopping on purpose is not a failure, and 「解析失败」 over a wait the
+        // person ended themselves is the window blaming them for a button it
+        // offered.
+        amend(thinking, {
+          pending: false,
+          kind: 'text',
+          text: signal.aborted ? '解析停下了。' : `解析失败：${api.describeError(error)}`,
+        })
       } finally {
         setBusy(false)
       }
@@ -957,13 +971,29 @@ export function App() {
           uploadAction={connection ? api.uploadUrl() : ''}
           onSend={acceptMessage}
           onStop={() => {
-            // A request, not a kill: the scene in flight finishes first,
-            // because a half-written clip is one the incremental render would
-            // later mistake for a good one.
-            if (!runningJob) return
-            void api.cancelJob(runningJob).catch((error) => {
-              say({ role: 'assistant', kind: 'text', text: `没能中止：${api.describeError(error)}` })
-            })
+            // Two different things are called 「停」 here, and the button has to
+            // do whichever one applies. A job on the backend is asked to stop
+            // rather than killed — the scene in flight finishes, because a
+            // half-written clip is one the incremental render would later
+            // mistake for a good one. A request that is merely being waited on
+            // — parsing, which is not a job — is stopped by stopping the wait.
+            //
+            // Doing only the first meant the button was drawn through four
+            // minutes of parsing and pressed nothing.
+            if (runningJob) {
+              void api.cancelJob(runningJob).catch((error) => {
+                say({
+                  role: 'assistant',
+                  kind: 'text',
+                  text: `没能中止：${api.describeError(error)}`,
+                })
+              })
+              return
+            }
+            // Whatever is being waited on says so itself when the wait ends;
+            // a second line here would be the same news twice.
+            abort.current?.abort()
+            setBusy(false)
           }}
           onDeck={acceptDeck}
           hint={projectId ? '想改哪里就直接说' : '说说你想要什么样的视频，并附上文档'}

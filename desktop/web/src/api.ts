@@ -406,10 +406,14 @@ export function uploadUrl(): string {
   return `${base_url}/uploads?token=${encodeURIComponent(token)}`
 }
 
-export async function uploadSource(file: File): Promise<string> {
+export async function uploadSource(file: File, signal?: AbortSignal): Promise<string> {
   const form = new FormData()
   form.append('file', file)
-  const body = await request<{ upload_id: string }>('/uploads', { method: 'POST', body: form })
+  const body = await request<{ upload_id: string }>('/uploads', {
+    method: 'POST',
+    body: form,
+    ...(signal ? { signal } : {}),
+  })
   return body.upload_id
 }
 
@@ -420,7 +424,7 @@ export async function pages(projectId: string) {
 }
 
 /** Parse a deck and stop — fast, and everything the script needs to be written. */
-export async function prepare(uploadId: string, brief: string) {
+export async function prepare(uploadId: string, brief: string, signal?: AbortSignal) {
   return request<{
     project_id: string
     title: string
@@ -429,6 +433,7 @@ export async function prepare(uploadId: string, brief: string) {
     duration_stated: boolean
   }>('/agent/prepare', {
     method: 'POST',
+    ...(signal ? { signal } : {}),
     body: JSON.stringify({ upload_id: uploadId, brief }),
   })
 }
