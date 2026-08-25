@@ -136,7 +136,12 @@ class VirtualizedCLILLM(LLMTool):
         attached = _attachments(images)
         # The note goes before the schema, not after: the last thing the task
         # says should still be "answer with JSON".
-        task = prompt + _image_note(attached) + JSON_INSTRUCTION + json.dumps(schema, ensure_ascii=False)
+        task = (
+            prompt
+            + _image_note(attached)
+            + JSON_INSTRUCTION
+            + json.dumps(schema, ensure_ascii=False)
+        )
         return parse_json_reply(self._run(task, system, attached), source=PACKAGE)
 
     def complete_text(self, prompt: str, *, system: str = "", max_tokens: int = 2000) -> str:  # noqa: ARG002
