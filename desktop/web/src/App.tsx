@@ -25,6 +25,7 @@ import { Sidebar } from './Sidebar'
 import { Artifacts } from './Artifacts'
 import type { ArtifactSet } from './Artifacts'
 import { Setup } from './Setup'
+import { readableTitle } from './naming'
 
 let counter = 0
 const nextId = () => `m${++counter}`
@@ -190,9 +191,10 @@ export function App() {
           kind: 'deck',
           // Reopened: whoever set this length did so in a conversation that is
           // being restored, not in one being had — so state it, don't credit it.
-          text: `《${summary.title || summary.source}》共 ${deckPages.length} 页，`
+          text: `《${readableTitle(summary.title || summary.source)}》共 ${deckPages.length} 页，`
             + `目标时长大约 ${seconds} 秒。`,
           projectId: summary.project_id,
+          file: summary.title || summary.source,
           pages: deckPages,
           guide,
           hasModel,
@@ -614,9 +616,13 @@ export function App() {
           // were the request is how a video comes back a different length than
           // the person thought they had asked for.
           text: prepared.duration_stated
-            ? `《${prepared.title}》共 ${prepared.pages.length} 页，按这个要求算下来大约 ${seconds} 秒。`
-            : `《${prepared.title}》共 ${prepared.pages.length} 页。你没说要多长，按这份文档的内容算下来大约 ${seconds} 秒——想要短一点直接说，比如「压到八分钟」。`,
+            ? `《${readableTitle(prepared.title)}》共 ${prepared.pages.length} 页，`
+              + `按这个要求算下来大约 ${seconds} 秒。`
+            : `《${readableTitle(prepared.title)}》共 ${prepared.pages.length} 页。`
+              + `你没说要多长，按这份文档的内容算下来大约 ${seconds} 秒——`
+              + '想要短一点直接说，比如「压到八分钟」。',
           projectId: prepared.project_id,
+          file: prepared.title || file.name,
           pages: prepared.pages,
           guide,
           hasModel,

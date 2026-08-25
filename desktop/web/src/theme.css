@@ -100,25 +100,72 @@ body {
   margin: 0 auto;
 }
 
+/* A turn is a row: who is speaking on the left, what they said beside it. The
+   assistant's mark is what makes a page of paragraphs legible as a
+   conversation — without it the reader has to remember whose turn they are
+   in, which is exactly the work a transcript should be doing for them. */
 .turn {
-  margin-bottom: 28px;
+  display: flex;
+  gap: 14px;
+  margin-bottom: 30px;
+  line-height: 1.75;
 }
 
+.turn__who {
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.turn__mark {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+  /* The letter is a shape here, not a word: centred by eye rather than by
+     baseline, which sits a hair low inside a circle. */
+  line-height: 1;
+  user-select: none;
+}
+
+.turn__body {
+  min-width: 0;
+  flex: 1;
+}
+
+/* The user's turn has no mark and does not need the column: their words are
+   the ones with a container around them, which is what makes a transcript
+   scannable — everything indented right is something you said. */
 .turn--user {
-  display: flex;
   justify-content: flex-end;
 }
 
 .turn--user .turn__body {
+  flex: 0 1 auto;
   background: var(--user-bg);
-  border-radius: var(--radius);
-  padding: 10px 16px;
-  max-width: 85%;
+  border-radius: 16px;
+  padding: 11px 16px;
+  max-width: 80%;
 }
 
 /* The assistant's turn is unadorned: no bubble, no border, just text. */
 .turn--assistant .turn__body {
   white-space: pre-wrap;
+}
+
+/* Successive assistant turns are one voice continuing, not two speakers. The
+   mark is drawn once and the ones under it keep the column without repeating
+   it — the way every chat renders a run of messages from the same side. */
+.turn--assistant + .turn--assistant {
+  margin-top: -18px;
+}
+
+.turn--assistant + .turn--assistant .turn__mark {
+  visibility: hidden;
 }
 
 .turn__file {
@@ -130,6 +177,65 @@ body {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 1px 8px;
+}
+
+/* -- what a turn hands back --------------------------------------------- */
+
+/* A deck, a finished film. Both used to be a thin outlined pill with a line of
+   text in it, which reads as a button someone forgot to style. An attachment
+   gets a shape: a mark for what kind of thing it is, its name, and what is
+   worth knowing about it underneath. */
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 24rem;
+  margin-top: 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.attachment:hover {
+  border-color: var(--ink-soft);
+  background: var(--bg);
+}
+
+.attachment__icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: var(--user-bg);
+  color: var(--accent);
+}
+
+.attachment__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.attachment__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.attachment__meta {
+  color: var(--ink-soft);
+  font-size: 12.5px;
 }
 
 .card {
@@ -1653,15 +1759,27 @@ body {
 /* What to do next, under the last reply. Not a card: it belongs to the
    conversation the way a toolbar belongs to a document — present, and not
    asking to be looked at. */
+/* What can be done next, under the last thing said. Aligned with the turns
+   above it rather than with the window: a row of buttons that starts at a
+   different left edge than every paragraph above reads as belonging to the
+   application rather than to the conversation.
+
+   Separated by a rule rather than by a box. A card here would be a third kind
+   of container in a column that already has two, and what this is is the end
+   of the transcript, not another thing in it. */
 .actionbar {
   display: flex;
   gap: 10px;
   align-items: center;
-  margin: 4px 0 8px;
+  flex-wrap: wrap;
+  margin: 6px 0 4px 40px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
 }
 
 .actionbar__hint {
   flex: 1;
+  min-width: 12rem;
   font-size: 12.5px;
 }
 
@@ -1841,6 +1959,18 @@ body {
 /* A row is the entry plus the control that removes it — the control floating
    over it rather than beside it. Laid out as a sibling it took width from a
    240px column, which squeezed the title and pushed the row into scrolling. */
+/* Which stretch of days the rows under it belong to. Small and quiet: it is
+   a divider that happens to have a word on it, not a heading. */
+.sidebar__period {
+  padding: 14px 12px 4px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.sidebar__list > div:first-child .sidebar__period {
+  padding-top: 2px;
+}
+
 .sidebar__row {
   position: relative;
   border-radius: 8px;

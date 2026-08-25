@@ -2,8 +2,17 @@
 
 import { useEffect, useRef } from 'react'
 
+import { readableTitle } from '../naming'
+import { Attachment, DeckMark, FilmMark } from './Attachment'
 import { Thinking } from './Thinking'
 import type { Message } from './types'
+
+/** Seconds as a person would say them. */
+function _minutes(seconds: number): string {
+  const whole = Math.round(seconds)
+  if (whole < 60) return `${whole} 秒`
+  return `${Math.floor(whole / 60)} 分 ${whole % 60} 秒`
+}
 
 export function MessageList({
   messages,
@@ -48,6 +57,15 @@ export function MessageList({
             key={message.id}
             className={`turn turn--${message.role}`}
           >
+            {/* Which of the two is speaking, said once at the top of the turn
+                rather than left to the indentation. A transcript of bare
+                paragraphs is readable only while you remember whose they
+                are. */}
+            {message.role === 'assistant' && (
+              <div className="turn__who" aria-hidden="true">
+                <span className="turn__mark">D</span>
+              </div>
+            )}
             <div className="turn__body">
               {/* A turn that is still being worked on says so with the same
                   ring the progress card uses, so the wait never looks like a
@@ -72,17 +90,12 @@ export function MessageList({
                   half a screen up is a row of buttons about a conversation
                   that has moved on. */}
               {message.kind === 'deck' && (
-                <div className="deckgate">
-                  <button
-                    type="button"
-                    className="turn__artifact"
-                    onClick={() => onShow(message.projectId)}
-                  >
-                    {'文档 · '}
-                    {message.pages.length}
-                    {' 页'}
-                  </button>
-                </div>
+                <Attachment
+                  icon={<DeckMark />}
+                  title={readableTitle(message.file || '') || '这份文档'}
+                  meta={`${message.pages.length} 页 · 点开逐页看`}
+                  onOpen={() => onShow(message.projectId)}
+                />
               )}
               {/* What it is thinking, as it thinks it — the chain, not the
                   filing cabinet. The full account, with every page render and
@@ -103,15 +116,18 @@ export function MessageList({
                   the conversation pushed the reply a screen and a half away
                   and scrolled the video out of reach at the next message. */}
               {message.kind === 'video' && (
-                <button
-                  type="button"
-                  className="turn__artifact"
-                  onClick={() => onShow(message.projectId)}
-                >
-                  成片 · {message.scenes.length} 个场景 ·{' '}
-                  {Math.round(message.scenes.reduce((sum, s) => sum + s.duration, 0))} 秒
-                  {message.quality && ` · 质量分 ${message.quality.score}`}
-                </button>
+                <Attachment
+                  icon={<FilmMark />}
+                  title="成片"
+                  meta={[
+                    `${message.scenes.length} 个场景`,
+                    _minutes(message.scenes.reduce((sum, s) => sum + s.duration, 0)),
+                    message.quality ? `质量分 ${message.quality.score}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                  onOpen={() => onShow(message.projectId)}
+                />
               )}
             </div>
           </div>
