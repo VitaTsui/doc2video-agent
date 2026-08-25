@@ -365,11 +365,15 @@ def test_a_sentence_is_one_call_when_the_engine_can_hold_a_beat_itself(tmp_path,
     assert "先看基地" in spoken[0] and "它是唯一一个" in spoken[0]
 
 
-def test_an_engine_with_no_markup_still_speaks_clause_by_clause(tmp_path, monkeypatch):
-    """The old arrangement is not wrong, it is what an engine without markup needs.
+def test_an_engine_without_markup_also_speaks_a_sentence_at_a_time(tmp_path, monkeypatch):
+    """The markup was never what made this work.
 
-    There is nowhere to put 「hold here」, so the clause is the call and the
-    silence is written between the clips.
+    Sentence-per-call was done only for engines with pause markup of their own,
+    which meant only macOS `say`. The desktop app's default voice is Edge's, so
+    the app kept speaking a clause per call and still sounded like two people
+    finishing each other's sentences — the exact thing that had been reported
+    and thought fixed. An engine with no markup simply gets none; the beats are
+    cut to their designed lengths afterwards either way.
     """
     import struct
     import wave
@@ -394,7 +398,7 @@ def test_an_engine_with_no_markup_still_speaks_clause_by_clause(tmp_path, monkey
                 handle.setnchannels(1)
                 handle.setsampwidth(2)
                 handle.setframerate(22050)
-                handle.writeframes(struct.pack("<h", 0) * 22050)
+                handle.writeframes(struct.pack("<h", 1000) * 22050)
             return 1.0
 
     tool = TTSTool(Settings())
@@ -403,7 +407,8 @@ def test_an_engine_with_no_markup_still_speaks_clause_by_clause(tmp_path, monkey
     sentences = ["先看基地，它是唯一一个。", "再看方向，一共六个。"]
     tool.synthesize("".join(sentences), tmp_path / "out.wav", sentences=sentences)
 
-    assert len(spoken) > 2, f"没有标记的引擎仍然按小句合成，实际 {len(spoken)} 次"
+    assert len(spoken) == 2, f"没有标记的引擎也该一句一次，实际 {len(spoken)} 次"
+    assert "<" not in "".join(spoken), "没有标记就不该塞标记"
 
 
 def test_a_breath_stays_a_breath_rather_than_becoming_a_full_stop(tmp_path):
