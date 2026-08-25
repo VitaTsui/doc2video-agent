@@ -61,7 +61,10 @@ export function MessageList({
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`turn turn--${message.role}`}
+            // A turn that is only a folded chain is a row, not a paragraph:
+            // several of them stack, one per beat of a run, and they need to
+            // read as a list of what it did rather than as loose scraps.
+            className={`turn turn--${message.role}${message.kind === 'job' ? ' turn--job' : ''}`}
           >
             <div className="turn__body">
               {/* A turn that is still being worked on says so with the same

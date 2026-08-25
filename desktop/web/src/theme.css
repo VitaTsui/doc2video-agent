@@ -2233,6 +2233,19 @@ body {
   margin-top: 6px;
 }
 
+/* Folded, a chain is one quiet row, and there are usually several in a row —
+   one per beat of a run. Given a full turn's spacing and a paragraph's line
+   height they read as three loose scraps stacked down the page; tightened,
+   they read as a list of what it did. */
+.turn--job {
+  margin-bottom: 18px;
+  line-height: 1.5;
+}
+
+.turn--job + .turn--job {
+  margin-top: -12px;
+}
+
 /* The live line on the left, how far along and the way out on the right. One
    row, no frame: this replaced a bordered card with a progress bar in it,
    which is a control panel, and a conversation does not have one. */
@@ -2251,21 +2264,29 @@ body {
   flex-shrink: 0;
 }
 
+/* The row is a target, so it takes a target's shape under the pointer. The
+   negative margin pays for the padding: the chevron stays on the same left
+   edge as the words of a reply, which is what keeps a column of these looking
+   like one column. */
 .chain__head {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   border: none;
   background: none;
-  padding: 0;
+  margin-left: -8px;
+  padding: 4px 9px 4px 8px;
+  border-radius: 8px;
   font: inherit;
   font-size: 13.5px;
   color: var(--ink-soft);
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .chain__head:hover {
   color: var(--ink);
+  background: var(--user-bg);
 }
 
 /* Moving while it thinks. A still line of grey text and a finished one look
