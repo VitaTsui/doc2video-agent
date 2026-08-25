@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import re
 
+from . import polyphone
+
 # Initialisms that form pronounceable words and are therefore read as words.
 # Spelled with spaces, which is what makes a synthesiser name the letters.
 # Not here on purpose: LoRA and SaaS are said as words by people too, so the
@@ -40,15 +42,14 @@ SPELL_OUT = {
     "MAU": "M A U",
 }
 
-# Chinese characters with more than one reading, where the engine picks the
-# wrong one and the word is common enough in a deck to be worth naming. Written
-# as a homophone of the reading that is wanted, which is the only lever a
-# text-in/audio-out engine gives: 「日更」 is gēng (to renew), and every engine
-# tried reads it as gèng (more).
+# Words the general polyphone pass gets wrong, and so has to be told about.
+# `polyphone.for_reading` works the reading out from the sentence, which covers
+# the bulk of it — 「应用」, 「参与」, 「银行」 — but its phrase dictionary is a
+# dictionary, and 「日更」 is newer than it: every reading of it comes back gèng
+# where the word is gēng.
 #
-# Deliberately short. A general polyphone dictionary is a language project, and
-# a wrong entry here mispronounces a word that was previously correct — so a
-# term earns a line only after being heard getting it wrong.
+# So this stays, and stays short: it is for what the general pass misses, not
+# for polyphones in general.
 POLYPHONES = {
     "更新": "耕新",
     "更换": "耕换",
@@ -129,9 +130,20 @@ def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
         return token
 
     spoken = _TOKEN.sub(swap, text)
+    # What a person asked for, in the words they asked for. Recorded as it is
+    # substituted so the reading pass below leaves it alone: a deck that
+    # registers 「应用中试」 has said how it wants that read, and a general rule
+    # about 应 is not entitled to a second opinion.
+    asked_for: list[str] = []
     for term in other:
+        if term in spoken:
+            asked_for.append(table[term])
         spoken = spoken.replace(term, table[term])
     # A deck that registers both 「中试」 and 「应用中试」 has the shorter entry
     # fire again inside the longer one's replacement. Two boundaries in a row
     # are one boundary.
-    return re.sub(r"  +", " ", spoken)
+    spoken = re.sub(r"  +", " ", spoken)
+    # And last, the readings the sentence implies but the characters do not.
+    # After the dictionaries, so a term someone registered by hand is spoken
+    # the way they asked and is not second-guessed here.
+    return polyphone.for_reading(spoken, keep=asked_for)

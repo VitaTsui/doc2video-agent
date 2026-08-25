@@ -35,7 +35,7 @@ def test_a_short_run_of_capitals_is_read_as_letters():
     # Only the letters a Chinese voice mis-reads on their own are written as
     # syllables: 「A」 came back as 啊. 「C」 is better left as the letter — 「西」
     # is a Chinese word that merely sounds near it.
-    assert for_speech("AI 应用中试平台") == "诶爱 应用中试平台"
+    assert for_speech("AI 应用中试平台") == "诶爱 硬用中试平台"
     assert for_speech("浙江大学 CCAI 宁波中心") == "浙江大学 CC诶爱 宁波中心"
     # All consonants: nothing to rewrite, and nothing to separate either —
     # the engine reads MCP as its letters on its own.
@@ -90,3 +90,30 @@ def test_a_second_reading_is_named_only_where_the_engine_gets_it_wrong():
     # 更 as 「more」 is the reading the engine already gets right.
     said = "这个方案更好一些，更多细节见附录。"
     assert for_speech(said) == said
+
+
+def test_a_stand_in_whose_own_reading_moves_is_no_stand_in():
+    """「不」 is the commonest character reading bù, and the wrong one to use.
+
+    It was chosen for 部 in 「部分」, and 「不份」 is *bú*fèn — 不 drops to second
+    tone before a fourth-tone syllable. The rule that makes 一 and 不 unsafe to
+    replace makes them unsafe to replace *with*.
+    """
+    from doc2video.tools.tts.polyphone import for_reading
+
+    said = for_reading("供应链的部分需要调整")
+    assert "不" not in said, f"变调字不能当替身：{said}"
+    assert "布份" in said, f"部分应该写成 bù fèn 的同音字：{said}"
+
+
+def test_a_rule_the_engine_already_applies_is_left_to_it():
+    """Tone sandhi is not a polyphone.
+
+    「一」 is yī, yí or yì depending only on what follows, and every engine
+    applies that itself. Writing one instance of the rule into the text breaks
+    it everywhere else: 「它是唯一一个」 came back as 「它是唯一宜各」.
+    """
+    from doc2video.tools.tts.polyphone import for_reading
+
+    assert for_reading("它是唯一一个") == "它是唯一一个"
+    assert for_reading("不是一个方案") == "不是一个方案"
