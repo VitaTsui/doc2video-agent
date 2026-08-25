@@ -977,6 +977,7 @@ export function App() {
                     return asked?.text ? () => void acceptMessage(asked.text) : undefined
                   })()
             }
+            onSay={(text) => void acceptMessage(text)}
             onShow={(id) => {
               void loadArtifacts(id, true)
               setPanelOpen(true)

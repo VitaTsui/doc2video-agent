@@ -4,6 +4,8 @@ import { useEffect, useRef } from 'react'
 
 import { readableTitle } from '../naming'
 import { Attachment, DeckMark, FilmMark } from './Attachment'
+import { Prose } from './Prose'
+import { Suggestions } from './Suggestions'
 import { TurnActions } from './TurnActions'
 import { Thinking } from './Thinking'
 import type { Message } from './types'
@@ -19,6 +21,7 @@ export function MessageList({
   messages,
   onShow,
   onRetry,
+  onSay,
   deck,
 }: {
   messages: Message[]
@@ -26,6 +29,8 @@ export function MessageList({
   onShow: (projectId: string) => void
   /** Ask the same thing again. Absent while something is already running. */
   onRetry?: () => void
+  /** Say one of the suggested sentences. */
+  onSay?: (text: string) => void
   /** The gate: how much of the script is written, and how to start.
    *
    * Writing the script reports through the same card a render does, in a line
@@ -79,6 +84,8 @@ export function MessageList({
                   <span className="spinner" />
                   {message.text}
                 </span>
+              ) : message.role === 'assistant' ? (
+                <Prose text={message.text} />
               ) : (
                 message.text
               )}
@@ -182,6 +189,11 @@ export function MessageList({
               {deck.generated ? '重新生成' : '开始生成'}
             </button>
           </div>
+        )}
+
+        {/* Under the buttons: what you could say, as something to press. */}
+        {deck.projectId && deck.pages > 0 && !deck.busy && onSay && (
+          <Suggestions rendered={deck.generated} onSay={onSay} />
         )}
         <div ref={end} />
       </div>

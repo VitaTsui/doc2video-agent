@@ -152,9 +152,42 @@ body {
   max-width: 80%;
 }
 
-/* The assistant's turn is unadorned: no bubble, no border, just text. */
+/* The assistant's turn is unadorned: no bubble, no border, just text. The
+   newlines are kept — most replies are plain sentences, and a renderer that
+   reflowed them would be a downgrade. */
 .turn--assistant .turn__body {
   white-space: pre-wrap;
+}
+
+/* A paragraph inside a reply. The first has no space above it, so a one-
+   paragraph reply — which is most of them — sits exactly where it always did. */
+.prose__p {
+  margin: 0.85em 0 0;
+  white-space: pre-wrap;
+}
+
+.prose__p:first-child {
+  margin-top: 0;
+}
+
+.prose__list {
+  margin: 0.5em 0 0;
+  padding-left: 1.35em;
+  /* A list is a block; the surrounding pre-wrap would otherwise keep the
+     newlines that separated its items and double every gap. */
+  white-space: normal;
+}
+
+.prose__list li {
+  margin: 0.15em 0;
+}
+
+.turn__body code {
+  background: var(--user-bg);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
 }
 
 /* Successive assistant turns are one voice continuing, not two speakers. The
@@ -719,6 +752,32 @@ body {
   font-size: 26px;
   font-weight: 600;
   margin: 0 0 6px;
+}
+
+/* What you could say next. Quiet by design: these are an offer, not the
+   controls — the buttons above them are the controls. */
+.suggests {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 0 40px;
+}
+
+.suggests__chip {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.suggests__chip:hover {
+  color: var(--ink);
+  border-color: var(--ink-soft);
 }
 
 /* -- settings dialog ----------------------------------------------------- */
