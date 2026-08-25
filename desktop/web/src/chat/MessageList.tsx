@@ -1,12 +1,11 @@
 /** The transcript. Scrolls itself as it grows. */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { readableTitle } from '../naming'
 import { Attachment, DeckMark, FilmMark } from './Attachment'
 import { Prose } from './Prose'
 import { Suggestions } from './Suggestions'
-import { VoicePicker } from './VoicePicker'
 import { TurnActions } from './TurnActions'
 import { Thinking } from './Thinking'
 import type { Message } from './types'
@@ -54,7 +53,6 @@ export function MessageList({
     onRevoice: (voice: string) => void
   }
 }) {
-  const [pickingVoice, setPickingVoice] = useState(false)
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -182,12 +180,12 @@ export function MessageList({
                 making it again, and much the shorter one — the words and the
                 shots stay, only the sound is done over. Before there is a
                 film there is nothing to re-voice. */}
+            {/* Which voice it is spoken in is a setting, and lives in
+                Settings — one place to choose it rather than a second picker
+                that would have to agree with the first. This just says it
+                again, in whatever voice is chosen there. */}
             {deck.generated && (
-              <button
-                type="button"
-                className="deckgate__draft"
-                onClick={() => setPickingVoice((open) => !open)}
-              >
+              <button type="button" className="deckgate__draft" onClick={() => deck.onRevoice('')}>
                 重新配音
               </button>
             )}
@@ -195,18 +193,6 @@ export function MessageList({
               {deck.generated ? '重新生成' : '开始生成'}
             </button>
           </div>
-        )}
-
-        {/* Which voice to say it again in — the thing people actually ask
-            for, and the thing 「重新配音」 could not be told. */}
-        {pickingVoice && (
-          <VoicePicker
-            onClose={() => setPickingVoice(false)}
-            onPick={(voice) => {
-              setPickingVoice(false)
-              deck.onRevoice(voice)
-            }}
-          />
         )}
 
         {/* Under the buttons: what you could say, as something to press. */}

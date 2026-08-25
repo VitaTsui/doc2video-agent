@@ -158,15 +158,20 @@ export function Artifacts({
                     to the film and then thrown away as a detail of muxing, so
                     anyone who wanted the narration without the pictures had
                     nowhere to get it. */}
-                {set.audio && (
-                  <a
-                    className="panel__download"
-                    href={api.assetUrl(set.projectId, set.audio)}
-                    download
-                  >
-                    下载配音
+                <span className="panel__downloads">
+                  <a className="panel__download" href={api.videoUrl(set.projectId)} download>
+                    下载成片
                   </a>
-                )}
+                  {set.audio && (
+                    <a
+                      className="panel__download"
+                      href={api.assetUrl(set.projectId, set.audio)}
+                      download
+                    >
+                      只要配音
+                    </a>
+                  )}
+                </span>
               </div>
               {set.quality?.dimensions.map((dimension) => (
                 <div key={dimension.name} className="panel__dim">
