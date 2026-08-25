@@ -38,6 +38,11 @@ log = get_logger(__name__)
 # through the minutes that rendering takes.
 ProgressFn = Callable[[str, str, int, int], None]
 
+# Past this share of pages with nothing on them, a deck is not sparsely worded
+# — it is one the parser could not read. A ratio rather than a count so a
+# three-page cover deck and a sixty-page scan are judged the same way.
+UNREADABLE_PAGE_RATIO = 0.9
+
 
 @contextmanager
 def _timed(stage: str):
@@ -369,6 +374,54 @@ class Executor:
         document.title = document.title or self.project.source.file
         self.project.document = document
         self.project.source.page_count = len(document.pages)
+        self._check_the_deck_was_read()
+
+    def _check_the_deck_was_read(self) -> None:
+        """Stop a deck nobody can read before it becomes a video about nothing.
+
+        A PDF whose pages are each one flat image — a phone scan, or slides
+        exported to pictures and stapled back into a PDF — parses perfectly and
+        yields no text whatsoever. Every stage after this one then succeeds on
+        empty input: the understanding step has nothing to read, the script
+        says 「这一页的内容请看屏幕上的呈现」 once per page, and the review
+        scores it 95 because not one of its checks has anything to compare
+        against. Measured on a nine-page scan: 95.5, completeness 100,
+        grounding 100, and a finished video with no content in it.
+
+        None of those stages can catch this, because the failure happened
+        before all of them. So it is caught here, where it is still one clear
+        sentence rather than a minute of speech synthesis and a render.
+
+        The page renders are the way out: a model that can see them reads the
+        deck the way a person does. Fatal only when nothing can look at them.
+        """
+        pages = self.project.document.pages
+        if not pages:
+            return
+        blank = [page.index for page in pages if not page.raw_text().strip()]
+        if len(blank) < len(pages) * UNREADABLE_PAGE_RATIO:
+            return
+
+        nothing_at_all = len(blank) == len(pages)
+        if nothing_at_all and not self.ctx.llm.supports_images():
+            raise SkillFailed(
+                f"这份文档 {len(pages)} 页，一个字都没解析出来——每页都是一整张图片"
+                "（扫描件，或是把幻灯片导成图片再拼成的 PDF）。"
+                "当前的模型又看不了图，再往下走只会产出一份没有内容的讲稿。"
+                "换一个能看图的模型（anthropic / openai / gemini，"
+                "或升级到能传图的 CLI 运行时），或者换带文字层的原文件。",
+                detail={"pages": len(pages), "model": self.ctx.llm.source},
+            )
+
+        # It can be read, just not from the text layer. Recorded rather than
+        # raised: the run is about to lean entirely on the page renders, and
+        # that is worth knowing when someone asks why a page was read the way
+        # it was.
+        where = "整份文档" if nothing_at_all else f"{len(blank)}/{len(pages)} 页"
+        reason = f"{where}没有可提取的文字，只能靠页面图理解"
+        log.warning("%s，本次理解全靠看图", reason)
+        telemetry.record_degradation("解析文档", reason)
+        ledger.degradation("解析只拿到图", reason)
 
     def _stage_understand(self, plan: ExecutionPlan) -> None:  # noqa: ARG002
         DocumentSkill(self.ctx).run()
