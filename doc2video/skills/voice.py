@@ -31,18 +31,21 @@ WRONG_LENGTH_HIGH = 1.9
 MAX_REDO = 5
 
 
-def speaking_workers(count: int, configured: int) -> int:
-    """How many pages to speak at once: what was asked for, bounded by the machine.
+#: Past this, speaking more pages at once buys nothing. Measured on a 30-page
+#: deck: 1052s one at a time, 631s at four, 564s at eight, 560s at fourteen —
+#: the engine is a system service that queues behind itself, so the machine's
+#: core count is not the limit and using it only takes the machine away from
+#: whoever is waiting for the film.
+MAX_SPEAKERS = 8
 
-    Speaking is mostly waiting on another process, so a worker per core is
-    reasonable — but each one holds a synthesiser with a voice loaded, so this
-    does not go unbounded.
-    """
+
+def speaking_workers(count: int, configured: int) -> int:
+    """How many pages to speak at once: what was asked for, bounded by measurement."""
     if count <= 1:
         return 1
     if configured > 0:
         return max(1, min(configured, count))
-    return max(1, min(count, os.cpu_count() or 4))
+    return max(1, min(count, MAX_SPEAKERS, os.cpu_count() or 4))
 
 
 class VoiceSkill(Skill):

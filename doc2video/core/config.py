@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     # means as many as this machine can take.
     voice_workers: int = 0
     render_workers: int = 0
+    narrate_workers: int = 0
     # Silence around each page's narration, so pages do not cut into one
     # another and nobody speaks over a slide that is still fading in. Part of
     # the scene's own clip, so subtitles stay inside the speech.

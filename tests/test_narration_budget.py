@@ -71,6 +71,10 @@ def test_each_batch_is_saved_as_it_is_written(settings: Settings, store: Project
     every page back until the last one returns means a window that shows
     nothing for minutes and then everything — and there is no reason for it,
     since a finished batch is finished.
+
+    Counted at each save rather than at each call: batches are written several
+    at a time now, so what the *next* call sees on disk says nothing — they all
+    start together. What matters is that the file grew as the batches landed.
     """
     skill = _skill(settings, store, pages=9, duration=120.0)
     store.save(skill.project)
@@ -88,9 +92,6 @@ def test_each_batch_is_saved_as_it_is_written(settings: Settings, store: Project
             self.calls = 0
 
         def complete_json(self, prompt: str, **kwargs):  # noqa: ARG002
-            # What the previous batches left behind, read the way a client
-            # polling the API would read it.
-            seen.append(len(store.load(skill.project.project_id).scenes))
             first = self.calls * 4 + 1
             self.calls += 1
             return {
@@ -107,12 +108,27 @@ def test_each_batch_is_saved_as_it_is_written(settings: Settings, store: Project
             return False
 
     skill.ctx.llm = _Batched()
-    skill.run()
 
-    # Three batches over nine pages, and each one started with the pages the
-    # ones before it had already written.
-    assert seen == [0, 4, 8]
+    # How much was on disk each time it was written.
+    saved = store.save
+
+    def watch(project):
+        result = saved(project)
+        seen.append(len(project.scenes))
+        return result
+
+    store.save = watch  # type: ignore[method-assign]
+    try:
+        skill.run()
+    finally:
+        store.save = saved  # type: ignore[method-assign]
+
     assert len(store.load(skill.project.project_id).scenes) == 9
+    # It grew: the pages arrived in instalments rather than in one lump at the
+    # end. The exact instalments depend on which batch finishes first.
+    grew = [count for count in seen if count]
+    assert len(set(grew)) > 1, f"页面应该是边写边出现的，实际每次都是 {seen}"
+    assert max(seen) == 9
 
 
 def test_a_script_that_overran_is_cut_back_to_the_length_asked_for(settings, store):

@@ -295,3 +295,33 @@ def test_a_worker_still_writes_to_the_account():
     for module in (voice, executor):
         source = inspect.getsource(module)
         assert "copy_context()" in source, f"{module.__name__} 没有把账本上下文带进线程"
+
+
+def test_batches_are_written_a_few_at_a_time():
+    """Batches do not see each other, so writing them in turn bought nothing.
+
+    Each is given its own pages and the ones a person already wrote; nothing a
+    batch produces reaches the next one. Waiting for one before starting the
+    next spent fifteen minutes of a forty-minute film on nothing.
+    """
+    from doc2video.skills.narration import MAX_WRITERS, writing_workers
+
+    assert writing_workers(8, 0) > 1, "默认就该并行"
+    assert writing_workers(8, 0) <= MAX_WRITERS, "上限不是机器，是模型后面那道闸"
+    assert writing_workers(8, 2) == 2, "配置了就听配置的"
+    assert writing_workers(1, 8) == 1
+
+
+def test_writing_a_batch_touches_nothing_shared():
+    """Two batches saving the project at the same moment is a corrupted file.
+
+    The call and its validation happen on the worker; the drafts, the scenes
+    and the save stay on the thread that collects the results.
+    """
+    import inspect
+
+    from doc2video.skills.narration import NarrationSkill
+
+    source = inspect.getsource(NarrationSkill._write_batch)
+    for forbidden in ("self.ctx.store.save", "drafts[", "_build_scenes"):
+        assert forbidden not in source, f"_write_batch 不该碰 {forbidden}"
