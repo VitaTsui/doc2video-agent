@@ -36,6 +36,10 @@ export type Message = {
        *  better. */
       steps?: LedgerEntry[]
       projectId?: string
+      /** This half is over, whatever the job is still doing. A run is split
+       *  into 配音 and 渲染, and the first must stop claiming to be in flight
+       *  the moment the second starts. */
+      settled?: boolean
     }
   | {
       kind: 'video'

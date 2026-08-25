@@ -40,6 +40,25 @@ SPELL_OUT = {
     "MAU": "M A U",
 }
 
+# Chinese characters with more than one reading, where the engine picks the
+# wrong one and the word is common enough in a deck to be worth naming. Written
+# as a homophone of the reading that is wanted, which is the only lever a
+# text-in/audio-out engine gives: 「日更」 is gēng (to renew), and every engine
+# tried reads it as gèng (more).
+#
+# Deliberately short. A general polyphone dictionary is a language project, and
+# a wrong entry here mispronounces a word that was previously correct — so a
+# term earns a line only after being heard getting it wrong.
+POLYPHONES = {
+    "更新": "耕新",
+    "更换": "耕换",
+    "更迭": "耕迭",
+    "日更": "日耕",
+    "周更": "周耕",
+    "月更": "月耕",
+    "小时更": "小时耕",
+}
+
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+]*")
 
 # An all-caps run this long or shorter is an initialism, and its letters are
@@ -85,7 +104,7 @@ def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
     `extra` is the project's own dictionary, which wins over this one: a deck
     about a company called RAG is talking about the company.
     """
-    table = {**SPELL_OUT, **(extra or {})}
+    table = {**SPELL_OUT, **POLYPHONES, **(extra or {})}
 
     # Latin terms are matched as whole tokens — 「AI」 must not fire inside
     # 「MAIL」. Anything else has no token boundaries to speak of, so it is a

@@ -136,6 +136,10 @@ class ActionChoice(BaseModel):
     #: For a merged run, the moment the narration leaves this block. The box
     #: holds until then instead of expiring on a timer.
     holds_until: float = 0.0
+    #: How well the clause that chose this actually matches it. Kept so that a
+    #: block mentioned twice can be framed at the point it is *described*
+    #: rather than at the point it is first brushed past.
+    match: float = 0.0
 
 
 class SceneDirection(BaseModel):
@@ -237,6 +241,7 @@ class DirectorSkill(Skill):
                         type=action_type,
                         target=target_id,
                         at_fraction=fraction,
+                        match=_match(element.text, segment.text),
                     ),
                 ))
 
@@ -374,7 +379,9 @@ class DirectorSkill(Skill):
             # it, and the box framed the label while the narrator read the
             # text. The paragraph shares a smaller share of itself and far more
             # of the sentence, which is the thing being said.
-            score = hit + element.importance
+            # Both directions, so length stops deciding it; importance only
+            # breaks a tie between two elements the sentence fits equally well.
+            score = _match(element.text, segment.text) + element.importance * 0.1
             if best is None or score > best[0]:
                 best = (score, element.id)
         return best[1] if best else None
@@ -631,7 +638,18 @@ def _is_label(element, page: DocumentPage) -> bool:
 
 
 def _merge_runs(choices: list[ActionChoice], segments: dict) -> list[ActionChoice]:
-    """Collapse consecutive looks at the same thing into one that holds."""
+    """One look per thing: consecutive ones become a hold, later ones are dropped.
+
+    Two rules, and they are the same rule — 「要么就一直框着，要么就框一开始一
+    下，不要讲一会框一下」.
+
+    Consecutive looks at the same element are one box that stays up. Looks that
+    come back to it later are not: on one slide the same block was framed at
+    15s, again at 43s and again at 62s, which reads as the camera losing its
+    place and going back. The first time it was framed is when it was
+    introduced; after that the page has moved on, and drawing nothing is the
+    honest answer.
+    """
     merged: list[ActionChoice] = []
     for choice in choices:
         segment = segments.get(choice.segment_id)
@@ -643,7 +661,24 @@ def _merge_runs(choices: list[ActionChoice], segments: dict) -> list[ActionChoic
             merged[-1] = merged[-1].model_copy(update={"holds_until": end})
             continue
         merged.append(choice.model_copy(update={"holds_until": end}))
-    return merged
+
+    # Now the repeats. Which one to keep is not 「the first」: a page whose
+    # opening sentence says 「用进出口数据找海外机会」 brushes past the card headed
+    # 「海外机会清单」 nine seconds before the script actually describes it, and
+    # keeping the first framed the right card at the wrong moment. The one that
+    # matches best is the one the narration is about.
+    best: dict[str, int] = {}
+    for index, choice in enumerate(merged):
+        if not choice.target:
+            continue
+        keep = best.get(choice.target)
+        if keep is None or choice.match > merged[keep].match:
+            best[choice.target] = index
+    return [
+        choice
+        for index, choice in enumerate(merged)
+        if not choice.target or best.get(choice.target) == index
+    ]
 
 
 def _worth_looking_at(page: DocumentPage) -> bool:
@@ -660,6 +695,28 @@ def _shared_grams(element_text: str, sentence: str) -> tuple[int, float]:
     said = {sentence[i : i + 2] for i in range(len(sentence) - 1)}
     hit = len(grams & said)
     return (hit, hit / len(grams))
+
+
+def _match(element_text: str, sentence: str) -> float:
+    """How well these two are about the same thing, in both directions.
+
+    Counting shared pairs alone hands the page to whichever element has the
+    most text in it. Measured on one slide: a block reading 「构建覆盖石化行业
+    创新链、产业链、人才链、资金链……」 was framed three separate times on the
+    same page, because every sentence that said 创新链 or 产业链 shared enough
+    pairs with it to beat the card actually being described.
+
+    So the two are compared symmetrically — shared pairs against the size of
+    both — which is high only when the element and the sentence are close to
+    the same thing, and falls off whether the element is far longer than the
+    sentence or far shorter.
+    """
+    element_text, sentence = element_text.strip(), sentence.strip()
+    if len(element_text) < 3 or len(sentence) < 3:
+        return 0.0
+    grams = {element_text[i : i + 2] for i in range(len(element_text) - 1)}
+    said = {sentence[i : i + 2] for i in range(len(sentence) - 1)}
+    return 2 * len(grams & said) / (len(grams) + len(said))
 
 
 def _mentioned(element_text: str, sentence: str) -> float:

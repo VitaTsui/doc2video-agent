@@ -72,3 +72,21 @@ def test_the_caption_keeps_the_written_form(settings, tmp_path):
         "", tmp_path / "out.wav", sentences=[written, "它把检索和生成接在一起。"]
     )
     assert result.segments[0].text == written
+
+
+def test_a_second_reading_is_named_only_where_the_engine_gets_it_wrong():
+    """「日更」 is gēng, and every engine tried reads it as gèng.
+
+    A text-in/audio-out engine gives one lever — write a homophone of the
+    reading that is wanted — so the word is spelled with 耕. The list stays
+    short on purpose: a wrong entry mispronounces a word that was previously
+    right, so a term earns a line only after being heard getting it wrong.
+    """
+    from doc2video.tools.tts.pronounce import for_speech
+
+    assert for_speech("更新按需，小时更、日更、月更。") == "耕新按需，小时耕、日耕、月耕。"
+    assert for_speech("数据每天更新一次。") == "数据每天耕新一次。"
+
+    # 更 as 「more」 is the reading the engine already gets right.
+    said = "这个方案更好一些，更多细节见附录。"
+    assert for_speech(said) == said

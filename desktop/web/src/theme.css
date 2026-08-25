@@ -1927,39 +1927,6 @@ body {
   color: var(--accent);
 }
 
-/* Minutes of work, as a hairline under the line that says what is happening.
-   Two pixels, no container: something to glance at rather than watch. */
-.chain__track {
-  height: 2px;
-  border-radius: 2px;
-  background: var(--line);
-  margin: 6px 0 4px;
-  overflow: hidden;
-}
-
-.chain__fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 2px;
-  transition: width 0.4s ease;
-}
-
-/* No denominator to fill against — the stages that do not loop over scenes.
-   It sweeps rather than sits at zero. */
-.chain__fill--pulse {
-  width: 30%;
-  animation: chain-sweep 1.6s ease-in-out infinite;
-}
-
-@keyframes chain-sweep {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(340%);
-  }
-}
-
 .chain__head {
   display: inline-flex;
   align-items: center;
