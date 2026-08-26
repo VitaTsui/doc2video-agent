@@ -1086,6 +1086,13 @@ export function App() {
         onClose={() => setSettingsOpen(false)}
         onReconnected={async (next) => {
           setConnection(next)
+          // The list the picker draws lives up here, and settings keeps its
+          // own copy — so adding a provider down there wrote the file, restarted
+          // the backend, and left the picker showing the list this window read
+          // at startup. Adding a model and not finding it in the picker is what
+          // that looks like from the outside; it came back after a restart,
+          // which is the tell. Re-read it from the file settings just wrote.
+          await loadModels()
           const caps = await api.capabilities().catch(() => null)
           setHasModel(Boolean(caps?.llm.available))
           say({
