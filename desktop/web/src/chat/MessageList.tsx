@@ -152,6 +152,11 @@ export function MessageList({
                     ? `你写了 ${deck.written} / ${deck.pages} 页`
                     : '讲稿在右侧，改完就能出片'}
             </span>
+            {/* The three of them are one group, so they wrap as one. Left to
+                wrap individually, 「重新生成」 — the one you actually press —
+                dropped to a line of its own under the hint while the other two
+                stayed up on the right. */}
+            <span className="actionbar__acts">
             {deck.hasModel && (
               <button type="button" className="deckgate__draft" onClick={deck.onDraft}>
                 {deck.written === 0
@@ -177,6 +182,7 @@ export function MessageList({
             <button type="button" className="deckgate__go" onClick={deck.onRender}>
               {deck.generated ? '重新生成' : '开始生成'}
             </button>
+            </span>
           </div>
         )}
 

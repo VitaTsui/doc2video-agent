@@ -35,7 +35,7 @@ def test_a_short_run_of_capitals_is_read_as_letters():
     # Only the letters a Chinese voice mis-reads on their own are written as
     # syllables: 「A」 came back as 啊. 「C」 is better left as the letter — 「西」
     # is a Chinese word that merely sounds near it.
-    assert for_speech("AI 应用中试平台") == "诶爱 硬用中试平台"
+    assert for_speech("AI 应用中试平台") == "诶爱 应用中试平台"
     assert for_speech("浙江大学 CCAI 宁波中心") == "浙江大学 CC诶爱 宁波中心"
     # All consonants: nothing to rewrite, and nothing to separate either —
     # the engine reads MCP as its letters on its own.
@@ -117,3 +117,37 @@ def test_a_rule_the_engine_already_applies_is_left_to_it():
 
     assert for_reading("它是唯一一个") == "它是唯一一个"
     assert for_reading("不是一个方案") == "不是一个方案"
+
+
+def test_only_the_engine_that_needs_the_rewriting_gets_it():
+    """写成同音字，是给读不准多音字的引擎用的补丁，不是给所有引擎的。
+
+    `say` reads 「银行行长」 with two identical 行, so the words are rewritten
+    into characters that can only be read one way before they are sent — 「行业」
+    as 「杭业」 — which sounds right and looks like nonsense, and that is fine
+    because nobody reads it.
+
+    A neural voice works the reading out from the sentence, and there the
+    rewriting is all cost. Measured across one 30-page film: 84 substitutions,
+    of which the useful ones fixed nothing the engine was getting wrong, and
+    three were errors of their own — 「与」 as 「欲」 and 「结构」 as 「接构」 are
+    both a tone out, and 「目的地」 came back as 「目地第」.
+
+    What survives for every engine is the hand-written list and the letters:
+    those were added because a voice was heard getting them wrong.
+    """
+    from doc2video.tools.tts.base import TTSProvider
+    from doc2video.tools.tts.pronounce import for_speech
+    from doc2video.tools.tts.providers import MacOSSayProvider
+
+    assert TTSProvider.reads_polyphones is True, "默认假定引擎自己读得准"
+    assert MacOSSayProvider.reads_polyphones is False, "say 读不准，要替它改写"
+
+    said = "政策与赛道风险，产业链结构和目的地变化。"
+    assert for_speech(said, reading=False) == said, "神经引擎不该被改写"
+
+    rewritten = for_speech(said, reading=True)
+    assert rewritten != said, "say 仍然要改写"
+
+    # The two that stay, whichever engine is speaking.
+    assert for_speech("AI 日更一次", reading=False) == "诶爱 日耕一次"

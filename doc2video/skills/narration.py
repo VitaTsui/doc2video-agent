@@ -1181,6 +1181,19 @@ class NarrationSkill(Skill):
             if text := kept.get(page.index):
                 lines.append(f"已写好的讲稿：{text}")
                 continue
+            if axes := _matrix_of(page):
+                across, down = axes
+                lines.append(
+                    "这一页是一张表：横着分 "
+                    + "、".join(across)
+                    + "；竖着分 "
+                    + "、".join(down)
+                    + "。"
+                    "先把这两条分法各自说清楚——横的是按什么分的，竖的是按什么分的——"
+                    "再举例子。举例子时要让人听得出这一项落在哪一格：说「创新链上的核心专利」"
+                    "而不是只说「核心专利」。"
+                    "最忌讳的是把不同格子里的条目并成一串念，那样两条分法就都没了。"
+                )
             if flow := _flow_of(page):
                 # The order the arrows go, which is the order the page has to
                 # be explained in. Given to the writer rather than used to
@@ -1441,6 +1454,98 @@ def _flow_of(page: DocumentPage) -> str:
     labels = {e.id: (e.text or e.label or e.id).strip() for e in page.elements}
     walked = [labels.get(node, node) for node in page.diagram.order()]
     return " → ".join(name for name in walked if name)
+
+
+#: How many headings a row or a column has to have before it is an axis.
+AXIS_HEADINGS = 3
+
+#: How much of the page an axis has to span, as a share of its length. A row of
+#: three headings crowded into one corner is a list, not the top of a table.
+AXIS_SPAN = 0.4
+
+#: A heading is short. Past this it is the content itself.
+AXIS_LABEL_CHARS = 20
+
+
+def _matrix_of(page: DocumentPage) -> tuple[list[str], list[str]] | None:
+    """A page's two axes, when it is laid out as a table.
+
+    Some pages are a grid: 「(一)高质量数据集」 is four chains across the top and
+    four kinds of dataset down the side, with sixteen cells of bullets between
+    them. The writer is handed the page as a flat list in reading order and
+    cannot see that, so it wrote the cells out one after another — 「预训练数据集，
+    比如核心专利与科研成果、招投标商机…」 — which takes two items from one column
+    and two from another and reads as one list. The page's second axis is gone,
+    and with it what any of those items belongs to. 「表述不太准确。」
+
+    Found geometrically, because that is where it is: a row of short headings
+    spread across the page, a column of short headings down its side, and
+    content between them.
+    """
+    if not page.width or not page.height:
+        return None
+    short = [
+        element
+        for element in page.elements
+        if element.bbox is not None
+        and 0 < len((element.text or "").strip()) <= AXIS_LABEL_CHARS
+    ]
+    if len(short) < AXIS_HEADINGS * 2:
+        return None
+
+    def clustered(items, key, tolerance: float) -> list[list]:
+        groups: list[list] = []
+        for item in sorted(items, key=key):
+            if groups and abs(key(item) - key(groups[-1][-1])) <= tolerance:
+                groups[-1].append(item)
+            else:
+                groups.append([item])
+        return groups
+
+    # Across the top: one line, several headings, spread wide.
+    rows = clustered(short, lambda e: e.bbox.y, page.height * 0.02)
+    across = max(
+        (
+            group
+            for group in rows
+            if len(group) >= AXIS_HEADINGS
+            and (max(e.bbox.x + e.bbox.w for e in group) - min(e.bbox.x for e in group))
+            >= page.width * AXIS_SPAN
+        ),
+        key=len,
+        default=None,
+    )
+    # Down the side: one left edge, several headings, spread tall.
+    columns = clustered(short, lambda e: e.bbox.x, page.width * 0.02)
+    down = max(
+        (
+            group
+            for group in columns
+            if len(group) >= AXIS_HEADINGS
+            and (max(e.bbox.y + e.bbox.h for e in group) - min(e.bbox.y for e in group))
+            >= page.height * AXIS_SPAN
+        ),
+        key=len,
+        default=None,
+    )
+    if across is None or down is None or {e.id for e in across} & {e.id for e in down}:
+        return None
+
+    # And something in the cells. A bare pair of axes with nothing between them
+    # is two lists that happen to be perpendicular.
+    named = {e.id for e in across} | {e.id for e in down}
+    cells = sum(
+        1
+        for element in page.elements
+        if element.id not in named and (element.text or "").strip()
+    )
+    if cells < len(across):
+        return None
+
+    return (
+        [(e.text or "").strip() for e in sorted(across, key=lambda e: e.bbox.x)],
+        [(e.text or "").strip() for e in sorted(down, key=lambda e: e.bbox.y)],
+    )
 
 
 def _trim_to(text: str, limit: int) -> str:

@@ -76,6 +76,21 @@ class TTSProvider:
     # synthesising something to find out.
     default_voice = ""
 
+    # Whether this engine works out a polyphone's reading from its sentence.
+    #
+    # A neural voice does; the system's `say` does not, and reads 「银行行长」
+    # with two identical 行. Where it does not, the words are rewritten into
+    # characters that can only be read one way before they are sent — 「行业」
+    # as 「杭业」 — which sounds right and looks like nonsense, and that is fine
+    # because nobody reads it.
+    #
+    # Where it does, the rewriting is all cost. Measured on one 30-page film:
+    # 84 substitutions, of which the useful ones fixed nothing the engine was
+    # getting wrong, and three were errors of their own — 「与」 as 「欲」 and
+    # 「结构」 as 「接构」 are both a tone out, and 「目的地」 came back as
+    # 「目地第」.
+    reads_polyphones = True
+
     def available(self) -> bool:
         return False
 
