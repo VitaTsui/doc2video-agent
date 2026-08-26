@@ -726,7 +726,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 14px 0 0 40px;
+  margin: 14px 0 0;
 }
 
 .suggests__chip {
@@ -1925,12 +1925,17 @@ body {
    Separated by a rule rather than by a box. A card here would be a third kind
    of container in a column that already has two, and what this is is the end
    of the transcript, not another thing in it. */
+/* Flush with the replies. It used to be inset by 40px, which was the width of
+   the assistant's mark plus its gap — the column the words sat in. The mark is
+   gone and the words moved to the edge; this stayed where it was, so the one
+   block with buttons in it was the only thing on the page that did not line up
+   with anything. */
 .actionbar {
   display: flex;
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
-  margin: 6px 0 4px 40px;
+  margin: 6px 0 4px;
   padding-top: 16px;
   border-top: 1px solid var(--line);
 }

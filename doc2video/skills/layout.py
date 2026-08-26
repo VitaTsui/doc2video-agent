@@ -11,7 +11,7 @@ import re
 from math import ceil
 from pathlib import Path
 
-from ..schemas import BBox, DocumentPage, PageType, Scene, SubtitleCue
+from ..schemas import BBox, DocumentPage, Scene, SubtitleCue
 
 # One comfortable line of CJK subtitle at 1080p. Measured against a
 # hand-written subtitle track for a deck of this kind: 78 captions, median 21
@@ -34,16 +34,7 @@ CLAUSE_SPLIT = re.compile(r"(?<=[，,。！？!?；;…])")
 PUNCTUATION = "，,。！？!?；;、：:…—－·「」『』（）()《》〈〉【】\"'“”‘’ "
 
 
-#: Pages a caption has nothing to add to. A cover is four lines set large,
-#: and the narration is those four lines read aloud; a caption under them is
-#: the same words a second time, in a grey box, over the one part of the deck
-#: that is composed rather than filled in. 「封面页这种，就不要压字了。」
-NO_SUBTITLES = (PageType.COVER,)
-
-
-def build_subtitles(
-    scene: Scene, audio: Path | None = None, *, page_type: PageType | None = None
-) -> list[SubtitleCue]:
+def build_subtitles(scene: Scene, audio: Path | None = None) -> list[SubtitleCue]:
     """Split each narration segment into readable cues within its own window.
 
     `audio` is the scene's own clip, when there is one. Clauses are joined up
@@ -54,8 +45,6 @@ def build_subtitles(
     reads as one continuous sentence while the narrator audibly stops in the
     middle of it.
     """
-    if page_type in NO_SUBTITLES:
-        return []
     pauses = _pauses_in(audio)
     cues: list[SubtitleCue] = []
     for segment in scene.segments:
