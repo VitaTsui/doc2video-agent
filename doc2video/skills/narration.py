@@ -1026,14 +1026,24 @@ class NarrationSkill(Skill):
                 self.llm.source,
                 f"第 {batch[0].index}-{batch[-1].index} 页",
                 covers=[ledger.page_key(page.index) for page in batch if page.index not in kept],
-            ):
+            ) as made:
                 result = self.llm.complete_json(
                     self._prompt(batch, budgets, position=start, kept=kept, pages=pages),
                     schema=model_schema(NarrationResult),
                     system=load_prompt("narration"),
                     max_tokens=self.ctx.settings.llm_max_tokens,
                 )
-            for page in NarrationResult.model_validate(result).pages:
+                answered = list(NarrationResult.model_validate(result).pages)
+                by_index = {p.index: p for p in answered}
+                if note := _binding_note(batch, by_index):
+                    made.append(ledger.text_artifact("说了讲的是哪一处", note))
+                blind = [p.index for p in batch if _binds_nothing(by_index.get(p.index))]
+                if blind:
+                    ledger.degradation(
+                        "讲稿没绑元素",
+                        f"第 {'、'.join(str(i) for i in blind)} 页｜镜头只能靠字面猜",
+                    )
+            for page in answered:
                 # A model that rewrites a page it was told to leave alone gets
                 # ignored rather than obeyed.
                 if page.narration.strip() and page.index not in kept:
@@ -1116,14 +1126,24 @@ class NarrationSkill(Skill):
             self.llm.source,
             f"第 {batch[0].index}-{batch[-1].index} 页",
             covers=[ledger.page_key(page.index) for page in batch if page.index not in kept],
-        ):
+        ) as made:
             result = self.llm.complete_json(
                 self._prompt(batch, budgets, position=start, kept=kept, pages=pages),
                 schema=model_schema(NarrationResult),
                 system=load_prompt("narration"),
                 max_tokens=self.ctx.settings.llm_max_tokens,
             )
-        return list(NarrationResult.model_validate(result).pages)
+            written = list(NarrationResult.model_validate(result).pages)
+            by_index = {p.index: p for p in written}
+            if note := _binding_note(batch, by_index):
+                made.append(ledger.text_artifact("说了讲的是哪一处", note))
+            blind = [p.index for p in batch if _binds_nothing(by_index.get(p.index))]
+            if blind:
+                ledger.degradation(
+                    "讲稿没绑元素",
+                    f"第 {'、'.join(str(i) for i in blind)} 页｜镜头只能靠字面猜",
+                )
+        return written
 
     def _filled_in(
         self,
@@ -1373,14 +1393,6 @@ class NarrationSkill(Skill):
             if draft is None:
                 continue
             valid_ids = {e.id for e in page.elements}
-            # Counted, because this failed silently for a long time. The writer
-            # is asked which element each sentence is about and the camera reads
-            # the answer before it tries to guess — but on a real 30-page film
-            # every one of 155 sentences came back with an empty list, and
-            # nothing said so. A page that binds nothing, or that names ids the
-            # page does not have, is now on the record.
-            asked = len(draft.segments)
-            bound = invented = 0
             segments: list[NarrationSegment] = []
             for seq, seg in enumerate(draft.segments, start=1):
                 text = seg.text.strip()
@@ -1389,8 +1401,6 @@ class NarrationSkill(Skill):
                 # Drop refs the model invented; a wrong id would aim the camera
                 # at nothing.
                 refs = [ref for ref in seg.element_refs if ref in valid_ids]
-                invented += len(seg.element_refs) - len(refs)
-                bound += 1 if refs else 0
                 segments.append(
                     NarrationSegment(
                         id=f"{scene_id(order)}_s{seq:02d}",
@@ -1399,14 +1409,6 @@ class NarrationSkill(Skill):
                         emphasis=seg.emphasis,
                     )
                 )
-            if asked:
-                said = f"第 {page.index} 页｜{bound}/{asked} 句说了讲的是哪一处"
-                if invented:
-                    said += f"｜{invented} 个 id 页面上没有，丢了"
-                if bound == 0:
-                    ledger.degradation("讲稿没绑元素", said + "，镜头只能靠字面猜")
-                elif invented:
-                    ledger.note("绑定", said)
             if not segments:
                 segments = self._split_into_segments(draft.narration, scene_id(order))
 
@@ -1474,6 +1476,46 @@ AXIS_SPAN = 0.4
 #: A heading is short. Past this it is the content itself.
 AXIS_LABEL_CHARS = 20
 
+
+
+
+
+def _binds_nothing(draft) -> bool:
+    """Whether a page came back with no sentence saying what it is about."""
+    if draft is None or not draft.segments:
+        return False
+    return not any(seg.element_refs for seg in draft.segments)
+
+
+def _binding_note(pages, written) -> str:
+    """How much of what came back said which element it was about.
+
+    Counted because this failed silently for a long time: the writer is asked
+    which element each sentence is talking about and the camera reads the
+    answer before it tries to guess, and on a real 30-page film every one of
+    155 sentences came back with an empty list while nothing said so.
+
+    Said on the call that wrote the page, not as a record of its own. Written
+    where the scenes are built it was said again on every rebuild — and the
+    scenes are rebuilt after every batch so the pages can be watched filling
+    in, so one page reported itself five times over.
+    """
+    lines = []
+    for page in pages:
+        draft = written.get(page.index)
+        if draft is None or not draft.segments:
+            continue
+        valid = {e.id for e in page.elements}
+        asked = len(draft.segments)
+        bound = sum(1 for seg in draft.segments if any(r in valid for r in seg.element_refs))
+        invented = sum(
+            len([r for r in seg.element_refs if r not in valid]) for seg in draft.segments
+        )
+        said = f"第 {page.index} 页 {bound}/{asked} 句"
+        if invented:
+            said += f"（{invented} 个 id 页面上没有）"
+        lines.append(said)
+    return "；".join(lines)
 
 
 def _keeps_enough(candidate: str, draft: str, page, allowed: int) -> tuple[str, str]:
