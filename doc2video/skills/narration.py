@@ -561,7 +561,6 @@ class NarrationSkill(Skill):
         from .review import (
             DENSE_ENOUGH_TO_SUMMARISE,
             density,
-            missed_items,
             page_share_chars,
             worth_naming,
         )
@@ -617,29 +616,21 @@ class NarrationSkill(Skill):
                 continue
             if len(candidate.narration) >= len(draft.narration):
                 continue
-            # Judged against what the page is worth walking, not against what
-            # the draft happened to walk. The draft over-names — page 10 named
-            # nine of its ten blocks where the rule says seven — and requiring
-            # 「不比原来少」 rejected every rewrite of exactly the pages that
-            # needed one: 2–2.5× over budget, and left alone.
-            from .review import _dangling_counts
-
-            floor = min(missed_items(draft.narration, page)[0], worth_naming(page))
-            # A page allowed to summarise is allowed to name fewer things. The
-            # floor is what the page is worth walking at *this* length, not at
-            # the length it overran to.
-            if may_summarise:
-                floor = min(floor, max(1, allowed // MIN_ITEM_CHARS_FOR_FLOOR))
-            if missed_items(candidate.narration, page)[0] < floor:
-                self.log.info("第 %d 页改写后少讲了内容，不采用", page.index)
+            # What the page is worth walking, and what the shorter length can
+            # actually hold — whichever is less. Not 「不比原来少」: a draft that
+            # already names exactly what the page is worth makes that its own
+            # floor, and then no rewrite can ever be accepted, because dropping
+            # something is what compressing a page *is*. Four of this deck's
+            # eight rejected rewrites were rejected that way, and the pages
+            # stayed twice their target length with the record saying they had
+            # been compressed.
+            verdict, why = _keeps_enough(candidate.narration, draft.narration, page, allowed)
+            if verdict == "no":
+                self.log.info("第 %d 页%s，不采用", page.index, why)
+                ledger.note("压缩没采用", f"第 {page.index} 页｜{why}")
                 continue
-            # And it must not turn a named list back into a bare count. The
-            # rewrite is asked for fewer words, and 「五部分」 followed by two of
-            # them is exactly the shape that gets noticed — the check existed
-            # for the writing step and this path was not running it.
-            if _dangling_counts(candidate.narration) and not _dangling_counts(draft.narration):
-                self.log.info("第 %d 页改写后变成报了数不点名，不采用", page.index)
-                continue
+            if verdict == "costs":
+                ledger.degradation("压缩少讲一处", f"第 {page.index} 页｜{why}")
             self.log.info(
                 "第 %d 页改写压缩：%d → %d 字", page.index,
                 len(draft.narration), len(candidate.narration),
@@ -1465,6 +1456,46 @@ AXIS_SPAN = 0.4
 
 #: A heading is short. Past this it is the content itself.
 AXIS_LABEL_CHARS = 20
+
+
+
+def _keeps_enough(candidate: str, draft: str, page, allowed: int) -> tuple[str, str]:
+    """Whether a shortened page still says enough of the page to be used.
+
+    Returns `("ok"|"costs"|"no", why)`.
+
+    The floor used to be 「不比原来少」 — `min(what the draft named, what the page
+    is worth)`. On a page where the draft already names exactly what the page is
+    worth, that makes the draft its own floor, and then no rewrite can ever be
+    accepted, because dropping something is what compressing a page *is*. Four
+    of one deck's eight rejected rewrites were rejected that way, and those
+    pages stayed at twice their target length while the record said they had
+    been compressed. It took someone reading the 「压之后」 to notice.
+
+    So the floor is what the page is worth walking, capped by what the shorter
+    length can hold. And one below it is allowed — recorded as a degradation,
+    not done quietly — when the page is far enough past its length that one
+    item is the cheaper loss. A page whose blocks this measure cannot match
+    names nothing either way, and a floor there is a number about nothing.
+    """
+    from .review import _dangling_counts, missed_items, worth_naming
+
+    # A named list turned back into a bare count is never worth it: the rewrite
+    # was asked for fewer words, and 「五部分」 followed by two of them is exactly
+    # the shape that gets noticed.
+    if _dangling_counts(candidate) and not _dangling_counts(draft):
+        return "no", "改写后报了数不点名"
+
+    named = missed_items(candidate, page)[0]
+    walked = missed_items(draft, page)[0]
+    if walked == 0:
+        return "ok", ""
+    floor = max(1, min(worth_naming(page), allowed // MIN_ITEM_CHARS_FOR_FLOOR))
+    if named >= floor:
+        return "ok", ""
+    if named >= floor - 1 and len(draft) > allowed * KEEP_COMPRESSING:
+        return "costs", f"{walked} 处减到 {named} 处，为压到 {allowed} 字"
+    return "no", f"改写后只讲到 {named} 处，短到 {allowed} 字也该讲 {floor} 处"
 
 
 def _matrix_of(page: DocumentPage) -> tuple[list[str], list[str]] | None:
