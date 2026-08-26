@@ -1966,6 +1966,15 @@ body {
   font-size: 12.5px;
 }
 
+/* One group, so it wraps as one and stays on the right when it does. */
+.actionbar__acts {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
 /* A button is as wide as its label. Nothing said so, so in the panel — which
    can be three hundred points wide — it was squeezed by the sentence beside it
    until 「重新生成这一页」 broke across two lines and the second line was the
