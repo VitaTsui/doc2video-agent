@@ -274,6 +274,19 @@ class VoiceSkill(Skill):
                 # Part of the clip, so changing either has to re-synthesise.
                 f'{tuning.value("voice.lead", self.ctx.settings):.2f}',
                 f'{tuning.value("voice.tail", self.ctx.settings):.2f}',
+                # How this deck says its own words. Without it, teaching the
+                # machine a reading changed nothing at all: every clip matched
+                # its fingerprint and was reused.
+                #
+                # Only the entries this page's words actually use, so teaching
+                # 「宁波」 re-speaks the four pages that say it rather than the
+                # whole film — and so a project that has taught nothing keeps
+                # the fingerprints it already had.
+                "|".join(
+                    f"{term}={spoken}"
+                    for term, spoken in sorted(intent.pronunciation.items())
+                    if term in scene.narration
+                ),
             ]
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]

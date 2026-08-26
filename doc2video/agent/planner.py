@@ -384,6 +384,24 @@ _READ_AS = re.compile(
     r"([A-Za-z][A-Za-z0-9+]{1,15})\s*(?:念|读作|读成)\s*([A-Za-z0-9][A-Za-z0-9 ]{0,23})"
 )
 
+#: 「宁波念作凝波」 — a Chinese term and the characters that sound like what it
+#: should sound like. The engine takes no phonetic input, so a homophone is the
+#: only way to hand it a reading.
+_QUOTED = "[「」『』“”‘’\"']?"
+_SAID_AS = re.compile(
+    rf"{_QUOTED}([\u4e00-\u9fa5]{{2,12}}){_QUOTED}\s*(?:念作|读作|念成|读成)\s*"
+    rf"{_QUOTED}([\u4e00-\u9fa5]{{2,12}}){_QUOTED}"
+)
+
+#: 「宁波的宁念第二声」 — what a person actually says after hearing it wrong. The
+#: homophone is worked out rather than asked for.
+_TONE_OF = re.compile(
+    rf"{_QUOTED}([\u4e00-\u9fa5]{{2,12}}){_QUOTED}的{_QUOTED}([\u4e00-\u9fa5]){_QUOTED}"
+    r"\s*(?:念|读)\s*(?:第)?\s*([一二三四1-4])\s*声"
+)
+
+_TONES = {"一": 1, "二": 2, "三": 3, "四": 4, "1": 1, "2": 2, "3": 3, "4": 4}
+
 # 「中试基地是一个词」/「中试基地别断开」: what someone says after hearing a term
 # cut in half. The synthesiser decides its own phrase boundaries and gets them
 # wrong on words it does not know — measured on 「国家人工智能应用中试基地」,
@@ -544,6 +562,19 @@ def _voice_from(message: str) -> str:
     return next((name for name in installed if gender_of(name) == wanted), "")
 
 
+
+def _without_lead_in(term: str) -> str:
+    """The term, with the sentence's own connective taken off the front.
+
+    「把长沙的长念第二声」 is about 长沙, not about 把长沙 — and a dictionary entry
+    for 把长沙 would never fire.
+    """
+    for lead in _LEAD_INS:
+        if term.startswith(lead) and len(term) > len(lead) + 1:
+            return term[len(lead) :]
+    return term
+
+
 def _pronunciations_in(message: str) -> dict[str, str]:
     """The deck's own vocabulary, said the way this deck says it.
 
@@ -554,6 +585,21 @@ def _pronunciations_in(message: str) -> dict[str, str]:
       is the term with a boundary in front of it; the caption keeps the term.
     """
     learned = {term.strip(): spoken.strip() for term, spoken in _READ_AS.findall(message)}
+    learned.update(
+        {
+            _without_lead_in(term.strip()): spoken.strip()
+            for term, spoken in _SAID_AS.findall(message)
+        }
+    )
+    for said, char, tone in _TONE_OF.findall(message):
+        from ..tools.tts.polyphone import stand_in
+
+        term = _without_lead_in(said)
+        if char not in term:
+            continue
+        swap = stand_in(char, _TONES[tone])
+        if swap:
+            learned[term] = term.replace(char, swap, 1)
     for match in _ONE_WORD.findall(message):
         # 「另外中试基地是一个词」 — the sentence's own connective is not part of
         # the term, and a boundary in front of 「另外」 would be a pause in a
