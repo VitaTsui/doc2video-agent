@@ -269,6 +269,37 @@ body {
    two centred columns sit a few pixels apart — visible on Windows, where the
    scrollbar takes real width, and invisible on macOS, where it overlays.
    `--gutter` is measured at runtime because only the platform knows it. */
+/* Busy *and* pressable. The library draws a turning spinner, which says only
+   that something is happening — and the one thing to do while it happens is
+   press this. So the glyph is the stop square and the turning is a ring drawn
+   around it: the button says both at once, and the square is what the pointer
+   lands on. */
+.composer__wrap [class*='stop'] {
+  position: relative;
+  border-radius: 50%;
+  transition: background 0.15s ease;
+}
+
+.composer__wrap [class*='stop']::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+
+.composer__wrap [class*='stop']:hover {
+  background: var(--user-bg);
+}
+
+.composer__wrap [class*='stop'] > span[role='img'] {
+  position: relative;
+  font-size: 12px;
+  color: var(--ink);
+}
+
 /* The stop button's whole face, not just the glyph in the middle of it.
    The component library hangs `onClick` on the icon itself — a 24px span
    centred in a control-height box — so a press that landed on the ring around
