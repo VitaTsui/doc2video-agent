@@ -331,17 +331,46 @@ class DirectorSkill(Skill):
                 return []
             return [(bound, self._named_with(bound, segment, page, threshold=threshold), 0.0)]
 
-        found: list[tuple[str, list[str], float]] = []
+        # Every clause's candidate first, then the choosing. Taken in the order
+        # they are read, the first clause to match anything takes the frame and
+        # everything after it is judged against that — and on a page whose
+        # sections open with the same boilerplate the first match is as likely
+        # to be the wrong section as the right one. Judged best-first, the block
+        # the sentence is actually about is the one that sets the standard.
+        candidates: list[tuple[float, str, str, float]] = []
         spent = 0
         for piece in pieces:
             fraction = spent / max(len(segment.text), 1)
             spent += len(piece)
             clause = NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis)
             target = self._resolve_target(clause, page, threshold=threshold)
-            if target and (not found or found[-1][0] != target):
-                found.append(
-                    (target, self._named_with(target, clause, page, threshold=threshold), fraction)
-                )
+            if not target:
+                continue
+            element = page.element(target)
+            score = _match(element.text, segment.text) if element else 0.0
+            candidates.append((score, target, piece, fraction))
+
+        covered: set[str] = set()
+        floor = MIN_NEW_SHARE * _pairs(segment.text)
+        kept: list[tuple[str, list[str], float]] = []
+        seen: set[str] = set()
+        by_fit = sorted(candidates, reverse=True, key=lambda c: c[0])
+        for _score, target, piece, fraction in by_fit:
+            if target in seen:
+                continue
+            element = page.element(target)
+            fresh = _explains(element.text if element else "", segment.text) - covered
+            # The best one is why there is a frame at all; the rest have to earn
+            # a second one by explaining a part of the sentence it does not.
+            if kept and len(fresh) < floor:
+                continue
+            covered |= fresh
+            seen.add(target)
+            clause = NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis)
+            kept.append(
+                (target, self._named_with(target, clause, page, threshold=threshold), fraction)
+            )
+        found = sorted(kept, key=lambda k: k[2])
         if not found:
             bound = self._resolve_target(segment, page, threshold=threshold)
             if not bound:
@@ -440,8 +469,18 @@ class DirectorSkill(Skill):
         rivals.sort(reverse=True, key=lambda r: r[0])
         box = focus_box(element, page)
         near_x, near_y = page.width * NEAR_SHARE, page.height * NEAR_SHARE
+        # What the clause is already accounted for by. A second thing joins the
+        # frame only for the part of the clause the first one leaves unexplained.
+        covered = _explains(element.text, segment.text)
+        floor = MIN_NEW_SHARE * _pairs(segment.text)
         taken: list[str] = []
         for _score, other_id, other_box in rivals:
+            other = page.element(other_id)
+            if other is None:
+                continue
+            fresh = _explains(other.text, segment.text) - covered
+            if len(fresh) < floor:
+                continue
             dx, dy = _gap_between(box, other_box)
             if dx > near_x or dy > near_y:
                 continue
@@ -449,6 +488,7 @@ class DirectorSkill(Skill):
             if _coverage_box(grown, page) > MAX_UNION_COVERAGE:
                 continue
             box = grown
+            covered |= fresh
             taken.append(other_id)
         return taken
 
@@ -733,6 +773,31 @@ LABEL_CHARS = 20
 #: How well a second element has to match the same clause, against the best
 #: one, before it shares the frame.
 COMPANION_SHARE = 0.55
+
+#: And how much of the clause it has to explain that the first one does not,
+#: as a share of the clause.
+#:
+#: Matching well is not enough, because on a page whose three sections open
+#: with the same boilerplate — 「国家人工智能应用中试基地（制造领域石化化工方向）」
+#: appears in all three — every section matches every sentence about any of
+#: them. One sentence about the first section framed the second and third as
+#: well, on the strength of words the first had already accounted for. A
+#: second thing in the frame has to be there for something.
+MIN_NEW_SHARE = 0.12
+
+
+def _explains(text: str, sentence: str) -> set[str]:
+    """Which pairs of the sentence this element's own words account for."""
+    body, said = (text or "").strip(), (sentence or "").strip()
+    if len(body) < 3 or len(said) < 3:
+        return set()
+    have = {body[i : i + 2] for i in range(len(body) - 1)}
+    return {said[i : i + 2] for i in range(len(said) - 1)} & have
+
+
+def _pairs(sentence: str) -> int:
+    said = (sentence or "").strip()
+    return max(len(said) - 1, 1)
 
 #: How far apart two things may be and still be one thing being talked about,
 #: as a share of the page. Two corners united make a rectangle holding
