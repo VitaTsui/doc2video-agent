@@ -199,10 +199,11 @@ def _density_note(page, budget: int) -> str:
         )
     return (
         f"这一页有 {count} 处内容，讲其中 {keep} 处——文字是预算的 {ratio:.1f} 倍，"
-        "讲不完，也不该讲完。先把骨架点到：每个小标题、每一栏都要有；"
-        "剩下的名额留给最要紧的细项，其余的不讲。"
-        "长段落只取名称、数字和结论，举例、括号里的补充、脚注不讲。"
-        "没讲到的不要提，也不要用「等等」「以及其他」把它们带过去。"
+        "讲不完，也不该讲完。\n"
+        f"挑哪 {keep} 处由你定：先看每一栏、每个小标题，再看哪几处最要紧。"
+        "但**挑中的每一处都要讲成话**——它是什么、做什么用、页面给了什么数字。"
+        "宁可少挑两处，也不要把每一处都压成一个名字：一串名词念完，听的人什么都没得到。\n"
+        "没挑中的，一个字都不要提，也不要用「等等」「以及其他」把它们带过去。"
     )
 
 
@@ -1351,20 +1352,40 @@ class NarrationSkill(Skill):
             if draft is None:
                 continue
             valid_ids = {e.id for e in page.elements}
+            # Counted, because this failed silently for a long time. The writer
+            # is asked which element each sentence is about and the camera reads
+            # the answer before it tries to guess — but on a real 30-page film
+            # every one of 155 sentences came back with an empty list, and
+            # nothing said so. A page that binds nothing, or that names ids the
+            # page does not have, is now on the record.
+            asked = len(draft.segments)
+            bound = invented = 0
             segments: list[NarrationSegment] = []
             for seq, seg in enumerate(draft.segments, start=1):
                 text = seg.text.strip()
                 if not text:
                     continue
+                # Drop refs the model invented; a wrong id would aim the camera
+                # at nothing.
+                refs = [ref for ref in seg.element_refs if ref in valid_ids]
+                invented += len(seg.element_refs) - len(refs)
+                bound += 1 if refs else 0
                 segments.append(
                     NarrationSegment(
                         id=f"{scene_id(order)}_s{seq:02d}",
                         text=text,
-                        # Drop refs the model invented; a wrong id would aim the camera at nothing.
-                        element_refs=[ref for ref in seg.element_refs if ref in valid_ids],
+                        element_refs=refs,
                         emphasis=seg.emphasis,
                     )
                 )
+            if asked:
+                said = f"第 {page.index} 页｜{bound}/{asked} 句说了讲的是哪一处"
+                if invented:
+                    said += f"｜{invented} 个 id 页面上没有，丢了"
+                if bound == 0:
+                    ledger.degradation("讲稿没绑元素", said + "，镜头只能靠字面猜")
+                elif invented:
+                    ledger.note("绑定", said)
             if not segments:
                 segments = self._split_into_segments(draft.narration, scene_id(order))
 

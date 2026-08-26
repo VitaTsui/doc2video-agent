@@ -324,6 +324,22 @@ class DirectorSkill(Skill):
         camera follows — timed by where it falls in the sentence, because the
         sentence's own start and end are measured.
         """
+        # What the writer said it was talking about. Authoritative when it is
+        # there: it wrote the sentence with the page's element list in front of
+        # it and knows which line it came from, while everything below this is
+        # the camera reverse-engineering that answer out of shared characters.
+        # All of them, not the first — 「落到供应链、外贸、招投标三类情报」 names
+        # three chips and framing one of them points at a third of the sentence.
+        bound = [
+            ref
+            for ref in segment.element_refs
+            if (found := page.element(ref)) is not None
+            and _worth_pointing_at(found)
+            and not _is_banner(found, page)
+        ]
+        if bound:
+            return [(bound[0], self._that_fit(bound[0], bound[1:], page), 0.0)]
+
         pieces = [piece for piece in _CLAUSE_SPLIT.split(segment.text) if piece.strip()]
         if len(pieces) < 2:
             bound = self._resolve_target(segment, page, threshold=threshold)
@@ -388,9 +404,12 @@ class DirectorSkill(Skill):
                 return ref
         # Nothing bound: find the element this sentence is talking about.
         #
-        # The model fills `element_refs` when it feels like it — measured on a
-        # 30-page deck, 30 of 70 sentences came back with none, and seven pages
-        # had not one — so the camera cannot depend on them. It used to fall
+        # Nothing bound. The writer is asked to say which element every sentence
+        # is about and now checked on it — see 第六步 of the writing prompt and
+        # the 「绑定」 lines in the record — but a sentence that is a transition
+        # or a statement about the whole page has nothing to bind to, and an
+        # older script may have none at all. Then the camera has to guess, and
+        # everything below is that guess. It used to fall
         # back on the element's first six characters appearing verbatim in the
         # sentence, which is a coin flip: the script says 「供应链经营风险可控化」
         # for a card headed 「01 供应链经营风险可控化」 and the six characters
@@ -422,6 +441,25 @@ class DirectorSkill(Skill):
             if best is None or score > best[0]:
                 best = (score, element.id)
         return best[1] if best else None
+
+    @staticmethod
+    def _that_fit(best: str, others: list[str], page: DocumentPage) -> list[str]:
+        """As many of the rest as one frame can hold without becoming the page."""
+        element = page.element(best)
+        if element is None:
+            return []
+        box = focus_box(element, page)
+        kept: list[str] = []
+        for other_id in others:
+            other = page.element(other_id)
+            if other is None or other_id == best or other_id in kept:
+                continue
+            grown = _union(box, focus_box(other, page))
+            if _coverage_box(grown, page) > MAX_UNION_COVERAGE:
+                continue
+            box = grown
+            kept.append(other_id)
+        return kept
 
     def _named_with(
         self,

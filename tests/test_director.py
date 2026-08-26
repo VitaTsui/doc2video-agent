@@ -676,3 +676,58 @@ def test_length_stops_deciding_which_block_the_camera_frames():
 
     assert _shared_grams(sprawl, said)[0] > _shared_grams(card, said)[0], "按个数是长的赢"
     assert _match(card, said) > _match(sprawl, said), "两边一起比，选真正在讲的那张卡"
+
+
+def test_the_writers_own_answer_beats_the_cameras_guess():
+    """镜头先信讲稿说的，猜是没得信时才用的。
+
+    The writer wrote the sentence with the page's element list in front of it,
+    so it knows which line the sentence came from; the camera can only compare
+    characters, and on a page whose sections open with the same boilerplate
+    that comparison lands on the wrong section as readily as the right one.
+
+    All of the bound ids, not the first: 「落到供应链、外贸、招投标三类情报」 names
+    three chips, and a frame around one of them points at a third of what is
+    being said.
+    """
+    from doc2video.schemas import NarrationSegment
+    from doc2video.skills.director import DirectorSkill
+
+    page = DocumentPage(
+        index=1,
+        title="页",
+        width=1920,
+        height=1080,
+        elements=[
+            SlideElement(id="chip_a", kind=ElementKind.PARAGRAPH, text="石化供应链情报",
+                         bbox=BBox(x=200, y=400, w=200, h=40)),
+            SlideElement(id="chip_b", kind=ElementKind.PARAGRAPH, text="石化外贸情报",
+                         bbox=BBox(x=440, y=400, w=200, h=40)),
+            SlideElement(id="chip_c", kind=ElementKind.PARAGRAPH, text="石化招投标情报",
+                         bbox=BBox(x=680, y=400, w=200, h=40)),
+            # The one a character-match would reach for, and the wrong answer.
+            SlideElement(id="decoy", kind=ElementKind.PARAGRAPH,
+                         text="市场研判做供应链、外贸、招投标情报的说明段落，与上一节共用同样的开头套话",
+                         bbox=BBox(x=200, y=700, w=900, h=120)),
+        ],
+    )
+    segment = NarrationSegment(
+        id="s1",
+        text="最上面，市场研判做供应链、外贸、招投标情报。",
+        element_refs=["chip_a", "chip_b", "chip_c"],
+    )
+
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+    found = skill._targets_in(segment, page)
+
+    assert len(found) == 1, f"绑定明确时只该有一个框：{found}"
+    target, also, _fraction = found[0]
+    assert {target, *also} == {"chip_a", "chip_b", "chip_c"}, "三处都要在框里"
+
+
+def _project_with(page):
+    return VideoProject(
+        project_id="proj_bound",
+        source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
+        document=DocumentModel(pages=[page]),
+    )
