@@ -246,11 +246,20 @@ def _knobs(settings: Settings | None = None) -> dict[str, Knob]:
 
 
 def _engine_paces_itself(settings: Settings) -> bool:
-    """Whether the voice this machine speaks in decides its own beats."""
+    """Whether the voice this machine speaks in decides its own beats.
+
+    The chosen voice lives in the preferences file, not in settings — settings
+    are the environment the process started with and are frozen for its life,
+    and picking a voice does not restart anything. Reading only the settings
+    made this answer 「no」 on a machine speaking with Edge, and the ten knobs
+    stayed on screen doing nothing.
+    """
     try:
         from ..tools.tts import TTSTool
+        from . import prefs
 
-        return bool(TTSTool(settings)._engine_for(settings.tts_voice).paces_itself)
+        chosen = prefs.load(settings).voice or settings.tts_voice
+        return bool(TTSTool(settings)._engine_for(chosen).paces_itself)
     except Exception:  # noqa: BLE001 - a settings page must still render
         return False
 
