@@ -501,3 +501,19 @@ def test_a_rewrite_may_drop_something_or_compressing_can_never_work():
     blank = DocumentPage(index=6, title="页", page_type=PageType.CONTENT,
                          width=1920, height=1080, elements=[])
     assert _keeps_enough("短一点的讲稿。", "长一点的讲稿，说了更多。", blank, allowed=20)[0] == "ok"
+
+
+def test_a_round_that_only_shaves_words_is_not_worth_keeping():
+    """压缩要少讲一处，不是把句子削短。
+
+    第 5 页真实发生过：第二轮把 199 字压成 191 字——目标 136 字，两轮都没够
+    着——换来的是丢掉「中心主任是庄越挺教授」，外加把「国家首批认定的省部共建
+    协同创新中心之一」削成「国家首批之一」。八个字买不下这些。
+    """
+    from doc2video.skills.narration import _worth_rewriting
+
+    draft = "上" * 199
+    assert not _worth_rewriting("上" * 191, draft), "只短八个字，这一轮在削字"
+    assert _worth_rewriting("上" * 150, draft), "真少讲了一处，该采用"
+    assert not _worth_rewriting("", draft), "空稿不算压缩"
+    assert not _worth_rewriting("上" * 220, draft), "反而更长了"

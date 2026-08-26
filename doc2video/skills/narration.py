@@ -63,6 +63,22 @@ NEVER_COMPRESSED = (PageType.COVER, PageType.CONTACT)
 #: a handful of characters.
 KEEP_COMPRESSING = 1.5
 
+#: How much of a page a rewrite has to take off to be worth having asked for
+#: it. A round that shaves a few characters is not compressing the page, it is
+#: filing words off sentences that already say what they say. Page 5 of a real
+#: deck bought eight characters that way — 199 → 191 against a ceiling of 136,
+#: nowhere near it either way — and paid 「中心主任是庄越挺教授」 and two
+#: sentences' grammar for them. Keep what the round before it said instead.
+WORTH_ANOTHER_ROUND = 0.08
+
+#: About as much as saying the same things in fewer words can buy. Past this,
+#: a page only gets shorter by not saying one of them — and a page told it may
+#: not drop anything answers a demand it cannot meet by breaking sentences
+#: instead: 「再看AI技术优势，也就是技术研发成果的建设载体」 came back as the
+#: bare phrase, subject gone. So the depth of the cut decides too, not the
+#: page's density alone.
+REPHRASING_BUYS = 0.20
+
 # Per-page-type weights for splitting the total duration budget.
 TYPE_WEIGHT = {
     PageType.COVER: 0.35,
@@ -565,22 +581,38 @@ class NarrationSkill(Skill):
             worth_naming,
         )
 
-        may_summarise = density(page, page_share_chars(page)) > DENSE_ENOUGH_TO_SUMMARISE
+        must_cut = 1 - allowed / max(len(draft.narration), 1)
+        may_summarise = (
+            density(page, page_share_chars(page)) > DENSE_ENOUGH_TO_SUMMARISE
+            or must_cut > REPHRASING_BUYS
+        )
         if may_summarise:
             keep = worth_naming(page)
             give_up = (
-                f"这一页内容装不下，可以少讲——讲到 {keep} 处就够，"
+                f"**要减的是处数，不是字。** 这一页内容装不下，讲到 {keep} 处就够——"
                 "留骨架（小标题、每一栏的名称、数字和结论），"
-                "举例、括号里的补充、同一条里的展开可以整条不讲。\n"
+                "举例、括号里的补充、同一条里的展开，整条不讲。\n"
                 "但**报了数就要点名**：说了「五部分」就得点出五个，装不下就别报数。\n"
             )
         else:
-            give_up = "**内容一处都不能少**：现在讲到的每一处，改写后还要讲到。\n"
+            give_up = (
+                "**内容一处都不能少**：现在讲到的每一处，改写后还要讲到。\n"
+                "这一页能省的是说法——同一件事换个短一点的说法，"
+                "重复的表述合并成一句。\n"
+            )
         note = (
             f"这一页现在 {len(draft.narration)} 字，要压到 {allowed} 字以内。\n"
             + give_up
-            + "压的是字，也可以是句——删修饰词、合并重复的说法、去掉可有可无的连接词、"
-            "把长句拆成短句。宁可每句只剩七八个字。\n\n"
+            # What this used to say was 「删修饰词、去掉可有可无的连接词……宁可每句
+            # 只剩七八个字」, and it got exactly that. A good draft came back as
+            # 「简称CCAI，是国家首批之一」 — the head noun deleted as a modifier,
+            # 「之一」 left hanging — and 「再看AI技术优势，也就是技术研发成果的建设
+            # 载体」 came back as the bare phrase with its subject gone. Filing
+            # words off sentences is the one way of getting shorter that damages
+            # what is left; dropping a whole point costs nothing but the point.
+            + "**留下来的每一句，还是一句完整的话**——主语、谓语、中心词都在，"
+            "念出来听得懂。见「短，但仍然是一句完整的话」那一节。\n"
+            "压不到也不要压成电报：宁可差几个字，宁可整件事不讲。\n\n"
             f"现在的讲稿：\n{draft.narration}"
         )
         try:
@@ -614,6 +646,12 @@ class NarrationSkill(Skill):
                 # belonging to nothing. Opened, this call already shows 压之前
                 # and 压之后; 结果 is the third thing anyone looking at it wants.
                 verdict, why = _keeps_enough(shorter, draft.narration, page, allowed)
+                if verdict != "no" and not _worth_rewriting(shorter, draft.narration):
+                    verdict = "no"
+                    why = (
+                        f"只短了 {len(draft.narration) - len(shorter)} 字，"
+                        "这一轮在削字，不在少讲"
+                    )
                 made.append(
                     ledger.text_artifact(
                         "结果",
@@ -632,7 +670,7 @@ class NarrationSkill(Skill):
         for candidate in pages:
             if candidate.index != page.index or not candidate.narration.strip():
                 continue
-            if len(candidate.narration) >= len(draft.narration):
+            if not _worth_rewriting(candidate.narration, draft.narration):
                 continue
             # What the page is worth walking, and what the shorter length can
             # actually hold — whichever is less. Not 「不比原来少」: a draft that
@@ -1516,6 +1554,11 @@ def _binding_note(pages, written) -> str:
             said += f"（{invented} 个 id 页面上没有）"
         lines.append(said)
     return "；".join(lines)
+
+
+def _worth_rewriting(candidate: str, draft: str) -> bool:
+    """Whether a rewrite took enough off the page to be worth keeping."""
+    return bool(candidate) and len(candidate) <= len(draft) * (1 - WORTH_ANOTHER_ROUND)
 
 
 def _keeps_enough(candidate: str, draft: str, page, allowed: int) -> tuple[str, str]:
