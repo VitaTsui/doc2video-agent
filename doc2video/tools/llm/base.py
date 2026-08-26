@@ -128,6 +128,22 @@ def model_schema(model_cls) -> dict:
     return to_strict_schema(model_cls.model_json_schema())
 
 
+#: What to add to a prompt when the wire cannot carry the schema. Says the
+#: word "JSON" on purpose as well as on the tin: OpenAI-dialect gateways reject
+#: `response_format: json_object` outright unless it appears somewhere in the
+#: messages — DeepSeek answers 「Prompt must contain the word 'json' in some
+#: form」 with a 400 — and a prompt that never asks for JSON gets prose.
+JSON_INSTRUCTION = (
+    "\n\n只输出一个 JSON 对象，不要加解释文字，也不要包在代码块里。"
+    "它必须符合这个 JSON Schema：\n"
+)
+
+
+def json_instruction(schema: dict) -> str:
+    """The instruction, with the schema it has to describe."""
+    return JSON_INSTRUCTION + json.dumps(schema, ensure_ascii=False)
+
+
 _FENCE_RE = re.compile(r"\A```[a-zA-Z]*\s*|\s*```\Z")
 
 

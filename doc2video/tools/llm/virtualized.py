@@ -48,7 +48,7 @@ from ...core.config import Settings
 from ...core.errors import ToolFailed
 from ...core.logging import get_logger
 from ...core.telemetry import LLMUsage, record_llm
-from .base import LLMTool, parse_json_reply
+from .base import JSON_INSTRUCTION, LLMTool, parse_json_reply
 
 log = get_logger(__name__)
 
@@ -64,11 +64,6 @@ RUNTIMES = {"claude-code": "claude", "codex": "codex"}
 def runtime_of(settings: Settings) -> str:
     """Which CLI answers. ``llm_model`` wins so the UI has one field per provider."""
     return settings.llm_model.strip() or settings.agent_cli_runtime.strip() or "claude-code"
-
-JSON_INSTRUCTION = (
-    "\n\n只输出一个 JSON 对象，不要加解释文字，也不要包在代码块里。"
-    "它必须符合这个 JSON Schema：\n"
-)
 
 # The bridge streams the CLI's own events; a single line is bounded so a runaway
 # agent cannot exhaust memory here (the protocol doc asks hosts to do this).

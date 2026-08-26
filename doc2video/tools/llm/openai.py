@@ -27,6 +27,7 @@ from .base import (
     LLMTool,
     encode_image,
     existing_images,
+    json_instruction,
     media_type,
     parse_json_reply,
 )
@@ -77,10 +78,10 @@ class OpenAILLM(LLMTool):
         images: list[Path] | None = None,
         max_tokens: int | None = None,
     ) -> dict[str, Any]:
-        messages = self._messages(prompt, system, images)
         budget = max_tokens or self._max_tokens
 
-        for response_format in self._format_ladder(schema):
+        for response_format, asking in self._format_ladder(schema):
+            messages = self._messages(prompt + asking, system, images)
             try:
                 text = self._send(messages, budget, response_format)
             except self._openai.BadRequestError as exc:
@@ -97,14 +98,34 @@ class OpenAILLM(LLMTool):
 
     # -- internals -----------------------------------------------------
     @staticmethod
-    def _format_ladder(schema: dict) -> list[dict | None]:
+    def _format_ladder(schema: dict) -> list[tuple[dict | None, str]]:
+        """Each rung, and what the prompt has to say for it to work.
+
+        The top rung carries the shape on the wire, so the prompt says nothing.
+        The other two have to say it in words, and both reasons are real:
+
+        - ``json_object`` is *rejected* unless the word JSON appears in the
+          messages — DeepSeek answers 「Prompt must contain the word 'json' in
+          some form」 with a 400, which reads exactly like a gateway that does
+          not support the rung, so the ladder stepped past it;
+        - with no ``response_format`` at all the model has been told nothing,
+          and answers however it likes.
+
+        Together those two took every batch of a 30-page deck to the bottom
+        rung, where DeepSeek replied with a Markdown outline — headings, bullet
+        points and a table — and 「不是合法 JSON 对象」 five times over.
+        """
+        asking = json_instruction(schema)
         return [
-            {
-                "type": "json_schema",
-                "json_schema": {"name": "result", "schema": schema, "strict": True},
-            },
-            {"type": "json_object"},
-            None,
+            (
+                {
+                    "type": "json_schema",
+                    "json_schema": {"name": "result", "schema": schema, "strict": True},
+                },
+                "",
+            ),
+            ({"type": "json_object"}, asking),
+            (None, asking),
         ]
 
     def _messages(self, prompt: str, system: str, images: list[Path] | None) -> list[dict]:

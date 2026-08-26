@@ -415,3 +415,27 @@ def test_the_sandboxed_cli_can_be_executed_and_knows_who_it_is(monkeypatch):
 
     assert "USER" in environment["inheritEnv"]
     assert environment["env"]["PATH"].split(os.pathsep)[0] == "/opt/homebrew/bin"
+
+
+def test_lower_rungs_ask_for_json_in_words():
+    """`json_object` 是被「拒绝」的，不是「不支持」——差别在提示词里有没有 json。
+
+    DeepSeek 对不含这个词的请求回 400：「Prompt must contain the word 'json'
+    in some form」。那个 400 长得和「网关不认识这一档」一模一样，阶梯于是一路
+    踩到最底下——而最底下既没格式约束也没在提示里要 JSON，模型回了一篇
+    Markdown 大纲。一份 30 页文档的五个批次全是这么降级的。
+    """
+    from doc2video.tools.llm.openai import OpenAILLM
+
+    ladder = OpenAILLM._format_ladder({"type": "object", "properties": {}})
+    formats = [fmt for fmt, _ in ladder]
+    assert formats[0]["type"] == "json_schema"
+    assert formats[1]["type"] == "json_object"
+    assert formats[2] is None
+
+    # 顶档把形状写在协议里，提示词不用重复说。
+    assert ladder[0][1] == ""
+    # 下面两档必须自己说，而且必须出现 json 这个词。
+    for _, asking in ladder[1:]:
+        assert "json" in asking.lower(), asking
+        assert "JSON Schema" in asking
