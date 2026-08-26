@@ -841,7 +841,7 @@ dependencies = [
 
 [[package]]
 name = "doc2video-desktop"
-version = "0.10.13"
+version = "0.10.14"
 dependencies = [
  "anyhow",
  "flate2",
