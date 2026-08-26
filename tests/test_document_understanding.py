@@ -203,3 +203,37 @@ def test_what_a_batch_answers_is_applied_in_page_order():
     source = inspect.getsource(DocumentSkill._read_batches)
     assert "for start, _batch in batches:" in source, "结果要按页码顺序交回去"
     assert "yield answers[start]" in source
+
+
+def test_the_long_stages_report_often_enough_to_be_stopped():
+    """A run is only asked whether it should stop when it reports progress.
+
+    `progress` is where `JobCancelled` is raised, and until now the only places
+    it was called from were the boundaries between stages and, inside a render,
+    each scene. 理解结构 is one stage four and a half minutes long and 质检 is one
+    of nearly two: pressing 「中止」 inside either did nothing at all until it
+    finished on its own, which from the outside is a stop button that does not
+    stop.
+
+    Both are read here rather than run, because what matters is that the call
+    exists on the thread that collects the work — a raise inside a worker would
+    only fail that worker's batch.
+    """
+    import inspect
+
+    from doc2video.agent.executor import Executor
+    from doc2video.skills.document import DocumentSkill
+    from doc2video.skills.review import ReviewSkill
+
+    reading = inspect.getsource(DocumentSkill._read_batches)
+    assert "tick(" in reading, "理解结构要逐批上报，否则中不了"
+    assert reading.rindex("tick(") > reading.index("as_completed"), (
+        "并行时也要在收集结果那条线程上报"
+    )
+
+    checking = inspect.getsource(ReviewSkill.run)
+    assert checking.count("tick(") >= 4, "质检的每一项之间都要有一个能停下来的点"
+
+    driving = inspect.getsource(Executor)
+    assert "DocumentSkill(self.ctx).run(progress=self._progress)" in driving
+    assert "ReviewSkill(self.ctx).run(progress=self._progress)" in driving

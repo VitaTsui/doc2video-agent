@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from ..core import ledger, telemetry, tuning
 from ..schemas import DocumentPage, ElementKind, PageType, Section
 from ..tools.llm import model_schema
-from .base import Skill, load_prompt
+from .base import ProgressFn, Skill, load_prompt
 
 # Pages per LLM call: large enough for cross-page context, small enough that one
 # bad page does not cost the whole deck.
@@ -113,7 +113,7 @@ class DocumentSkill(Skill):
     name = "presentation-understanding"
     description = "理解整份演示文档的结构、重点和叙事逻辑"
 
-    def run(self) -> None:
+    def run(self, *, progress: ProgressFn | None = None) -> None:
         document = self.project.document
         if not document.pages:
             self.log.warning("文档没有可分析的页面")
@@ -124,7 +124,7 @@ class DocumentSkill(Skill):
         # twenty leaves the other fourteen classified rather than blank.
         self._understand_heuristically()
         self.try_llm(
-            self._understand_with_model,
+            lambda: self._understand_with_model(progress),
             lambda: None,
             what="文档理解",
         )
@@ -140,7 +140,7 @@ class DocumentSkill(Skill):
         )
 
     # -- model path ----------------------------------------------------
-    def _understand_with_model(self) -> None:
+    def _understand_with_model(self, progress: ProgressFn | None = None) -> None:
         """Overwrite the heuristics with what the model read, page by page.
 
         Page renders ride along for the batches that need them: a chart or an
@@ -169,7 +169,7 @@ class DocumentSkill(Skill):
         # Results are applied on this thread, in page order, because the first
         # batch is the one that answers for the deck and the ordering it
         # returns is merged rather than replaced.
-        for start, batch, result, exc in self._read_batches(batches):
+        for start, batch, result, exc in self._read_batches(batches, progress):
             where = f"第 {batch[0].index}-{batch[-1].index} 页"
             if exc is not None:
                 # One batch failing must not cost the others. It used to: the
@@ -220,7 +220,7 @@ class DocumentSkill(Skill):
             # stage rather than as a list of per-batch ones nobody reads.
             raise RuntimeError(f"{failures} 批全部失败，文档理解没有任何模型结果")
 
-    def _read_batches(self, batches):
+    def _read_batches(self, batches, progress: ProgressFn | None = None):
         """Each batch's answer, in page order, whether it worked or not.
 
         Yields `(start, batch, result, exception)` — the caller decides what a
@@ -243,12 +243,25 @@ class DocumentSkill(Skill):
                     )
                 )
 
+        # Said as each batch is reached and as each one lands. Not decoration:
+        # a job is only asked whether it should stop when progress is reported,
+        # and 理解结构 is one stage four and a half minutes long that reported
+        # nothing between its first line and its last. 「中止」 pressed inside it
+        # did nothing at all until it finished on its own.
+        done = 0
+
+        def tick(where: str) -> None:
+            if progress is not None:
+                progress("understand", where, done, len(batches))
+
         if workers <= 1:
             for start, batch in batches:
+                tick(f"第 {batch[0].index}-{batch[-1].index} 页")
                 try:
                     yield start, batch, read(batch), None
                 except Exception as exc:  # noqa: BLE001 - one batch, not the deck
                     yield start, batch, None, exc
+                done += 1
             return
 
         self.log.info("理解 %d 批，%d 批一起读", len(batches), workers)
@@ -264,6 +277,11 @@ class DocumentSkill(Skill):
                     answers[start] = (start, batch, future.result(), None)
                 except Exception as exc:  # noqa: BLE001 - one batch, not the deck
                     answers[start] = (start, batch, None, exc)
+                done += 1
+                # On this thread, which is what makes it a place a run can be
+                # stopped: `progress` raises to cancel, and raising inside a
+                # worker would only fail that worker's batch.
+                tick(f"第 {batch[0].index}-{batch[-1].index} 页")
         for start, _batch in batches:
             yield answers[start]
 

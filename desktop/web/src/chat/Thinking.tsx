@@ -66,7 +66,19 @@ export function Thinking({
             // something is. 「正在思考」 for four minutes is what this replaces.
             // Open, the newest line is right below and saying it twice is
             // just a repetition; folded, it is the only thing left to say.
-            <span className="chain__live">{open ? '正在思考…' : (last?.text ?? '正在开始…')}</span>
+            //
+            // Except once it has been asked to stop. Stopping is not a kill —
+            // the step in flight finishes, because a half-written clip is one
+            // the next render would mistake for a good one — so for a while
+            // afterwards everything looks exactly as it did, and the button
+            // reads as broken. It is not; it is waiting, and it says so.
+            <span className="chain__live">
+              {job?.stopping
+                ? '正在停下，等这一步做完…'
+                : open
+                  ? '正在思考…'
+                  : (last?.text ?? '正在开始…')}
+            </span>
           ) : (
             <span>
               {'已思考 '}

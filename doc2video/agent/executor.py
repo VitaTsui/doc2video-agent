@@ -447,7 +447,7 @@ class Executor:
         ledger.degradation("解析只拿到图", reason)
 
     def _stage_understand(self, plan: ExecutionPlan) -> None:  # noqa: ARG002
-        DocumentSkill(self.ctx).run()
+        DocumentSkill(self.ctx).run(progress=self._progress)
 
     def _stage_narrate(self, plan: ExecutionPlan) -> None:
         """Adopt the caller's script, or fall back to a placeholder.
@@ -489,7 +489,7 @@ class Executor:
         MotionSkill(self.ctx).run()
 
     def _stage_review(self, plan: ExecutionPlan) -> None:  # noqa: ARG002
-        ReviewSkill(self.ctx).run()
+        ReviewSkill(self.ctx).run(progress=self._progress)
 
     # -- rendering ----------------------------------------------------------
     def _stage_render(self, plan: ExecutionPlan) -> None:  # noqa: ARG002

@@ -19,7 +19,7 @@ from ..schemas.telemetry import QualityDimension, QualityReport
 from ..tools.renderer.base import SUBTITLE_BOTTOM_MARGIN
 from ..tools.tts.providers import SilentProvider
 from . import render_review, speech_review
-from .base import Skill
+from .base import ProgressFn, Skill
 
 # What a scene's recorded engine is when nothing spoke it.
 SILENT_PROVIDER = SilentProvider.name
@@ -284,7 +284,20 @@ class ReviewSkill(Skill):
     name = "presentation-review"
     description = "检测事实、节奏、字幕、音画同步和视觉质量"
 
-    def run(self) -> None:
+    def run(self, *, progress: ProgressFn | None = None) -> None:
+        # Between the checks, and only between them: a job notices it has been
+        # asked to stop when progress is reported, and 质检 is one stage of
+        # nearly two minutes that reported nothing from start to finish. Four
+        # checks in a row on this thread are four places it can be stopped.
+        step = 0
+
+        def tick(what: str) -> None:
+            nonlocal step
+            step += 1
+            if progress is not None:
+                progress("review", what, step, 4)
+
+        tick("结构与讲稿")
         # Each check is its own entry, with what it found. A single 「质检」 line
         # for six different kinds of looking says only that something was
         # checked — not that the captions were measured against the page's
@@ -296,6 +309,7 @@ class ReviewSkill(Skill):
         # can be perfectly timed, correctly split and sitting on top of the
         # number it is describing. Geometry, not pixels — the renderer's layout
         # is ours, so the answer is arithmetic.
+        tick("字幕")
         with ledger.call("check:字幕", "出界、遮挡页面文字"):
             findings.extend(
                 render_review.check_subtitles(
@@ -308,6 +322,7 @@ class ReviewSkill(Skill):
         # And whether anything was actually drawn. Only once there are clips to
         # look at: before a render there is no picture to have an opinion about.
         # And how it sounds, which neither of the others can hear.
+        tick("配音")
         with ledger.call("check:配音", "语速、停顿、平铺直叙"):
             findings.extend(
                 speech_review.check_speech(
@@ -319,6 +334,7 @@ class ReviewSkill(Skill):
                 )
             )
         if self.project.render.scene_clips:
+            tick("画面")
             with ledger.call("check:画面", "空画面、动作有没有画出来"):
                 findings.extend(render_review.check_frames(self.project, self.ctx.asset_path))
                 findings.extend(render_review.check_actions(self.project, self.ctx.asset_path))
