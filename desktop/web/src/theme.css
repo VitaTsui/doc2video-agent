@@ -1884,6 +1884,11 @@ body {
   white-space: nowrap;
 }
 
+.ledger__part--long {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* The separator hangs off the end of the piece before it, never off the front
    of the piece after. Attached the other way it wrapped along with whatever
    followed and started the second line as 「｜1 个动作」; a break belongs after
