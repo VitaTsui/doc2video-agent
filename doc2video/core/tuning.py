@@ -236,7 +236,23 @@ def _knobs(settings: Settings | None = None) -> dict[str, Knob]:
             "",
         ),
     ]
+    # The beats inside a sentence are ours to set only for an engine that
+    # cannot find them itself. A neural voice is handed the whole page and
+    # phrases it, so every one of these ten does nothing — and a row of numbers
+    # that changes nothing is worse than no row at all.
+    if _engine_paces_itself(settings):
+        listed = [knob for knob in listed if not knob.id.startswith("voice.pause_")]
     return {knob.id: knob for knob in listed}
+
+
+def _engine_paces_itself(settings: Settings) -> bool:
+    """Whether the voice this machine speaks in decides its own beats."""
+    try:
+        from ..tools.tts import TTSTool
+
+        return bool(TTSTool(settings)._engine_for(settings.tts_voice).paces_itself)
+    except Exception:  # noqa: BLE001 - a settings page must still render
+        return False
 
 
 def knobs(settings: Settings | None = None) -> dict[str, Knob]:
