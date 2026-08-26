@@ -67,9 +67,9 @@ export function Composer({
           // and stopping lived in a second control up in the transcript.
           onStop={onStop}
           // A spinner says 「在忙」 and not 「按我就停」, and while it runs
-          // stopping is the only thing there is to do. The square is the stop
-          // symbol; the ring that turns around it is CSS, so the button still
-          // says something is happening.
+          // stopping is the only thing there is to do. So the glyph is the
+          // stop square, in the send button's own square — that something is
+          // happening is the transcript's job, not this button's.
           stopIcon="tabler:player-stop-filled"
           fileList={files}
           onFileListChange={setFiles}
