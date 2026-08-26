@@ -12,6 +12,7 @@
  * seconds and everything after it takes minutes.
  */
 
+import toast from 'antd/es/message'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import * as api from './api'
@@ -108,15 +109,16 @@ export function App() {
         setConnection(await api.saveModelPrefs(next))
         const caps = await api.capabilities().catch(() => null)
         setHasModel(Boolean(caps?.llm.available))
-        say({
-          role: 'assistant',
-          kind: 'text',
-          text: caps?.llm.available
-            ? `换成 ${caps.llm.model} 了。下次投文档时我顺手把讲稿写好，你在上面改。`
-            : '好，讲稿由你来写。留空的页会是占位文本。',
-        })
+        // Nothing said. Switching used to write a line into the transcript —
+        // 「换成 claude-code 了。下次投文档时我顺手把讲稿写好，你在上面改。」 —
+        // which is the assistant announcing a thing the person just did, in the
+        // place their own conversation lives. The picker's tick already says
+        // which model it is. Only a failure is worth interrupting for.
       } catch (error) {
-        say({ role: 'assistant', kind: 'text', text: `切换失败：${api.describeError(error)}` })
+        // A toast, like the panel's. Switching is a control's business, and a
+        // failed switch does not belong in the transcript any more than a
+        // successful one does.
+        toast.error(`切换失败：${api.describeError(error)}`)
       } finally {
         setBusy(false)
       }
@@ -1095,13 +1097,12 @@ export function App() {
           await loadModels()
           const caps = await api.capabilities().catch(() => null)
           setHasModel(Boolean(caps?.llm.available))
-          say({
-            role: 'assistant',
-            kind: 'text',
-            text: caps?.llm.available
-              ? `模型已就绪：${caps.llm.label || caps.llm.provider}。投文档时我就把讲稿写好，你在上面改。`
-              : '设置已保存，后端已重启。',
-          })
+          // Nothing written here either. Saving in settings used to add
+          // 「模型已就绪：Claude Code。」 to the transcript — twice, because a
+          // save with a key calls this once for the list and once for the key —
+          // and it named whichever model the backend was running rather than the
+          // one being edited, so editing DeepSeek announced Claude Code. The
+          // panel says whether the save worked, in the panel.
         }}
       />
     </div>

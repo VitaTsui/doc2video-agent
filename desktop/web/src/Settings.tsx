@@ -19,6 +19,7 @@
 import Button from '@hsu-react/ui/es/components/Button'
 import Input from '@hsu-react/ui/es/components/Input'
 import Select from '@hsu-react/ui/es/components/Select'
+import toast from 'antd/es/message'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useEffect, useState } from 'react'
 
@@ -53,7 +54,6 @@ export function Settings({
   const [adding, setAdding] = useState<api.Provider | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
   const [updating, setUpdating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -68,7 +68,6 @@ export function Settings({
   /** Write the list, and the key that belongs to one of its entries. */
   async function commit(next: api.ModelPrefs, entry: api.Provider, key: string) {
     setSaving(entry.id)
-    setError(null)
     try {
       // The list first: `save_key` refuses an id the list does not contain,
       // which is the check that stops a key being written for an entry that
@@ -78,8 +77,9 @@ export function Settings({
       if (key.trim()) onReconnected(await api.saveKey(entry.id, key.trim()))
       setCaps(await api.capabilities())
       setEditing(null)
+      toast.success('已保存')
     } catch (thrown) {
-      setError(api.describeError(thrown))
+      toast.error(api.describeError(thrown))
     } finally {
       setSaving(null)
     }
@@ -94,13 +94,13 @@ export function Settings({
       active: prefs.active === entry.id ? '' : prefs.active,
       active_model: prefs.active === entry.id ? '' : prefs.active_model,
     }
-    setError(null)
     try {
       onReconnected(await api.saveModelPrefs(next))
       setPrefs(next)
       setCaps(await api.capabilities())
+      toast.success('已删除')
     } catch (thrown) {
-      setError(api.describeError(thrown))
+      toast.error(api.describeError(thrown))
     }
   }
 
@@ -148,12 +148,6 @@ export function Settings({
             关闭
           </Button>
           </div>
-
-          {error && (
-            <div className="card" style={{ color: '#b0562f', overflowWrap: 'anywhere' }}>
-              {error}
-            </div>
-          )}
 
           {tab === 'models' && (
             <>
@@ -322,7 +316,7 @@ export function Settings({
                         onClick={() => {
                           setUpdating(true)
                           api.installUpdate().catch((thrown) => {
-                            setError(api.describeError(thrown))
+                            toast.error(api.describeError(thrown))
                             setUpdating(false)
                           })
                         }}
