@@ -36,8 +36,9 @@ def test_a_short_run_of_capitals_is_read_as_letters():
     # syllables: 「A」 came back as 啊. 「C」 is better left as the letter — 「西」
     # is a Chinese word that merely sounds near it.
     assert for_speech("AI 应用中试平台") == "诶爱 应用中试平台"
-    # 宁波 is in the hand-written list — the engine reads its 宁 as 宁可's.
-    assert for_speech("浙江大学 CCAI 宁波中心") == "浙江大学 CC诶爱 凝波中心"
+    # 宁波 is in the hand-written list, which is a patch for the engine that
+    # needs one — so it reaches `say` and not a neural voice.
+    assert for_speech("浙江大学 CCAI 宁波中心", reading=True) == "浙江大学 CC诶爱 凝波中心"
     # All consonants: nothing to rewrite, and nothing to separate either —
     # the engine reads MCP as its letters on its own.
     assert for_speech("石化生态 MCP 工具库") == "石化生态 MCP 工具库"
@@ -85,8 +86,11 @@ def test_a_second_reading_is_named_only_where_the_engine_gets_it_wrong():
     """
     from doc2video.tools.tts.pronounce import for_speech
 
-    assert for_speech("更新按需，小时更、日更、月更。") == "耕新按需，小时耕、日耕、月耕。"
-    assert for_speech("数据每天更新一次。") == "数据每天耕新一次。"
+    assert (
+        for_speech("更新按需，小时更、日更、月更。", reading=True)
+        == "耕新按需，小时耕、日耕、月耕。"
+    )
+    assert for_speech("数据每天更新一次。", reading=True) == "数据每天耕新一次。"
 
     # 更 as 「more」 is the reading the engine already gets right.
     said = "这个方案更好一些，更多细节见附录。"
@@ -150,8 +154,13 @@ def test_only_the_engine_that_needs_the_rewriting_gets_it():
     rewritten = for_speech(said, reading=True)
     assert rewritten != said, "say 仍然要改写"
 
-    # The two that stay, whichever engine is speaking.
-    assert for_speech("AI 日更一次", reading=False) == "诶爱 日耕一次"
+    # Both lists are patches, and a neural voice gets neither: it spells its
+    # own initialisms and works its own polyphones out.
+    assert for_speech("AI 日更一次", reading=False, letters=False) == "AI 日更一次"
+    assert for_speech("AI 日更一次", reading=True, letters=True) == "诶爱 日耕一次"
+    # What this deck said its own words sound like is not a patch, and reaches
+    # every engine — it is the way back when a neural voice does get one wrong.
+    assert for_speech("宁波很好", {"宁波": "凝波"}, reading=False, letters=False) == "凝波很好"
 
 
 def test_a_chinese_reading_can_be_taught_in_one_sentence():

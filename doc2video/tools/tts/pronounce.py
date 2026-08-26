@@ -48,9 +48,15 @@ SPELL_OUT = {
 # dictionary, and 「日更」 is newer than it: every reading of it comes back gèng
 # where the word is gēng.
 #
-# And it is for what the *engine* gets wrong too, now that the general pass
-# only runs for engines that need it: 「宁波」 came back as nìng bō, which is
-# 「宁可」's 宁. A term earns a line here after being heard getting it wrong.
+# Both of these lists are patches for an engine that cannot do the thing
+# itself, and neither reaches one that can — 「配音，去掉我们给加上的所有东西，
+# 完全交由引擎自己去」. A neural voice works a polyphone out from its sentence,
+# so it gets none of this; `say` does not, so it gets all of it.
+#
+# When a neural voice does get one wrong — 「宁波」 came back as nìng bō, which
+# is 「宁可」's 宁 — the way back is the deck's own dictionary, one sentence in
+# the conversation: 「宁波的宁念第二声」. That is the deck saying how its own
+# words sound, which is a different thing from us patching an engine.
 #
 # So this stays, and stays short: it is for what the general pass misses, not
 # for polyphones in general.
@@ -123,10 +129,19 @@ def for_speech(
     read one way. Only for engines that need it; see
     `TTSProvider.reads_polyphones`.
     """
-    # `letters` off leaves an initialism alone for an engine that spells one
-    # itself — see `TTSProvider.spells_initialisms`. What someone registered by
-    # hand stays either way: that is their word, not our patch.
-    table = {**(SPELL_OUT if letters else {}), **POLYPHONES, **(extra or {})}
+    # Both lists are patches for an engine that cannot do the thing itself, and
+    # both are switched off for one that can — `letters` for spelling an
+    # initialism out, `reading` for working a polyphone out from its sentence.
+    #
+    # `extra` is not a patch and is never switched off: it is what this deck
+    # said its own words sound like. It is also the way back when a neural
+    # voice does get one wrong — 「宁波的宁念第二声」 — which is now the only way,
+    # since the list we keep by hand no longer reaches that engine.
+    table = {
+        **(SPELL_OUT if letters else {}),
+        **(POLYPHONES if reading else {}),
+        **(extra or {}),
+    }
 
     # Latin terms are matched as whole tokens — 「AI」 must not fire inside
     # 「MAIL」. Anything else has no token boundaries to speak of, so it is a
