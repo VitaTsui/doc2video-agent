@@ -1,6 +1,6 @@
 [project]
 name = "doc2video-agent"
-version = "0.10.19"
+version = "0.10.20"
 description = "PDF / PPT intelligent explainer-video agent: document -> narration -> TTS -> director -> deterministic render -> MP4"
 readme = "README.md"
 requires-python = ">=3.11"
