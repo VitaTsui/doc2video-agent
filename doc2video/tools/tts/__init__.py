@@ -284,20 +284,31 @@ class TTSTool:
         matter, and it decides where the beats go.
         """
         lines = sentences or [text]
+        chosen = voice or self._settings.tts_voice
+        # Asked of the engine that will actually speak, not of whichever one
+        # `self._provider` happens to hold. That field is only set once a clip
+        # has been synthesised, and a deck is spoken eight scenes at a time:
+        # all eight of the first batch read it before any of them had run, so
+        # they got the *default* engine's idea of normal — 1.0 — while every
+        # page after them got Edge's 0.86. One divided by 0.86 is sixteen
+        # percent, and that is the step this leaves in the film: pages one to
+        # eight spoken faster than the rest of it, in two separate runs, always
+        # at exactly the width of the worker pool. 「前快后慢」.
+        engine = self._engine_for(chosen)
         segments, duration, source = self._speak(
             lines,
             out_path,
             emphasis=emphasis,
             pronunciation=pronunciation,
-            voice=voice or self._settings.tts_voice,
+            voice=chosen,
             # What was asked for, relative to what this engine calls normal.
-            rate=self._provider.natural_rate * (rate or self._settings.tts_speech_rate or 1.0),
+            rate=engine.natural_rate * (rate or self._settings.tts_speech_rate or 1.0),
         )
         return TTSResult(
             path=out_path,
             duration=duration,
             provider=self._provider.name,
-            voice=voice or self._settings.tts_voice,
+            voice=chosen,
             segments=segments,
             timing_source=source,
         )

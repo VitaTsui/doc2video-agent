@@ -350,15 +350,28 @@ class NarrationSkill(Skill):
             page = by_index.get(index)
             if page is None:
                 continue
+            before = drafts[index].narration if index in drafts else ""
             try:
-                with ledger.call(self.llm.source, f"第 {index} 页｜返工"):
+                # Openable, like every other call that produced something. Why
+                # the page was sent back, and the two versions to compare: a
+                # record that says 「第 13 页｜返工」 and cannot be opened tells
+                # you a page was rewritten and nothing about what changed.
+                with ledger.call(self.llm.source, f"第 {index} 页｜返工") as made:
                     result = self.llm.complete_json(
                         self._prompt([page], budgets, position=index - 1) + f"\n\n# 返工\n{note}",
                         schema=model_schema(NarrationResult),
                         system=load_prompt("narration"),
                         max_tokens=self.ctx.settings.llm_max_tokens,
                     )
-                rewritten = NarrationResult.model_validate(result).pages
+                    rewritten = NarrationResult.model_validate(result).pages
+                    fixed = next(
+                        (c.narration.strip() for c in rewritten if c.index == index), ""
+                    )
+                    made.append(ledger.text_artifact("为什么返工", note, page=index))
+                    if before:
+                        made.append(ledger.text_artifact("返工前", before, page=index))
+                    if fixed:
+                        made.append(ledger.text_artifact("返工后", fixed, page=index))
             except Exception as exc:  # noqa: BLE001 - a failed repair keeps the draft
                 self.log.warning("第 %d 页返工失败，保留原稿：%s", index, exc)
                 continue
@@ -577,7 +590,9 @@ class NarrationSkill(Skill):
             said = f"第 {page.index} 页｜压到 {allowed} 字"
             if attempt > 1:
                 said += f"｜第 {attempt} 轮"
-            with ledger.call(self.llm.source, said, covers=[ledger.page_key(page.index)]):
+            with ledger.call(
+                self.llm.source, said, covers=[ledger.page_key(page.index)]
+            ) as made:
                 result = self.llm.complete_json(
                     self._prompt([page], {page.index: allowed / self._pace()},
                                  position=page.index - 1) + f"\n\n# 返工\n{note}",
@@ -585,7 +600,13 @@ class NarrationSkill(Skill):
                     system=load_prompt("narration"),
                     max_tokens=self.ctx.settings.llm_max_tokens,
                 )
-            pages = NarrationResult.model_validate(result).pages
+                pages = NarrationResult.model_validate(result).pages
+                shorter = next(
+                    (c.narration.strip() for c in pages if c.index == page.index), ""
+                )
+                made.append(ledger.text_artifact("压之前", draft.narration, page=page.index))
+                if shorter:
+                    made.append(ledger.text_artifact("压之后", shorter, page=page.index))
         except Exception as exc:  # noqa: BLE001 - a failed rewrite keeps the draft
             self.log.warning("第 %d 页压缩失败，保留原稿：%s", page.index, exc)
             return None

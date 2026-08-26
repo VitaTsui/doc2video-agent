@@ -351,7 +351,6 @@ class DirectorSkill(Skill):
             candidates.append((score, target, piece, fraction))
 
         covered: set[str] = set()
-        floor = MIN_NEW_SHARE * _pairs(segment.text)
         kept: list[tuple[str, list[str], float]] = []
         seen: set[str] = set()
         by_fit = sorted(candidates, reverse=True, key=lambda c: c[0])
@@ -359,12 +358,12 @@ class DirectorSkill(Skill):
             if target in seen:
                 continue
             element = page.element(target)
-            fresh = _explains(element.text if element else "", segment.text) - covered
+            body = element.text if element else ""
             # The best one is why there is a frame at all; the rest have to earn
             # a second one by explaining a part of the sentence it does not.
-            if kept and len(fresh) < floor:
+            if kept and not _joins(body, segment.text, covered):
                 continue
-            covered |= fresh
+            covered |= _explains(body, segment.text)
             seen.add(target)
             clause = NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis)
             kept.append(
@@ -472,15 +471,14 @@ class DirectorSkill(Skill):
         # What the clause is already accounted for by. A second thing joins the
         # frame only for the part of the clause the first one leaves unexplained.
         covered = _explains(element.text, segment.text)
-        floor = MIN_NEW_SHARE * _pairs(segment.text)
         taken: list[str] = []
         for _score, other_id, other_box in rivals:
             other = page.element(other_id)
             if other is None:
                 continue
-            fresh = _explains(other.text, segment.text) - covered
-            if len(fresh) < floor:
+            if not _joins(other.text, segment.text, covered):
                 continue
+            fresh = _explains(other.text, segment.text) - covered
             dx, dy = _gap_between(box, other_box)
             if dx > near_x or dy > near_y:
                 continue
@@ -774,16 +772,35 @@ LABEL_CHARS = 20
 #: one, before it shares the frame.
 COMPANION_SHARE = 0.55
 
-#: And how much of the clause it has to explain that the first one does not,
-#: as a share of the clause.
+#: And how much of *itself* it has to be there for: the share of its own words
+#: that the clause is saying and the first one had not already accounted for.
 #:
 #: Matching well is not enough, because on a page whose three sections open
 #: with the same boilerplate — 「国家人工智能应用中试基地（制造领域石化化工方向）」
 #: appears in all three — every section matches every sentence about any of
 #: them. One sentence about the first section framed the second and third as
-#: well, on the strength of words the first had already accounted for. A
-#: second thing in the frame has to be there for something.
-MIN_NEW_SHARE = 0.12
+#: well, on the strength of words the first had already accounted for.
+#:
+#: Measured against the clause instead of against the thing itself, which is
+#: what this was at first, the rule punishes exactly the case it exists for. A
+#: sentence that walks a row — 「落到供应链、外贸、招投标、产业链图谱、产业头条和
+#: 产业内参六项情报」 — is fifty-six characters long, so a twelve-percent floor
+#: asks for seven pairs, and a seven-character chip has six. Every chip failed,
+#: and the frame stayed on the five-character heading covering nothing.
+MIN_NEW_OWN_SHARE = 0.25
+
+#: And never fewer than this many pairs, whatever the proportions say. Two
+#: characters in common is a coincidence.
+MIN_NEW_PAIRS = 2
+
+
+def _joins(other_text: str, sentence: str, covered: set[str]) -> bool:
+    """Whether this is in the frame for something the frame does not have yet."""
+    mine = _explains(other_text, sentence)
+    fresh = mine - covered
+    body = (other_text or "").strip()
+    own = max(len(body) - 1, 1)
+    return len(fresh) >= MIN_NEW_PAIRS and len(fresh) / own >= MIN_NEW_OWN_SHARE
 
 
 def _explains(text: str, sentence: str) -> set[str]:
