@@ -99,11 +99,18 @@ def _is_initialism(token: str) -> bool:
     )
 
 
-def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
+def for_speech(
+    text: str, extra: dict[str, str] | None = None, *, reading: bool = False
+) -> str:
     """`text` as it should be spoken. The caption keeps the original.
 
     `extra` is the project's own dictionary, which wins over this one: a deck
     about a company called RAG is talking about the company.
+
+    `reading` turns on the general polyphone pass — working each word's reading
+    out from its sentence and rewriting it into characters that can only be
+    read one way. Only for engines that need it; see
+    `TTSProvider.reads_polyphones`.
     """
     table = {**SPELL_OUT, **POLYPHONES, **(extra or {})}
 
@@ -146,4 +153,6 @@ def for_speech(text: str, extra: dict[str, str] | None = None) -> str:
     # And last, the readings the sentence implies but the characters do not.
     # After the dictionaries, so a term someone registered by hand is spoken
     # the way they asked and is not second-guessed here.
+    if not reading:
+        return spoken
     return polyphone.for_reading(spoken, keep=asked_for)

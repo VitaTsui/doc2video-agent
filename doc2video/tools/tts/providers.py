@@ -31,6 +31,9 @@ class MacOSSayProvider(TTSProvider):
     """Uses the built-in macOS `say` binary, writing 16-bit PCM WAVE."""
 
     name = "macos_say"
+    # It reads 「银行行长」 with two identical 行, so the words are rewritten
+    # into characters that can only be read one way before they are sent.
+    reads_polyphones = False
     # Measured end to end on a real page — synthesised in clauses and rejoined
     # with the pauses its punctuation asks for, which is how a page is spoken
     # now. 4.50 characters a second at rate 1.0; the older 4.75 was measured

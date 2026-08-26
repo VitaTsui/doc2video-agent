@@ -120,9 +120,20 @@ class TTSTool:
                 return candidate
         return self._provider
 
-    def _for_engine(self, text: str, pronunciation: dict[str, str] | None = None) -> str:
+    def _for_engine(
+        self,
+        text: str,
+        pronunciation: dict[str, str] | None = None,
+        *,
+        engine: TTSProvider | None = None,
+    ) -> str:
         """The words as the engine should receive them, before its own markers."""
-        return for_speech(text, self._pronunciation if pronunciation is None else pronunciation)
+        speaking = engine or self._provider
+        return for_speech(
+            text,
+            self._pronunciation if pronunciation is None else pronunciation,
+            reading=not speaking.reads_polyphones,
+        )
 
     def _speak_sentences(
         self, units, work: Path, *, spoken, engine, voice: str, rate: float
@@ -346,8 +357,12 @@ class TTSTool:
         # And a space in what comes out of the dictionary is not a space: it is
         # 「别在这里断开」, which each engine spells differently — see
         # `TTSProvider.phrase_boundary`.
+        speaking = self._engine_for(voice)
+
         def spoken(text: str) -> str:
-            return self._engine_for(voice).phrase_boundary(self._for_engine(text, pronunciation))
+            return speaking.phrase_boundary(
+                self._for_engine(text, pronunciation, engine=speaking)
+            )
 
         self._pronunciation = pronunciation
 
