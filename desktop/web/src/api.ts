@@ -788,9 +788,6 @@ export async function saveModelPrefs(prefs: ModelPrefs): Promise<Connection> {
   return next
 }
 
-export async function configuredKeys(): Promise<string[]> {
-  return invoke<string[]>('configured_keys')
-}
 
 /** Storing a key restarts the backend, which is why this returns a connection. */
 export async function saveKey(vendor: string, key: string): Promise<Connection> {

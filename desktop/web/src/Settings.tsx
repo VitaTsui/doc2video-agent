@@ -41,7 +41,6 @@ export function Settings({
   onReconnected: (connection: Connection) => void
 }) {
   const [tab, setTab] = useState<Tab>('models')
-  const [configured, setConfigured] = useState<string[]>([])
   const [prefs, setPrefs] = useState<api.ModelPrefs>({
     providers: [],
     active: '',
@@ -58,7 +57,6 @@ export function Settings({
 
   useEffect(() => {
     if (!open) return
-    void api.configuredKeys().then(setConfigured)
     void api.modelPrefs().then(setPrefs)
     void api.capabilities().then(setCaps).catch(() => setCaps(null))
     void api.catalogue().then(setCatalogue).catch(() => setCatalogue(null))
@@ -78,7 +76,6 @@ export function Settings({
       onReconnected(await api.saveModelPrefs(next))
       setPrefs(next)
       if (key.trim()) onReconnected(await api.saveKey(entry.id, key.trim()))
-      setConfigured(await api.configuredKeys())
       setCaps(await api.capabilities())
       setEditing(null)
     } catch (thrown) {
@@ -101,7 +98,6 @@ export function Settings({
     try {
       onReconnected(await api.saveModelPrefs(next))
       setPrefs(next)
-      setConfigured(await api.configuredKeys())
       setCaps(await api.capabilities())
     } catch (thrown) {
       setError(api.describeError(thrown))
@@ -169,18 +165,18 @@ export function Settings({
 
               <ul className="providers">
                 {prefs.providers.map((entry) => {
-                  const local = entry.protocol === 'agent_cli'
-                  const ready = local || configured.includes(entry.id)
                   const protocol = api.PROTOCOLS.find((p) => p.id === entry.protocol)
                   return (
                     <li key={entry.id} className="provider">
                       <div className="provider__row">
                         <span>
                           {entry.name || '未命名'}
-                          {/* A dot, not a word: this is a list to scan, and the
-                              only question asked of each row is whether it is
-                              usable. */}
-                          {ready && <span className="provider__dot" title="可用" />}
+                          {/* No 「已配置」 mark here. Knowing whether a row has a
+                              key means reading the keychain for every row, and
+                              macOS asks for a password each time it is a build
+                              it has not seen — this app is ad-hoc signed, so
+                              every release is one. Opening settings prompted for
+                              a password. It is not worth a dot. */}
                           <span className="muted" style={{ marginLeft: 8 }}>
                             {protocol?.label ?? entry.protocol}
                             {entry.models.length > 0 && ` · ${entry.models.length} 个模型`}
@@ -200,7 +196,6 @@ export function Settings({
                       {editing === entry.id && (
                         <ProviderForm
                           entry={entry}
-                          configured={configured.includes(entry.id)}
                           detected={catalogue?.models.agent_cli ?? []}
                           saving={saving === entry.id}
                           onCancel={() => setEditing(null)}
@@ -228,7 +223,6 @@ export function Settings({
                   <li className="provider">
                     <ProviderForm
                       entry={adding}
-                      configured={false}
                       detected={catalogue?.models.agent_cli ?? []}
                       saving={saving === adding.id}
                       onCancel={() => setAdding(null)}
@@ -352,14 +346,12 @@ export function Settings({
 
 function ProviderForm({
   entry,
-  configured,
   detected,
   saving,
   onCancel,
   onSave,
 }: {
   entry: api.Provider
-  configured: boolean
   /** Which local CLIs this machine has, for the agent_cli protocol. */
   detected: api.ModelInfo[]
   saving: boolean
@@ -413,9 +405,11 @@ function ProviderForm({
           <Input.Password
             className="provider__input"
             value={key}
-            // Says what leaving it alone means. Keys are write-only — they go
-            // to the OS keychain and are never read back into the page.
-            placeholder={configured ? '已配置——输入新值可替换' : '粘贴 API Key'}
+            // Says what leaving it alone means. Keys are write-only — they
+            // go to the OS keychain and are never read back into the page, so
+            // this cannot say whether one is already there, and does not try:
+            // asking would put a password prompt in front of the panel.
+            placeholder="粘贴 API Key，留空则不改"
             onChange={(value) => setKey(value)}
           />
         </>

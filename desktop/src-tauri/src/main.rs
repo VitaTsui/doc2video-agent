@@ -49,11 +49,6 @@ fn connection(state: State<'_, AppState>) -> Result<Connection, String> {
     })
 }
 
-/// Which provider entries hold a key. Never the keys themselves.
-#[tauri::command]
-fn configured_keys(app: tauri::AppHandle) -> Result<Vec<String>, String> {
-    Ok(secrets::configured(&prefs::load(&app_data(&app)?)))
-}
 
 /// Store one provider entry's key and restart the backend so it takes effect.
 #[tauri::command]
@@ -291,7 +286,6 @@ fn main() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             connection,
-            configured_keys,
             runtime_status,
             install_runtime,
             save_key,

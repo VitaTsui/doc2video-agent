@@ -275,11 +275,16 @@ body {
    one control you actually want while it runs look unlike everything else in
    the box. That something is happening is already said, at length, by the
    thinking card in the transcript; this button only has to say 「按我就停」.
-   Which is also what Claude and ChatGPT draw. */
+   Which is also what Claude and ChatGPT draw.
+
+   Its two colours are the send button's, swapped: a white square filling most
+   of a solid orange tile read as a hole punched in the button rather than a
+   glyph sitting on it. Orange on the pale tint is the pairing the theme
+   already uses for a pressable thing that is not the primary action. */
 .composer__wrap [class*='stop'] {
   border: none;
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--user-bg);
+  color: var(--accent);
   cursor: pointer;
   border-radius: 8px;
   width: 32px;
@@ -299,8 +304,17 @@ body {
   justify-content: center;
   width: 100%;
   height: 100%;
-  font-size: 12px;
-  color: var(--accent-ink);
+  color: var(--accent);
+}
+
+/* Sized on the svg, not the span: the library sets `font-size: 24px` inline on
+   the icon, which beats any rule here. A filled 22px square in a 32px button is
+   69% of its face — next to the send arrow, which is a 20px stroked outline, it
+   reads as a solid tile rather than a glyph, and no colour makes that look
+   right. Matched to the arrow's weight instead. */
+.composer__wrap [class*='stop'] svg {
+  width: 17px;
+  height: 17px;
 }
 
 .composer {
@@ -979,17 +993,6 @@ body {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-}
-
-/* Configured, in the smallest mark that can say it. */
-.provider__dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #2f9e5f;
-  margin-left: 7px;
-  vertical-align: middle;
 }
 
 /* The form opens as a panel inside the row's card — tinted, inset, its own
