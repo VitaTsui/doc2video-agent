@@ -133,6 +133,7 @@ class TTSTool:
             text,
             self._pronunciation if pronunciation is None else pronunciation,
             reading=not speaking.reads_polyphones,
+            letters=not speaking.spells_initialisms,
         )
 
     def _speak_sentences(
@@ -366,7 +367,6 @@ class TTSTool:
 
         self._pronunciation = pronunciation
 
-        units = plan_units(sentences, emphasis=emphasis)
         # Which engine this will be, named before the first call rather than
         # after it. `_speak_once` switches the engine as it goes, so reading
         # `self._provider` here labelled the deck's first call with whatever
@@ -375,7 +375,18 @@ class TTSTool:
         # including that one was spoken by Edge.
         provider = self._engine_for(voice)
         engine = provider.name
-        if len(units) <= 1:
+        # A page in one call, for an engine that phrases a page. Everything
+        # below — a call per sentence, the silence we write between them, the
+        # gaps cut back afterwards — exists to give an engine the phrasing it
+        # cannot find for itself, and buys nothing from one that can. What it
+        # costs is audible: the same page came back 11% shorter than the engine
+        # would have said it, because our arithmetic had trimmed its breath.
+        #
+        # The timings still have to come from somewhere, and the ladder in
+        # `_time` is where: this voice reports none, so the sentence boundaries
+        # are the pauses measured in the clip that was just written.
+        units = [] if provider.paces_itself else plan_units(sentences, emphasis=emphasis)
+        if provider.paces_itself or len(units) <= 1:
             text = "".join(sentences)
             with ledger.call(f"tts:{engine}", f"{len(text)} 字"):
                 duration = self._speak_once(spoken(text), out_path, voice=voice, rate=rate)

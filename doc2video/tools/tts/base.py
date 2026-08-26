@@ -91,6 +91,27 @@ class TTSProvider:
     # 「目地第」.
     reads_polyphones = True
 
+    # Whether this engine decides its own beats.
+    #
+    # `say` does not: it pauses the same length at every mark and has to be
+    # told where the sentence turns, so a page is spoken one sentence per call
+    # and the silence between them is written by hand.
+    #
+    # A neural voice does, and doing it for it costs more than it buys. Handed
+    # a whole page it settles on a pace and phrases it; cut into sentences and
+    # respliced, it is that many separate utterances with our arithmetic
+    # between them. 「完全交给引擎。」
+    paces_itself = False
+
+    # Whether it spells an initialism out on its own.
+    #
+    # `say` reads 「AI」 as a word, so the letters are written as syllables.
+    # Edge spells it — measured: 「CCAI」 costs 0.91 seconds against the same
+    # sentence without it, which is four letter names — and writing only the
+    # vowels as syllables left 「CC诶爱」, half Latin and half Chinese, in the
+    # middle of one word.
+    spells_initialisms = False
+
     def available(self) -> bool:
         return False
 

@@ -107,7 +107,11 @@ def _is_initialism(token: str) -> bool:
 
 
 def for_speech(
-    text: str, extra: dict[str, str] | None = None, *, reading: bool = False
+    text: str,
+    extra: dict[str, str] | None = None,
+    *,
+    reading: bool = False,
+    letters: bool = True,
 ) -> str:
     """`text` as it should be spoken. The caption keeps the original.
 
@@ -119,7 +123,10 @@ def for_speech(
     read one way. Only for engines that need it; see
     `TTSProvider.reads_polyphones`.
     """
-    table = {**SPELL_OUT, **POLYPHONES, **(extra or {})}
+    # `letters` off leaves an initialism alone for an engine that spells one
+    # itself — see `TTSProvider.spells_initialisms`. What someone registered by
+    # hand stays either way: that is their word, not our patch.
+    table = {**(SPELL_OUT if letters else {}), **POLYPHONES, **(extra or {})}
 
     # Latin terms are matched as whole tokens — 「AI」 must not fire inside
     # 「MAIL」. Anything else has no token boundaries to speak of, so it is a
@@ -134,7 +141,7 @@ def for_speech(
         token = match.group(0)
         if (named := lookup.get(token.upper())) is not None:
             return named
-        if _is_initialism(token):
+        if letters and _is_initialism(token):
             # Joined, not spaced. A space here becomes a phrase boundary on
             # the way to the engine, and the letters came out with a stop
             # between each of them. Measured: 「CC诶艾」 and 「C C 诶 艾」 take the
