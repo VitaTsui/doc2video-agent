@@ -476,8 +476,18 @@ export function App() {
                   from = mine.length ? mine[mine.length - 1].seq : since
                 }).catch(() => undefined)
               }
-              say({ role: 'assistant', kind: 'text', text: HANDOVER[state.stage] })
-              card = say({ role: 'assistant', kind: 'job', text: '', job: state })
+              // One turn, the way the run's first card is one turn: the
+              // sentence and the chain it introduces belong to the same beat.
+              // Said as two, the sentence and its own chain were separated by
+              // the gap between turns while every other card had the smaller
+              // gap inside one — so the handovers looked spaced out and the
+              // rest did not.
+              card = say({
+                role: 'assistant',
+                kind: 'job',
+                text: HANDOVER[state.stage],
+                job: state,
+              })
             }
             stage = state.stage
             amend(card, { job: state })
