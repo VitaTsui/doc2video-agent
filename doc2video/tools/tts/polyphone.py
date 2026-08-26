@@ -223,3 +223,76 @@ def _words(text: str) -> list[tuple[int, str]]:
         found.append((at, word))
         at += len(word)
     return found
+
+
+@functools.lru_cache(maxsize=1)
+def _by_sound() -> dict[str, list[str]]:
+    """Every character that can only be read one way, indexed by that reading.
+
+    Built once by walking the common CJK block. It is the answer to 「宁波的宁念
+    第二声」: a text-in engine takes no phonetic input, so the only way to ask
+    for a reading is to hand it a character that has no other — and this is the
+    list of those.
+    """
+    from pypinyin import Style, pinyin
+
+    index: dict[str, list[str]] = {}
+    for code in range(0x4E00, 0x9FA6):
+        char = chr(code)
+        readings = pinyin(char, style=Style.TONE3, heteronym=True)[0]
+        if len(readings) == 1:
+            index.setdefault(readings[0], []).append(char)
+    return index
+
+
+def stand_in(char: str, tone: int) -> str | None:
+    """A character that sounds like `char` said in `tone`, and cannot be read otherwise.
+
+    Ranked by how common it is, because the engine is more likely to have heard
+    of one it sees often — and because a rare character is a worse thing to have
+    sitting in the text if anyone ever reads it. 「宁」 at tone 2 has seventeen
+    candidates and this picks 凝, which is the one a person would pick.
+    """
+    from pypinyin import Style, pinyin
+
+    said = pinyin(char, style=Style.TONE3, heteronym=True)[0]
+    # Only a reading the character actually has, and the commonest of those
+    # when more than one shares the tone. Two ways to get this wrong, both of
+    # which this had: taking any base with the asked-for tone let 宁's zhù
+    # answer for 「第二声」 and returned 竹; taking the first base and bending it
+    # to the tone asked for invented dàn as a reading of 单.
+    # In the order pypinyin lists them, which is commonest first: 宁 is ning4
+    # before zhu4, so 「第四声」 is 佞 and not 住. Within one reading the stand-in
+    # is chosen by how common *it* is. Two readings that share a tone — 行 is
+    # xíng and háng — cannot be told apart this way, and that is what the
+    # 「念作某某」 form is for.
+    options: list[str] = []
+    for reading in said:
+        if not (reading[-1:].isdigit() and int(reading[-1]) == tone):
+            continue
+        options = [c for c in _by_sound().get(reading, []) if c != char]
+        if options:
+            break
+    if not options:
+        return None
+
+    return max(options, key=lambda c: (_commonness().get(c, 0), -ord(c)))
+
+
+@functools.lru_cache(maxsize=1)
+def _commonness() -> dict[str, int]:
+    """How often each character is seen, for choosing between homophones.
+
+    A rare character is a bad stand-in twice over: the engine may not know it,
+    and anyone who reads the text sees nonsense rather than near-nonsense. The
+    segmenter already ships a frequency table — but it is built lazily, and
+    read before `initialize()` it is empty, which silently turns the ranking
+    into 「lowest code point」 and picks 儜 over 凝.
+    """
+    from .phrasing import _tokenizer
+
+    jieba = _tokenizer()
+    if jieba is None:
+        return {}
+    jieba.initialize()
+    return getattr(jieba.dt, "FREQ", {}) or {}

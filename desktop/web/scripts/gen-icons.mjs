@@ -14,7 +14,10 @@ import { readFileSync, writeFileSync } from 'node:fs'
 
 const WANTED = {
   'heroicons-outline': ['paper-clip', 'x'],
-  tabler: ['arrow-up'],
+  // The square is the stop button in the composer: a spinner alone says
+  // 「在忙」 and not 「按我就停」, and stopping is the one thing there is to do
+  // while it runs. The ring that turns around it is CSS.
+  tabler: ['arrow-up', 'player-stop-filled'],
   'eos-icons': ['loading'],
   // SecondConf draws this one itself; without it the confirm dialog opens
   // with a blank square where the question mark goes.

@@ -66,6 +66,11 @@ export function Composer({
           // Only the handler was missing, so it looked stoppable and was not,
           // and stopping lived in a second control up in the transcript.
           onStop={onStop}
+          // A spinner says 「在忙」 and not 「按我就停」, and while it runs
+          // stopping is the only thing there is to do. The square is the stop
+          // symbol; the ring that turns around it is CSS, so the button still
+          // says something is happening.
+          stopIcon="tabler:player-stop-filled"
           fileList={files}
           onFileListChange={setFiles}
           // A real address, not just an accept filter: without one the picker

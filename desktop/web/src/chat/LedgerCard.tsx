@@ -24,6 +24,9 @@ const KIND_MARK: Record<string, string> = {
   note: '',
 }
 
+/** Longer than this and a piece is prose, not a label. */
+const LONGEST_WHOLE = 24
+
 export function LedgerCard({
   projectId,
   entries,
@@ -278,7 +281,18 @@ function CallRow({
         {call.detail && (
           <span className="muted ledger__what">
             {call.detail.split('｜').map((part, index) => (
-              <span key={index} className="ledger__part">
+              <span
+                key={index}
+                // A piece is kept whole so the row folds at the seams. A piece
+                // that is longer than the row has no seams to fold at — a
+                // failure carries the tool's own last words, and holding those
+                // on one line pushes them out through the side of the panel.
+                className={
+                  part.length > LONGEST_WHOLE
+                    ? 'ledger__part ledger__part--long'
+                    : 'ledger__part'
+                }
+              >
                 {part}
               </span>
             ))}

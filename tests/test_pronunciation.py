@@ -36,7 +36,8 @@ def test_a_short_run_of_capitals_is_read_as_letters():
     # syllables: 「A」 came back as 啊. 「C」 is better left as the letter — 「西」
     # is a Chinese word that merely sounds near it.
     assert for_speech("AI 应用中试平台") == "诶爱 应用中试平台"
-    assert for_speech("浙江大学 CCAI 宁波中心") == "浙江大学 CC诶爱 宁波中心"
+    # 宁波 is in the hand-written list — the engine reads its 宁 as 宁可's.
+    assert for_speech("浙江大学 CCAI 宁波中心") == "浙江大学 CC诶爱 凝波中心"
     # All consonants: nothing to rewrite, and nothing to separate either —
     # the engine reads MCP as its letters on its own.
     assert for_speech("石化生态 MCP 工具库") == "石化生态 MCP 工具库"
@@ -151,3 +152,50 @@ def test_only_the_engine_that_needs_the_rewriting_gets_it():
 
     # The two that stay, whichever engine is speaking.
     assert for_speech("AI 日更一次", reading=False) == "诶爱 日耕一次"
+
+
+def test_a_chinese_reading_can_be_taught_in_one_sentence():
+    """念错一个中文名，不该等一次发版。
+
+    The per-project dictionary was there and the sentence that fills it only
+    matched Latin terms: 「RAG 念 R A G」 worked and 「宁波念作凝波」 did nothing,
+    so every mis-read Chinese name had to go into the code.
+
+    Two phrasings. The homophone, when someone knows one; and the tone, which
+    is what a person actually says after hearing it wrong — there the homophone
+    is worked out.
+    """
+    from doc2video.agent.planner import _pronunciations_in
+
+    assert _pronunciations_in("宁波念作凝波") == {"宁波": "凝波"}
+    assert _pronunciations_in("「宁波」的宁念第二声") == {"宁波": "凝波"}
+    # The sentence's own connective is not part of the term.
+    assert _pronunciations_in("把长沙的长念第二声") == {"长沙": "常沙"}
+    # Latin still works.
+    assert _pronunciations_in("RAG 念 R A G") == {"RAG": "R A G"}
+
+
+def test_a_stand_in_is_a_character_that_can_only_be_read_one_way():
+    """替身只能有一个读音，否则修一个词坏一个词。
+
+    Two ways this got it wrong before it got it right. Taking any base with the
+    asked-for tone let 宁's zhù answer for 「第二声」 and returned 竹; taking the
+    first base and bending it to the tone asked for invented dàn as a reading
+    of 单. What is left is: a reading the character really has, commonest
+    first, and among the characters that can only be read that way, the one
+    seen most often.
+    """
+    from pypinyin import Style, pinyin
+
+    from doc2video.tools.tts.polyphone import stand_in
+
+    for char, tone, expected in [("宁", 2, "凝"), ("宁", 4, "佞"), ("重", 2, "崇"),
+                                 ("长", 2, "常"), ("单", 4, "善"), ("供", 1, "宫")]:
+        found = stand_in(char, tone)
+        assert found == expected, f"{char} 第{tone}声 → {found}"
+        only = pinyin(found, style=Style.TONE3, heteronym=True)[0]
+        assert len(only) == 1, f"{found} 自己就是多音字：{only}"
+        assert int(only[0][-1]) == tone
+
+    # 单 has no dàn reading, so there is nothing to hand back.
+    assert stand_in("单", 3) is None

@@ -48,9 +48,16 @@ SPELL_OUT = {
 # dictionary, and 「日更」 is newer than it: every reading of it comes back gèng
 # where the word is gēng.
 #
+# And it is for what the *engine* gets wrong too, now that the general pass
+# only runs for engines that need it: 「宁波」 came back as nìng bō, which is
+# 「宁可」's 宁. A term earns a line here after being heard getting it wrong.
+#
 # So this stays, and stays short: it is for what the general pass misses, not
 # for polyphones in general.
 POLYPHONES = {
+    # 凝 has one reading and it is the one 宁波 wants. 柠 looks like the obvious
+    # stand-in and has three.
+    "宁波": "凝波",
     "更新": "耕新",
     "更换": "耕换",
     "更迭": "耕迭",

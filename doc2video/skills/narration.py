@@ -607,6 +607,24 @@ class NarrationSkill(Skill):
                 made.append(ledger.text_artifact("压之前", draft.narration, page=page.index))
                 if shorter:
                     made.append(ledger.text_artifact("压之后", shorter, page=page.index))
+                # And what became of it, on the call that produced it. Written
+                # here rather than as a record of its own: a separate line has
+                # to repeat the page and the target to say which rewrite it is
+                # talking about, and then floats in the middle of the run
+                # belonging to nothing. Opened, this call already shows 压之前
+                # and 压之后; 结果 is the third thing anyone looking at it wants.
+                verdict, why = _keeps_enough(shorter, draft.narration, page, allowed)
+                made.append(
+                    ledger.text_artifact(
+                        "结果",
+                        {
+                            "ok": "采用了",
+                            "costs": f"采用了，代价是{why}",
+                            "no": f"没采用：{why}",
+                        }[verdict],
+                        page=page.index,
+                    )
+                )
         except Exception as exc:  # noqa: BLE001 - a failed rewrite keeps the draft
             self.log.warning("第 %d 页压缩失败，保留原稿：%s", page.index, exc)
             return None
@@ -627,10 +645,9 @@ class NarrationSkill(Skill):
             verdict, why = _keeps_enough(candidate.narration, draft.narration, page, allowed)
             if verdict == "no":
                 self.log.info("第 %d 页%s，不采用", page.index, why)
-                ledger.note("压缩没采用", f"第 {page.index} 页｜{why}")
                 continue
             if verdict == "costs":
-                ledger.degradation("压缩少讲一处", f"第 {page.index} 页｜{why}")
+                self.log.info("第 %d 页压缩的代价：%s", page.index, why)
             self.log.info(
                 "第 %d 页改写压缩：%d → %d 字", page.index,
                 len(draft.narration), len(candidate.narration),
