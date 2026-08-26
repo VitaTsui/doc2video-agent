@@ -227,8 +227,15 @@ class DirectorSkill(Skill):
             return []
 
         scored: list[tuple[float, ActionChoice]] = []
+        # Whether the writer did the binding step on this page at all. If it
+        # did, an empty list is an answer — 「这一句在页面上没有出处」 — and the
+        # camera should hold still rather than go looking. If it did not, the
+        # empty lists mean nothing and everything has to be guessed.
+        anyone_bound = any(segment.element_refs for segment in scene.segments)
         for segment in scene.segments:
-            for target_id, also, fraction in self._targets_in(segment, page, threshold=threshold):
+            for target_id, also, fraction in self._targets_in(
+                segment, page, threshold=threshold, bound_page=anyone_bound
+            ):
                 element = page.element(target_id)
                 if element is None or not _worth_pointing_at(element) or _is_banner(element, page):
                     continue
@@ -262,6 +269,24 @@ class DirectorSkill(Skill):
                  if choice.type is ActionType.POINTER else choice)
                 for score, choice in scored
             ]
+
+        # 「框标题这种是禁止的。」 A box around a name and nothing it names points
+        # at the label while the narrator describes what the label names —
+        # 「再说招募目的。」 announces a section, and the sentence after it frames
+        # what the section says. A pointer is exempt: it is a dot beside a
+        # thing, not a box around it.
+        #
+        # After the normalisation above, not before. A heading is small and
+        # briefly mentioned, so it is picked as a pointer — and then promoted
+        # to a box by the rule that a page uses one gesture. Checked first,
+        # every one of them slipped through as a pointer and came out a frame.
+        scored = [
+            (score, choice)
+            for score, choice in scored
+            if choice.type not in (ActionType.HIGHLIGHT, ActionType.ZOOM)
+            or choice.also
+            or not _just_a_name(page.element(choice.target), page)
+        ]
 
         scored.sort(key=lambda item: -item[0])
         chosen: list[ActionChoice] = []
@@ -313,7 +338,12 @@ class DirectorSkill(Skill):
         return ActionType.HIGHLIGHT
 
     def _targets_in(
-        self, segment: NarrationSegment, page: DocumentPage, *, threshold: float = MENTION_THRESHOLD
+        self,
+        segment: NarrationSegment,
+        page: DocumentPage,
+        *,
+        threshold: float = MENTION_THRESHOLD,
+        bound_page: bool = False,
     ) -> list[tuple[str, list[str], float]]:
         """Everything this sentence talks about, and roughly when it gets there.
 
@@ -324,6 +354,27 @@ class DirectorSkill(Skill):
         camera follows — timed by where it falls in the sentence, because the
         sentence's own start and end are measured.
         """
+        # What the writer said it was talking about. Authoritative when it is
+        # there: it wrote the sentence with the page's element list in front of
+        # it and knows which line it came from, while everything below this is
+        # the camera reverse-engineering that answer out of shared characters.
+        # All of them, not the first — 「落到供应链、外贸、招投标三类情报」 names
+        # three chips and framing one of them points at a third of the sentence.
+        bound = [
+            ref
+            for ref in segment.element_refs
+            if (found := page.element(ref)) is not None
+            and _worth_pointing_at(found)
+            and not _is_banner(found, page)
+        ]
+        if bound:
+            return [(bound[0], self._that_fit(bound[0], bound[1:], page), 0.0)]
+        if bound_page:
+            # This page's sentences did say what they were about, and this one
+            # said 「nothing」. 「过渡句没必要框」 — and a guess here would be a
+            # frame drawn over a sentence that is not about the page.
+            return []
+
         pieces = [piece for piece in _CLAUSE_SPLIT.split(segment.text) if piece.strip()]
         if len(pieces) < 2:
             bound = self._resolve_target(segment, page, threshold=threshold)
@@ -331,17 +382,45 @@ class DirectorSkill(Skill):
                 return []
             return [(bound, self._named_with(bound, segment, page, threshold=threshold), 0.0)]
 
-        found: list[tuple[str, list[str], float]] = []
+        # Every clause's candidate first, then the choosing. Taken in the order
+        # they are read, the first clause to match anything takes the frame and
+        # everything after it is judged against that — and on a page whose
+        # sections open with the same boilerplate the first match is as likely
+        # to be the wrong section as the right one. Judged best-first, the block
+        # the sentence is actually about is the one that sets the standard.
+        candidates: list[tuple[float, str, str, float]] = []
         spent = 0
         for piece in pieces:
             fraction = spent / max(len(segment.text), 1)
             spent += len(piece)
             clause = NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis)
             target = self._resolve_target(clause, page, threshold=threshold)
-            if target and (not found or found[-1][0] != target):
-                found.append(
-                    (target, self._named_with(target, clause, page, threshold=threshold), fraction)
-                )
+            if not target:
+                continue
+            element = page.element(target)
+            score = _match(element.text, segment.text) if element else 0.0
+            candidates.append((score, target, piece, fraction))
+
+        covered: set[str] = set()
+        kept: list[tuple[str, list[str], float]] = []
+        seen: set[str] = set()
+        by_fit = sorted(candidates, reverse=True, key=lambda c: c[0])
+        for _score, target, piece, fraction in by_fit:
+            if target in seen:
+                continue
+            element = page.element(target)
+            body = element.text if element else ""
+            # The best one is why there is a frame at all; the rest have to earn
+            # a second one by explaining a part of the sentence it does not.
+            if kept and not _joins(body, segment.text, covered):
+                continue
+            covered |= _explains(body, segment.text)
+            seen.add(target)
+            clause = NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis)
+            kept.append(
+                (target, self._named_with(target, clause, page, threshold=threshold), fraction)
+            )
+        found = sorted(kept, key=lambda k: k[2])
         if not found:
             bound = self._resolve_target(segment, page, threshold=threshold)
             if not bound:
@@ -360,9 +439,12 @@ class DirectorSkill(Skill):
                 return ref
         # Nothing bound: find the element this sentence is talking about.
         #
-        # The model fills `element_refs` when it feels like it — measured on a
-        # 30-page deck, 30 of 70 sentences came back with none, and seven pages
-        # had not one — so the camera cannot depend on them. It used to fall
+        # Nothing bound. The writer is asked to say which element every sentence
+        # is about and now checked on it — see 第六步 of the writing prompt and
+        # the 「绑定」 lines in the record — but a sentence that is a transition
+        # or a statement about the whole page has nothing to bind to, and an
+        # older script may have none at all. Then the camera has to guess, and
+        # everything below is that guess. It used to fall
         # back on the element's first six characters appearing verbatim in the
         # sentence, which is a coin flip: the script says 「供应链经营风险可控化」
         # for a card headed 「01 供应链经营风险可控化」 and the six characters
@@ -394,6 +476,25 @@ class DirectorSkill(Skill):
             if best is None or score > best[0]:
                 best = (score, element.id)
         return best[1] if best else None
+
+    @staticmethod
+    def _that_fit(best: str, others: list[str], page: DocumentPage) -> list[str]:
+        """As many of the rest as one frame can hold without becoming the page."""
+        element = page.element(best)
+        if element is None:
+            return []
+        box = focus_box(element, page)
+        kept: list[str] = []
+        for other_id in others:
+            other = page.element(other_id)
+            if other is None or other_id == best or other_id in kept:
+                continue
+            grown = _union(box, focus_box(other, page))
+            if _coverage_box(grown, page) > MAX_UNION_COVERAGE:
+                continue
+            box = grown
+            kept.append(other_id)
+        return kept
 
     def _named_with(
         self,
@@ -440,8 +541,17 @@ class DirectorSkill(Skill):
         rivals.sort(reverse=True, key=lambda r: r[0])
         box = focus_box(element, page)
         near_x, near_y = page.width * NEAR_SHARE, page.height * NEAR_SHARE
+        # What the clause is already accounted for by. A second thing joins the
+        # frame only for the part of the clause the first one leaves unexplained.
+        covered = _explains(element.text, segment.text)
         taken: list[str] = []
         for _score, other_id, other_box in rivals:
+            other = page.element(other_id)
+            if other is None:
+                continue
+            if not _joins(other.text, segment.text, covered):
+                continue
+            fresh = _explains(other.text, segment.text) - covered
             dx, dy = _gap_between(box, other_box)
             if dx > near_x or dy > near_y:
                 continue
@@ -449,6 +559,7 @@ class DirectorSkill(Skill):
             if _coverage_box(grown, page) > MAX_UNION_COVERAGE:
                 continue
             box = grown
+            covered |= fresh
             taken.append(other_id)
         return taken
 
@@ -734,6 +845,50 @@ LABEL_CHARS = 20
 #: one, before it shares the frame.
 COMPANION_SHARE = 0.55
 
+#: And how much of *itself* it has to be there for: the share of its own words
+#: that the clause is saying and the first one had not already accounted for.
+#:
+#: Matching well is not enough, because on a page whose three sections open
+#: with the same boilerplate — 「国家人工智能应用中试基地（制造领域石化化工方向）」
+#: appears in all three — every section matches every sentence about any of
+#: them. One sentence about the first section framed the second and third as
+#: well, on the strength of words the first had already accounted for.
+#:
+#: Measured against the clause instead of against the thing itself, which is
+#: what this was at first, the rule punishes exactly the case it exists for. A
+#: sentence that walks a row — 「落到供应链、外贸、招投标、产业链图谱、产业头条和
+#: 产业内参六项情报」 — is fifty-six characters long, so a twelve-percent floor
+#: asks for seven pairs, and a seven-character chip has six. Every chip failed,
+#: and the frame stayed on the five-character heading covering nothing.
+MIN_NEW_OWN_SHARE = 0.25
+
+#: And never fewer than this many pairs, whatever the proportions say. Two
+#: characters in common is a coincidence.
+MIN_NEW_PAIRS = 2
+
+
+def _joins(other_text: str, sentence: str, covered: set[str]) -> bool:
+    """Whether this is in the frame for something the frame does not have yet."""
+    mine = _explains(other_text, sentence)
+    fresh = mine - covered
+    body = (other_text or "").strip()
+    own = max(len(body) - 1, 1)
+    return len(fresh) >= MIN_NEW_PAIRS and len(fresh) / own >= MIN_NEW_OWN_SHARE
+
+
+def _explains(text: str, sentence: str) -> set[str]:
+    """Which pairs of the sentence this element's own words account for."""
+    body, said = (text or "").strip(), (sentence or "").strip()
+    if len(body) < 3 or len(said) < 3:
+        return set()
+    have = {body[i : i + 2] for i in range(len(body) - 1)}
+    return {said[i : i + 2] for i in range(len(said) - 1)} & have
+
+
+def _pairs(sentence: str) -> int:
+    said = (sentence or "").strip()
+    return max(len(said) - 1, 1)
+
 #: How far apart two things may be and still be one thing being talked about,
 #: as a share of the page. Two corners united make a rectangle holding
 #: everything between them.
@@ -865,6 +1020,64 @@ def _is_label(element, page: DocumentPage) -> bool:
         if below and near and longer:
             return True
     return False
+
+
+#: How many things have to sit beside a short line before it is heading them
+#: rather than standing among them.
+HEADS_A_ROW = 2
+
+
+def _just_a_name(element, page: DocumentPage) -> bool:
+    """Whether framing this alone would be framing a heading.
+
+    Short is not enough. A contents page is a column of short lines with
+    nothing underneath any of them, and 「(一)背景及技术牵头方」 *is* the content
+    there — a rule that went by length alone stopped framing the one thing
+    those pages have.
+
+    Three shapes, and they are all 「this names something else」:
+
+    - a longer block underneath it (`_is_label`) — 「招募目的」;
+    - a longer block beside it on the same line — 「产业链结构 ｜ 原料、产品…」;
+    - a row of things beside it on the same line — 「场景应用层」, whose
+      neighbours are chips as short as it is, which is why looking for a
+      *longer* one missed it.
+
+    A number or a picture is exempt: 「130305家」 is short and is the whole
+    point of pointing at it.
+    """
+    if element is None or element.kind in (
+        ElementKind.NUMBER,
+        ElementKind.CHART,
+        ElementKind.IMAGE,
+    ):
+        return False
+    text = (element.text or "").strip()
+    if not text or len(text) > LABEL_CHARS or element.bbox is None:
+        return False
+    if _is_label(element, page):
+        return True
+    # A short subtitle is a heading by its own account — that is what the kind
+    # means. 「场景应用层」 is one, and the things beside it are chips as short
+    # as it is, so neither of the shapes below finds it.
+    if element.kind is ElementKind.SUBTITLE:
+        return True
+
+    mine = element.bbox
+    gap_x = (page.width or 1920) * ROW_GAP
+    beside = 0
+    for other in page.elements:
+        body = (other.text or "").strip()
+        if other.id == element.id or other.bbox is None or not body:
+            continue
+        at = other.bbox
+        overlap = min(mine.y + mine.h, at.y + at.h) - max(mine.y, at.y)
+        if overlap < 0.6 * min(mine.h, at.h) or at.x < mine.x + mine.w:
+            continue
+        if len(body) >= len(text) * LABEL_BODY_RATIO and at.x - (mine.x + mine.w) <= gap_x:
+            return True
+        beside += 1
+    return beside >= HEADS_A_ROW
 
 
 def frame_of(target: str, also: list[str], page: DocumentPage) -> BBox | None:

@@ -199,10 +199,11 @@ def _density_note(page, budget: int) -> str:
         )
     return (
         f"这一页有 {count} 处内容，讲其中 {keep} 处——文字是预算的 {ratio:.1f} 倍，"
-        "讲不完，也不该讲完。先把骨架点到：每个小标题、每一栏都要有；"
-        "剩下的名额留给最要紧的细项，其余的不讲。"
-        "长段落只取名称、数字和结论，举例、括号里的补充、脚注不讲。"
-        "没讲到的不要提，也不要用「等等」「以及其他」把它们带过去。"
+        "讲不完，也不该讲完。\n"
+        f"挑哪 {keep} 处由你定：先看每一栏、每个小标题，再看哪几处最要紧。"
+        "但**挑中的每一处都要讲成话**——它是什么、做什么用、页面给了什么数字。"
+        "宁可少挑两处，也不要把每一处都压成一个名字：一串名词念完，听的人什么都没得到。\n"
+        "没挑中的，一个字都不要提，也不要用「等等」「以及其他」把它们带过去。"
     )
 
 
@@ -350,15 +351,28 @@ class NarrationSkill(Skill):
             page = by_index.get(index)
             if page is None:
                 continue
+            before = drafts[index].narration if index in drafts else ""
             try:
-                with ledger.call(self.llm.source, f"第 {index} 页｜返工"):
+                # Openable, like every other call that produced something. Why
+                # the page was sent back, and the two versions to compare: a
+                # record that says 「第 13 页｜返工」 and cannot be opened tells
+                # you a page was rewritten and nothing about what changed.
+                with ledger.call(self.llm.source, f"第 {index} 页｜返工") as made:
                     result = self.llm.complete_json(
                         self._prompt([page], budgets, position=index - 1) + f"\n\n# 返工\n{note}",
                         schema=model_schema(NarrationResult),
                         system=load_prompt("narration"),
                         max_tokens=self.ctx.settings.llm_max_tokens,
                     )
-                rewritten = NarrationResult.model_validate(result).pages
+                    rewritten = NarrationResult.model_validate(result).pages
+                    fixed = next(
+                        (c.narration.strip() for c in rewritten if c.index == index), ""
+                    )
+                    made.append(ledger.text_artifact("为什么返工", note, page=index))
+                    if before:
+                        made.append(ledger.text_artifact("返工前", before, page=index))
+                    if fixed:
+                        made.append(ledger.text_artifact("返工后", fixed, page=index))
             except Exception as exc:  # noqa: BLE001 - a failed repair keeps the draft
                 self.log.warning("第 %d 页返工失败，保留原稿：%s", index, exc)
                 continue
@@ -577,7 +591,9 @@ class NarrationSkill(Skill):
             said = f"第 {page.index} 页｜压到 {allowed} 字"
             if attempt > 1:
                 said += f"｜第 {attempt} 轮"
-            with ledger.call(self.llm.source, said, covers=[ledger.page_key(page.index)]):
+            with ledger.call(
+                self.llm.source, said, covers=[ledger.page_key(page.index)]
+            ) as made:
                 result = self.llm.complete_json(
                     self._prompt([page], {page.index: allowed / self._pace()},
                                  position=page.index - 1) + f"\n\n# 返工\n{note}",
@@ -585,7 +601,13 @@ class NarrationSkill(Skill):
                     system=load_prompt("narration"),
                     max_tokens=self.ctx.settings.llm_max_tokens,
                 )
-            pages = NarrationResult.model_validate(result).pages
+                pages = NarrationResult.model_validate(result).pages
+                shorter = next(
+                    (c.narration.strip() for c in pages if c.index == page.index), ""
+                )
+                made.append(ledger.text_artifact("压之前", draft.narration, page=page.index))
+                if shorter:
+                    made.append(ledger.text_artifact("压之后", shorter, page=page.index))
         except Exception as exc:  # noqa: BLE001 - a failed rewrite keeps the draft
             self.log.warning("第 %d 页压缩失败，保留原稿：%s", page.index, exc)
             return None
@@ -1330,20 +1352,40 @@ class NarrationSkill(Skill):
             if draft is None:
                 continue
             valid_ids = {e.id for e in page.elements}
+            # Counted, because this failed silently for a long time. The writer
+            # is asked which element each sentence is about and the camera reads
+            # the answer before it tries to guess — but on a real 30-page film
+            # every one of 155 sentences came back with an empty list, and
+            # nothing said so. A page that binds nothing, or that names ids the
+            # page does not have, is now on the record.
+            asked = len(draft.segments)
+            bound = invented = 0
             segments: list[NarrationSegment] = []
             for seq, seg in enumerate(draft.segments, start=1):
                 text = seg.text.strip()
                 if not text:
                     continue
+                # Drop refs the model invented; a wrong id would aim the camera
+                # at nothing.
+                refs = [ref for ref in seg.element_refs if ref in valid_ids]
+                invented += len(seg.element_refs) - len(refs)
+                bound += 1 if refs else 0
                 segments.append(
                     NarrationSegment(
                         id=f"{scene_id(order)}_s{seq:02d}",
                         text=text,
-                        # Drop refs the model invented; a wrong id would aim the camera at nothing.
-                        element_refs=[ref for ref in seg.element_refs if ref in valid_ids],
+                        element_refs=refs,
                         emphasis=seg.emphasis,
                     )
                 )
+            if asked:
+                said = f"第 {page.index} 页｜{bound}/{asked} 句说了讲的是哪一处"
+                if invented:
+                    said += f"｜{invented} 个 id 页面上没有，丢了"
+                if bound == 0:
+                    ledger.degradation("讲稿没绑元素", said + "，镜头只能靠字面猜")
+                elif invented:
+                    ledger.note("绑定", said)
             if not segments:
                 segments = self._split_into_segments(draft.narration, scene_id(order))
 

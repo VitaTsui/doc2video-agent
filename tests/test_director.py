@@ -676,3 +676,135 @@ def test_length_stops_deciding_which_block_the_camera_frames():
 
     assert _shared_grams(sprawl, said)[0] > _shared_grams(card, said)[0], "按个数是长的赢"
     assert _match(card, said) > _match(sprawl, said), "两边一起比，选真正在讲的那张卡"
+
+
+def test_the_writers_own_answer_beats_the_cameras_guess():
+    """镜头先信讲稿说的，猜是没得信时才用的。
+
+    The writer wrote the sentence with the page's element list in front of it,
+    so it knows which line the sentence came from; the camera can only compare
+    characters, and on a page whose sections open with the same boilerplate
+    that comparison lands on the wrong section as readily as the right one.
+
+    All of the bound ids, not the first: 「落到供应链、外贸、招投标三类情报」 names
+    three chips, and a frame around one of them points at a third of what is
+    being said.
+    """
+    from doc2video.schemas import NarrationSegment
+    from doc2video.skills.director import DirectorSkill
+
+    page = DocumentPage(
+        index=1,
+        title="页",
+        width=1920,
+        height=1080,
+        elements=[
+            SlideElement(id="chip_a", kind=ElementKind.PARAGRAPH, text="石化供应链情报",
+                         bbox=BBox(x=200, y=400, w=200, h=40)),
+            SlideElement(id="chip_b", kind=ElementKind.PARAGRAPH, text="石化外贸情报",
+                         bbox=BBox(x=440, y=400, w=200, h=40)),
+            SlideElement(id="chip_c", kind=ElementKind.PARAGRAPH, text="石化招投标情报",
+                         bbox=BBox(x=680, y=400, w=200, h=40)),
+            # The one a character-match would reach for, and the wrong answer.
+            SlideElement(id="decoy", kind=ElementKind.PARAGRAPH,
+                         text="市场研判做供应链、外贸、招投标情报的说明段落，与上一节共用同样的开头套话",
+                         bbox=BBox(x=200, y=700, w=900, h=120)),
+        ],
+    )
+    segment = NarrationSegment(
+        id="s1",
+        text="最上面，市场研判做供应链、外贸、招投标情报。",
+        element_refs=["chip_a", "chip_b", "chip_c"],
+    )
+
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+    found = skill._targets_in(segment, page)
+
+    assert len(found) == 1, f"绑定明确时只该有一个框：{found}"
+    target, also, _fraction = found[0]
+    assert {target, *also} == {"chip_a", "chip_b", "chip_c"}, "三处都要在框里"
+
+
+def _project_with(page):
+    return VideoProject(
+        project_id="proj_bound",
+        source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
+        document=DocumentModel(pages=[page]),
+    )
+
+
+def test_a_transition_gets_no_frame_when_the_page_bound_the_rest():
+    """「过渡句没必要框。」
+
+    An empty `element_refs` is an answer when the page's other sentences carry
+    ids: the writer looked and said this one is not about anything on the page.
+    Guessing anyway draws a frame over 「先看第一块建设内容」.
+
+    A page where nothing is bound is a page where the step was skipped, and
+    then the empty lists mean nothing — there the camera still has to guess.
+    """
+    from doc2video.schemas import NarrationSegment
+    from doc2video.skills.director import DirectorSkill
+
+    page = _two_block_page()
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+    passing = NarrationSegment(id="s2", text="第一块讲的内容说完了，接着看下一块。")
+
+    assert skill._targets_in(passing, page, bound_page=True) == [], "绑过的页面，空就是空"
+    assert skill._targets_in(passing, page, bound_page=False), "没绑过的页面还得猜"
+
+
+def test_a_name_on_its_own_is_not_something_to_frame():
+    """「框标题这种是禁止的。」
+
+    「再说招募目的。」 announces the next section; a frame around the four
+    characters of its name points at a label while the narrator is about to
+    describe what the label names. The sentence after it frames the section.
+
+    Decided by the thing, not by the layout: judging it by 「is there a longer
+    block under or beside this」 got 「招募目的」 right and 「场景应用层」 wrong,
+    because the things beside that one are chips as short as it is.
+    """
+    from doc2video.schemas import BBox, ElementKind, NarrationSegment, SlideElement
+    from doc2video.skills.director import ActionType, DirectorSkill
+
+    page = _two_block_page()
+    # A name with the paragraph it names underneath it.
+    page.elements.append(
+        SlideElement(id="head", kind=ElementKind.PARAGRAPH, text="招募目的",
+                     bbox=BBox(x=100, y=300, w=140, h=40))
+    )
+    page.elements.append(
+        SlideElement(id="head_body", kind=ElementKind.PARAGRAPH,
+                     text="为加快基地建设，依托行业大模型和数据服务平台等能力底座，推进先导场景招募揭榜。",
+                     bbox=BBox(x=100, y=350, w=900, h=80))
+    )
+    page.elements.append(
+        SlideElement(id="figure", kind=ElementKind.NUMBER, text="130305家",
+                     bbox=BBox(x=100, y=900, w=140, h=40))
+    )
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+
+    from doc2video.schemas import Scene
+
+    def boxes_for(segment):
+        scene = Scene(scene_id="sc", source_page=1, narration=segment.text,
+                      segments=[segment], duration=12.0)
+        return [
+            c for c in skill._choose_heuristically(scene, page)
+            if c.type in (ActionType.HIGHLIGHT, ActionType.ZOOM)
+        ]
+
+    naming = NarrationSegment(id="s1", text="再说招募目的。", element_refs=["head"],
+                              start=0.0, end=6.0)
+    assert boxes_for(naming) == [], "只报一个名字，不给框"
+
+    # Together with what it names, it is a frame again.
+    both = NarrationSegment(id="s2", text="招募目的讲的是第一块内容，说清楚为什么招募。",
+                            element_refs=["head", "e1"], start=0.0, end=6.0)
+    assert boxes_for(both), "名字加它领的内容，可以框"
+
+    # A figure is short and is the whole point of pointing at it.
+    counted = NarrationSegment(id="s3", text="上面挂着 130305 家企业，覆盖整条产业链。",
+                               element_refs=["figure"], start=0.0, end=6.0)
+    assert boxes_for(counted), "数字不算标题"
