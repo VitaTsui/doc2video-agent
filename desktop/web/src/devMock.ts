@@ -174,8 +174,6 @@ export function installDevMock() {
           return import.meta.env.VITE_BACKEND
             ? { base_url: import.meta.env.VITE_BACKEND, token: import.meta.env.VITE_TOKEN ?? '' }
             : { base_url: 'http://127.0.0.1:1', token: 'dev' }
-        case 'configured_keys':
-          return []
         default:
           return null
       }

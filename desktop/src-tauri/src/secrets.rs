@@ -65,19 +65,6 @@ pub fn load_for(id: &str, protocol: &str) -> Option<String> {
     })
 }
 
-/// Which provider entries hold a key, without revealing any of them.
-///
-/// The settings panel needs to show "configured" or "empty"; it never needs the
-/// value back, and sending it to the webview would put it somewhere the
-/// keychain was chosen to avoid.
-pub fn configured(prefs: &crate::prefs::Prefs) -> Vec<String> {
-    prefs
-        .providers
-        .iter()
-        .filter(|provider| load_for(&provider.id, &provider.protocol).is_some())
-        .map(|provider| provider.id.clone())
-        .collect()
-}
 
 /// The chosen provider's key, as the environment variable it is read from.
 ///
