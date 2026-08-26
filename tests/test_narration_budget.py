@@ -387,3 +387,59 @@ def test_another_round_is_only_worth_it_when_there_is_a_long_way_to_go():
     # And what a second lands on: close enough to stop.
     assert 120 <= ceiling * KEEP_COMPRESSING, "已经接近了，不该再花一次调用"
     assert COMPRESSION_ROUNDS >= 2, "一轮到不了预算"
+
+
+def test_a_page_laid_out_as_a_table_says_so():
+    """矩阵页要把两条轴都说出来，不能压成一维。
+
+    「(一)高质量数据集」 is four chains across the top and four kinds of dataset
+    down the side, with sixteen cells of bullets between them. The writer is
+    handed the page as a flat list in reading order and cannot see that, so it
+    wrote the cells out one after another — 「预训练数据集，比如核心专利与科研成
+    果、招投标商机…」 — taking two items from one column and two from another and
+    reading as one list. The page's second axis is gone, and with it what any of
+    those items belongs to.
+
+    Found geometrically, because that is where it is; and only there — a page of
+    three cards side by side is not a table, and neither is a page of rows.
+    """
+    from doc2video.schemas import BBox, DocumentPage, ElementKind, PageType, SlideElement
+    from doc2video.skills.narration import _matrix_of
+
+    def at(element_id, x, y, w, h, text):
+        return SlideElement(
+            id=element_id, kind=ElementKind.PARAGRAPH, text=text,
+            bbox=BBox(x=x, y=y, w=w, h=h),
+        )
+
+    across = ["创新链", "产业链", "人才链", "资金链"]
+    down = ["预训练数据集", "指令微调数据集", "强化学习偏好数据集", "基准测试数据集"]
+    elements = [
+        at(f"c{i}", 390 + i * 406, 286, 108, 48, name) for i, name in enumerate(across)
+    ] + [
+        at(f"r{i}", 56, 396 + i * 145, 168, 60, name) for i, name in enumerate(down)
+    ] + [
+        at(f"cell{i}{j}", 255 + j * 406, 366 + i * 145, 300, 120,
+           f"• 这一格里的条目之一 • 还有一条 • 再一条（{i}{j}）")
+        for i in range(4) for j in range(4)
+    ]
+    table = DocumentPage(index=15, title="表", page_type=PageType.CONTENT,
+                         width=1920, height=1080, elements=elements)
+
+    found = _matrix_of(table)
+    assert found is not None, "认不出这是一张表"
+    assert found[0] == across and found[1] == down
+
+    # Three cards side by side, each with a heading and a paragraph: not a table.
+    cards = DocumentPage(
+        index=8, title="三栏", page_type=PageType.CONTENT, width=1920, height=1080,
+        elements=[
+            at("h1", 147, 440, 386, 42, "市场：AI重构行业淘汰节奏"),
+            at("h2", 723, 440, 386, 42, "经营：AI解决企业生存痛点"),
+            at("h3", 1304, 440, 354, 42, "发展：组织AI化构建壁垒"),
+            at("b1", 149, 529, 424, 90, "率先完成组织改造的企业，交付速度和获客成本形成优势。"),
+            at("b2", 721, 529, 455, 90, "重复性事务吞噬人力，替代标准化工作，压缩固定运营开支。"),
+            at("b3", 1306, 529, 424, 90, "统一收纳企业业务经验，避免核心人才流失带走经验。"),
+        ],
+    )
+    assert _matrix_of(cards) is None, "三栏并排不是表"
