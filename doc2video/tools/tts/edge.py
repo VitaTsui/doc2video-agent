@@ -65,6 +65,8 @@ class EdgeProvider(TTSProvider):
     # four characters a second is about where a person explaining something
     # lands.
     natural_rate = 0.86
+    paces_itself = True
+    spells_initialisms = True
     default_voice = DEFAULT_VOICE
     # Across a whole deck, gaps between sentences included — which is what a
     # page's budget has to cover. Derived rather than guessed: a real 30-page

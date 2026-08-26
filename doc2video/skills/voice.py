@@ -170,6 +170,18 @@ class VoiceSkill(Skill):
         scene.audio.text_hash = fingerprint
         scene.duration = scene.audio.duration
 
+        # Where the sentence boundaries came from. It matters now that a page
+        # is spoken in one call: the engine reports none, so they are the
+        # pauses measured in the clip — and if a page has none to measure, the
+        # times fall back to splitting the clip by sentence length, which puts
+        # every caption and every box a little off. Said out loud so a page
+        # that came back that way can be found.
+        if getattr(result, "timing_source", "") == "estimate" and len(scene.segments) > 1:
+            ledger.degradation(
+                "句子时间靠估的",
+                f"第 {scene.source_page} 页｜{len(scene.segments)} 句，"
+                "clip 里找不到停顿，字幕和框选按字数摊",
+            )
         # Timestamps come back relative to the speech; the lead silence
         # pushes all of them later, and subtitles follow them exactly.
         for segment, timed in zip(scene.segments, result.segments, strict=False):

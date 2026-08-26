@@ -194,6 +194,11 @@ def test_a_voice_call_is_named_after_the_engine_that_speaks(tmp_path, settings):
         natural_rate = 1.0
         chars_per_second = 4.6
         default_voice = "zh-CN-YunyangNeural"
+        # It says it is Edge, so it has Edge's shape: a neural voice paces a
+        # page itself and spells its own initialisms.
+        paces_itself = True
+        spells_initialisms = True
+        reads_polyphones = True
 
         def voices(self):
             return ["zh-CN-YunyangNeural"]
