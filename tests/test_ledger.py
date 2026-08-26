@@ -227,3 +227,40 @@ def test_a_voice_call_is_named_after_the_engine_that_speaks(tmp_path, settings):
 
     calls = [e for e in ledger.read(path) if e.kind is EntryKind.CALL]
     assert calls and all(call.name == "tts:edge" for call in calls)
+
+
+def test_a_failed_call_keeps_what_came_back(tmp_path: Path):
+    """失败那一行说不清的，留在它的附件里。
+
+    五次「compatible返回的结构化结果不是合法 JSON 对象」，一模一样的十一个
+    字，附件是空的。分不出网关是「不支持这一档」还是「拒绝了这一次」——那份
+    Markdown 大纲才分得出，而它被丢掉了，只能在应用外面重新复现一遍才看到。
+    """
+    from doc2video.core.errors import ToolFailed
+
+    path = tmp_path / "ledger.jsonl"
+    with ledger.recording(path, "run_1") as recorder:
+        with recorder.stage("理解结构"):
+            with contextlib.suppress(ToolFailed), ledger.call("compatible", "第 1-6 页"):
+                raise ToolFailed(
+                    "compatible返回的结构化结果不是合法 JSON 对象",
+                    detail={"snippet": "# 视频讲解页面分析\n\n## 第 1 页\n"},
+                )
+
+    failed = [e for e in ledger.read(path) if e.kind is EntryKind.CALL]
+    assert len(failed) == 1
+    assert failed[0].status == "failed"
+    said = [a for a in failed[0].artifacts if a.label == "返回内容"]
+    assert said, "失败的调用要留下它收到的东西"
+    assert "视频讲解页面分析" in (said[0].text or "")
+
+
+def test_a_failure_with_nothing_to_show_adds_no_artifact(tmp_path: Path):
+    path = tmp_path / "ledger.jsonl"
+    with ledger.recording(path, "run_1") as recorder:
+        with recorder.stage("理解结构"):
+            with contextlib.suppress(RuntimeError), ledger.call("compatible", "第 1-6 页"):
+                raise RuntimeError("连不上")
+
+    failed = [e for e in ledger.read(path) if e.kind is EntryKind.CALL]
+    assert failed[0].artifacts == []

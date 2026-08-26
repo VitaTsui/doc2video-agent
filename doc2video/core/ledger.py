@@ -190,6 +190,14 @@ def _last_seq(path: Path) -> int:
 
 # -- module-level access ---------------------------------------------------
 
+def _returned(exc: BaseException) -> str:
+    """What the tool actually sent back, when the error kept a piece of it."""
+    extra = getattr(exc, "detail", None)
+    if not isinstance(extra, dict):
+        return ""
+    return str(extra.get("snippet") or "").strip()
+
+
 def _why(exc: BaseException) -> str:
     """Why it failed, in the space one line of the record has.
 
@@ -317,6 +325,16 @@ def call(
         status = "failed"
         why = _why(exc)
         detail = f"{detail}｜{why}" if detail else why
+        # What came back, on the call that failed to make sense of it. The line
+        # says 「不是合法 JSON 对象」 and that is the right summary, but it is not
+        # enough to act on: a gateway rejecting `json_object` looks identical to
+        # one that does not support it, and the reply that told them apart — a
+        # Markdown outline where the JSON should have been — was thrown away.
+        # Five failed calls said the same eleven words and nothing else, and the
+        # answer had to be reproduced outside the app to be seen at all.
+        said = _returned(exc)
+        if said:
+            made.append(text_artifact("返回内容", said))
         raise
     finally:
         recorder.record(
