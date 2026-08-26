@@ -461,10 +461,11 @@ def test_how_much_of_a_page_is_worth_naming_follows_the_page():
 
     assert worth_naming(page_of(3)) == 3      # read it
     assert worth_naming(page_of(4)) == 4
-    assert worth_naming(page_of(8)) == 6      # choose from it
-    assert worth_naming(page_of(24)) == 10
+    assert worth_naming(page_of(5)) == 5      # still read it
+    assert worth_naming(page_of(8)) == 5      # choose from it
+    assert worth_naming(page_of(24)) == 8
     # Never a flat ceiling: a denser page still earns more than a lighter one.
-    assert worth_naming(page_of(24)) > worth_naming(page_of(12)) > worth_naming(page_of(8))
+    assert worth_naming(page_of(24)) > worth_naming(page_of(16)) > worth_naming(page_of(8))
 
 
 def test_what_one_block_is_worth_follows_the_block():

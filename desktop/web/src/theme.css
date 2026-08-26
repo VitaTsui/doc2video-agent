@@ -269,6 +269,23 @@ body {
    two centred columns sit a few pixels apart — visible on Windows, where the
    scrollbar takes real width, and invisible on macOS, where it overlays.
    `--gutter` is measured at runtime because only the platform knows it. */
+/* The stop button's whole face, not just the glyph in the middle of it.
+   The component library hangs `onClick` on the icon itself — a 24px span
+   centred in a control-height box — so a press that landed on the ring around
+   it did nothing, which from the outside is a stop button that does not stop.
+   The span is made to fill its box, so the target is the button. */
+.composer__wrap [class*='stop'] {
+  display: flex;
+}
+
+.composer__wrap [class*='stop'] > span[role='img'] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
 .composer {
   flex-shrink: 0;
   padding: 0 calc(20px + var(--gutter, 0px)) 20px 20px;
@@ -726,7 +743,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 14px 0 0 40px;
+  margin: 14px 0 0;
 }
 
 .suggests__chip {
@@ -1584,9 +1601,12 @@ body {
   user-select: all;
 }
 
+/* The sentence drops under the button when there is no room for both, rather
+   than taking the room from it. */
 .page-row__redo {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   align-items: center;
   margin-top: 8px;
   font-size: 12.5px;
@@ -1925,12 +1945,17 @@ body {
    Separated by a rule rather than by a box. A card here would be a third kind
    of container in a column that already has two, and what this is is the end
    of the transcript, not another thing in it. */
+/* Flush with the replies. It used to be inset by 40px, which was the width of
+   the assistant's mark plus its gap — the column the words sat in. The mark is
+   gone and the words moved to the edge; this stayed where it was, so the one
+   block with buttons in it was the only thing on the page that did not line up
+   with anything. */
 .actionbar {
   display: flex;
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
-  margin: 6px 0 4px 40px;
+  margin: 6px 0 4px;
   padding-top: 16px;
   border-top: 1px solid var(--line);
 }
@@ -1941,11 +1966,18 @@ body {
   font-size: 12.5px;
 }
 
+/* A button is as wide as its label. Nothing said so, so in the panel — which
+   can be three hundred points wide — it was squeezed by the sentence beside it
+   until 「重新生成这一页」 broke across two lines and the second line was the
+   single character 「页」. `margin-left: auto` came off with it: that belonged
+   to the bar under the transcript, where the hint already claims the space,
+   and here it was pushing the button around for no reason. */
 .deckgate__draft {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
   border: 1px solid var(--line-strong, var(--line));
   background: transparent;
   color: var(--ink);

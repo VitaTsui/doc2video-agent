@@ -547,3 +547,49 @@ def test_the_engine_phrases_its_own_sentence():
     # The comma is a beat and keeps its marker; the breaths inside each clause
     # do not get one.
     assert spoken[0].count("<") == 1, f"句内只该有标点那一个停顿：{spoken[0]}"
+
+
+def test_a_pages_silence_is_held_to_what_its_length_can_afford():
+    """「前面语速太快，后面语速又太慢」 — and the speaking never changed pace.
+
+    Every beat is a fixed length, so a page's silence depends on how its writer
+    punctuated it. Measured across one film: pages written in forty-character
+    sentences spent 13% of their time not talking and pages written in
+    seventeen-character ones spent 25%, which came out as 5.13 characters a
+    second against 4.28.
+    """
+    from doc2video.tools.tts.units import PAUSE_PER_CHAR, plan_units
+
+    long_sentences = ["這" * 40 + "。"] * 4
+    short_sentences = ["這" * 10 + "。"] * 16
+
+    # What matters is that the two land in the same place: the complaint is
+    # about the difference between pages, not about any one page's number.
+    shares = []
+    for sentences in (long_sentences, short_sentences):
+        said = sum(len(s) for s in sentences)
+        gap = sum(u.pause_before for u in plan_units(sentences))
+        shares.append(gap / said)
+        assert gap <= said * PAUSE_PER_CHAR * 1.05, f"{gap:.2f}s 的停顿配 {said} 个字"
+    assert abs(shares[0] - shares[1]) < 0.006, f"每字的静默还差着 {shares}"
+
+    # Only ever downward. Filling an unused allowance would make a page that
+    # was written tight drawl instead.
+    import doc2video.tools.tts.units as units_module
+
+    ceiling = units_module.PAUSE_PER_CHAR
+    try:
+        units_module.PAUSE_PER_CHAR = 999
+        designed = sum(u.pause_before for u in plan_units(short_sentences))
+    finally:
+        units_module.PAUSE_PER_CHAR = ceiling
+    evened = sum(u.pause_before for u in plan_units(short_sentences))
+    assert evened <= designed, "只往下调"
+
+    # A page too short for an average keeps its beats whatever the arithmetic
+    # says: a section divider is two sentences and the beat between them is
+    # most of its shape.
+    from doc2video.tools.tts.units import PAUSE_SENTENCE
+
+    tiny = plan_units(["先说背景。", "再说方案。"])
+    assert any(u.pause_before == PAUSE_SENTENCE for u in tiny), "短页不参与摊平"

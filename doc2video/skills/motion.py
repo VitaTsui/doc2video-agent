@@ -21,7 +21,7 @@ from ..schemas import (
 )
 from ..tools.renderer import PlanAction, PlanArea, PlanChart, PlanSubtitle, ScenePlan
 from .base import Skill
-from .director import focus_box
+from .director import focus_box, frame_of
 from .layout import build_subtitles, to_frame_area, with_highlight_padding
 
 
@@ -75,12 +75,7 @@ class MotionSkill(Skill):
             # The clip goes with it: whether two clauses belong on one line
             # depends on whether the voice stops between them, and only the
             # audio knows that.
-            page = self.project.document.page(scene.source_page)
-            for cue in build_subtitles(
-                scene,
-                self.ctx.asset_path(scene.audio.path),
-                page_type=page.page_type if page else None,
-            ):
+            for cue in build_subtitles(scene, self.ctx.asset_path(scene.audio.path)):
                 timeline.subtitles.append(
                     SubtitleCue(
                         start=round(start + cue.start, 3),
@@ -121,7 +116,10 @@ class MotionSkill(Skill):
                     # caption and the figure above it are one thing to look at,
                     # and a frame around the caption alone points at the label
                     # instead of at what it labels.
-                    box = focus_box(element, page)
+                    # Everything the clause named, not just the best match.
+                    box = frame_of(action.target, action.params.get("with") or [], page) or (
+                        focus_box(element, page)
+                    )
                     # A highlight marks the thing, so it starts from its box and
                     # gains an even margin. A zoom is framing a region, and
                     # wants a proportional one.

@@ -49,6 +49,15 @@ MIN_ITEM_CHARS_FOR_FLOOR = 18
 #: number.
 COMPRESSION_ROUNDS = 3
 
+#: Pages there is nothing to save on. A cover is a title and the names of the
+#: people who wrote it; a contact page is an address. Neither is where a film
+#: gets long — the cover ran eight characters over — and both are made almost
+#: entirely of proper nouns, which is the one kind of text that cannot be said
+#: shorter. Asked to fit anyway, the only thing left to give up is a piece of a
+#: name: 「宁波城知产业链数据科技有限公司」 came back as 「…数据科技」.
+#: 「封面不要压字数。」
+NEVER_COMPRESSED = (PageType.COVER, PageType.CONTACT)
+
 #: How far past its ceiling a page has to be to be worth another round. A page
 #: at 1.2× is close enough — the round it would cost is a minute of waiting for
 #: a handful of characters.
@@ -425,6 +434,8 @@ class NarrationSkill(Skill):
         for page in pages:
             draft = drafts.get(page.index)
             if draft is None or page.index in frozen:
+                continue
+            if page.page_type in NEVER_COMPRESSED:
                 continue
             allowed = budgets.get(page.index, 0.0)
             excess = spoken(draft.narration) - allowed

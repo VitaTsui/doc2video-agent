@@ -19,7 +19,7 @@ from ..schemas.telemetry import QualityDimension, QualityReport
 from ..tools.renderer.base import SUBTITLE_BOTTOM_MARGIN
 from ..tools.tts.providers import SilentProvider
 from . import render_review, speech_review
-from .base import Skill
+from .base import ProgressFn, Skill
 
 # What a scene's recorded engine is when nothing spoke it.
 SILENT_PROVIDER = SilentProvider.name
@@ -86,11 +86,19 @@ PAGE_OPENING_CHARS = 25
 #
 # Not a ceiling either: a 24-block page and an 8-block page are not equally
 # worth six sentences. The share grows with the page and grows more slowly
-# than it — `2√n` names everything up to four, six of eight, ten of
-# twenty-four. Measured across this deck's 30 pages: 185 blocks unbounded
-# (15.8 minutes), 130 under this rule (12.1), and the twelve sparse pages are
-# untouched because their own count is already below it.
-NAMING_SHARE = 2.0
+# than it, so a page is read while it is short and chosen from once it is not.
+#
+# `2√n` was the first setting and it was still too generous — half of a
+# sixteen-block page is not a choice, it is a shorter list. 「应该寻找下重点，
+# 挑重要的点说。」 `1.5√n` names everything up to four, five of eight, six of
+# sixteen, eight of twenty-four; the sparse pages are untouched either way,
+# because their own count is already below it.
+NAMING_SHARE = 1.5
+
+#: A page with no more than this many blocks is read rather than chosen from.
+#: `1.5√n` dips under the count itself at four, and 「内容少的就按文稿来」 is the
+#: half of the rule that was never in question.
+READ_IN_FULL = 5
 
 
 def _pace(settings) -> float:
@@ -121,7 +129,9 @@ def worth_naming(page) -> int:
     nobody gave a length for.
     """
     count = len(blocks_of(page))
-    return min(count, math.ceil(NAMING_SHARE * math.sqrt(count))) if count else 0
+    if not count:
+        return 0
+    return min(count, max(READ_IN_FULL, math.ceil(NAMING_SHARE * math.sqrt(count))))
 
 
 #: Past this, a page holds more than it can say and summarising it is the
@@ -284,7 +294,20 @@ class ReviewSkill(Skill):
     name = "presentation-review"
     description = "检测事实、节奏、字幕、音画同步和视觉质量"
 
-    def run(self) -> None:
+    def run(self, *, progress: ProgressFn | None = None) -> None:
+        # Between the checks, and only between them: a job notices it has been
+        # asked to stop when progress is reported, and 质检 is one stage of
+        # nearly two minutes that reported nothing from start to finish. Four
+        # checks in a row on this thread are four places it can be stopped.
+        step = 0
+
+        def tick(what: str) -> None:
+            nonlocal step
+            step += 1
+            if progress is not None:
+                progress("review", what, step, 4)
+
+        tick("结构与讲稿")
         # Each check is its own entry, with what it found. A single 「质检」 line
         # for six different kinds of looking says only that something was
         # checked — not that the captions were measured against the page's
@@ -296,6 +319,7 @@ class ReviewSkill(Skill):
         # can be perfectly timed, correctly split and sitting on top of the
         # number it is describing. Geometry, not pixels — the renderer's layout
         # is ours, so the answer is arithmetic.
+        tick("字幕")
         with ledger.call("check:字幕", "出界、遮挡页面文字"):
             findings.extend(
                 render_review.check_subtitles(
@@ -308,6 +332,7 @@ class ReviewSkill(Skill):
         # And whether anything was actually drawn. Only once there are clips to
         # look at: before a render there is no picture to have an opinion about.
         # And how it sounds, which neither of the others can hear.
+        tick("配音")
         with ledger.call("check:配音", "语速、停顿、平铺直叙"):
             findings.extend(
                 speech_review.check_speech(
@@ -319,6 +344,7 @@ class ReviewSkill(Skill):
                 )
             )
         if self.project.render.scene_clips:
+            tick("画面")
             with ledger.call("check:画面", "空画面、动作有没有画出来"):
                 findings.extend(render_review.check_frames(self.project, self.ctx.asset_path))
                 findings.extend(render_review.check_actions(self.project, self.ctx.asset_path))

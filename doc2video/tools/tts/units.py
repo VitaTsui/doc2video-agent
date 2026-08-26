@@ -259,6 +259,71 @@ def plan_units(
         # Nothing to pause before at the start; the scene's own lead silence
         # is already there.
         units[0].pause_before = 0.0
+    return _even_out(units, sentences)
+
+
+#: How much silence a page is allowed, per character it says.
+#:
+#: Every beat above is a fixed length, which makes a page's silence depend on
+#: how its writer punctuated it rather than on how much it has to say. Measured
+#: across one film: pages written in forty-character sentences spent 13% of
+#: their time not talking, pages written in seventeen-character ones spent 25%,
+#: and the speaking itself never changed pace — 5.13 characters a second on the
+#: fast pages against 4.28 on the slow ones, which is what 「前面语速太快，后面
+#: 语速又太慢」 sounds like from a seat in front of it.
+#:
+#: Thirty milliseconds a character is about a sixth of the time spent speaking:
+#: enough for a real beat at every full stop on a page of long sentences, and a
+#: ceiling on a page that stops every eight words.
+PAUSE_PER_CHAR = 0.030
+
+#: Never scale a beat below this. Below about this, a gap is not heard as a
+#: pause; it is heard as a join, and a page of them runs on.
+#:
+#: It has to sit under the shortest beat there is (、 at 0.24) or it stops
+#: being a floor and becomes a floor *and a ceiling*: set at 0.45 it raised
+#: every comma from 0.32, and a page that was meant to be tightened came out
+#: slower than before.
+PAUSE_KEEP = 0.18
+
+#: Below this, a page is not long enough for an average to mean anything.
+#:
+#: The allowance is a rate — so many milliseconds of silence per character —
+#: and a rate applied to a section divider of eleven characters buys it a third
+#: of a second for the whole page. Those pages are two sentences and a title
+#: and the beats between them are the whole of their shape. The evening-out is
+#: for pages that go on long enough to drift.
+EVEN_OUT_FROM = 60
+
+
+def _even_out(units: list[Unit], sentences: list[str]) -> list[Unit]:
+    """Hold a page's silence to what its length can afford.
+
+    A narrator reading eight short sentences does not take a full beat after
+    each of them; they read them as one passage. This is that, arithmetically:
+    the beats keep their proportions to each other — a 、 stays shorter than a
+    ，, which stays shorter than a 。 — and all of them give way together until
+    the page's total silence fits what it has to say.
+
+    Only downward. A page with room to spare keeps the beats it was designed
+    with; stretching them to fill the allowance would make a short page drawl.
+    """
+    said = sum(len(text.strip()) for text in sentences)
+    total = sum(unit.pause_before for unit in units)
+    allowed = said * PAUSE_PER_CHAR
+    if said < EVEN_OUT_FROM or total <= allowed:
+        return units
+    scale = allowed / total
+    for unit in units:
+        if unit.pause_before <= 0:
+            continue
+        scaled = unit.pause_before * scale
+        # The floor protects beats, not seams. A long clause with no
+        # punctuation in it is cut at the breaths its own words allow, and a
+        # breath is not a pause — it is the join between two halves of one
+        # push. Held above the floor they add up faster than the beats do, and
+        # a page made mostly of them could never come down to its allowance.
+        unit.pause_before = scaled if unit.breath else max(PAUSE_KEEP, scaled)
     return units
 
 

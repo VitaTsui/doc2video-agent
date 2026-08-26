@@ -66,10 +66,16 @@ class EdgeProvider(TTSProvider):
     # lands.
     natural_rate = 0.86
     default_voice = DEFAULT_VOICE
-    # Lower than the figure above because this one is measured across a whole
-    # deck, gaps between sentences included: 4.15 stood against 4.48 on the
-    # paragraph, and the same ratio carried onto 4.19 gives this.
-    chars_per_second = 3.88
+    # Across a whole deck, gaps between sentences included — which is what a
+    # page's budget has to cover. Derived rather than guessed: a real 30-page
+    # film measured 4.6 characters a second at -8% with 16.5% of its time in
+    # silence, so the speaking alone was 5.5; at -14% that is 5.15, and the
+    # pause cap holds a page's silence to about 14% of it.
+    #
+    # (The first attempt at this number was 3.88, scaled off a single
+    # paragraph. A paragraph has commas in it, so that figure already had
+    # pauses baked in and scaling it again counted them twice.)
+    chars_per_second = 4.45
 
     def available(self) -> bool:
         return self._import_error() is None
