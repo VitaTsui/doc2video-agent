@@ -86,11 +86,19 @@ PAGE_OPENING_CHARS = 25
 #
 # Not a ceiling either: a 24-block page and an 8-block page are not equally
 # worth six sentences. The share grows with the page and grows more slowly
-# than it — `2√n` names everything up to four, six of eight, ten of
-# twenty-four. Measured across this deck's 30 pages: 185 blocks unbounded
-# (15.8 minutes), 130 under this rule (12.1), and the twelve sparse pages are
-# untouched because their own count is already below it.
-NAMING_SHARE = 2.0
+# than it, so a page is read while it is short and chosen from once it is not.
+#
+# `2√n` was the first setting and it was still too generous — half of a
+# sixteen-block page is not a choice, it is a shorter list. 「应该寻找下重点，
+# 挑重要的点说。」 `1.5√n` names everything up to four, five of eight, six of
+# sixteen, eight of twenty-four; the sparse pages are untouched either way,
+# because their own count is already below it.
+NAMING_SHARE = 1.5
+
+#: A page with no more than this many blocks is read rather than chosen from.
+#: `1.5√n` dips under the count itself at four, and 「内容少的就按文稿来」 is the
+#: half of the rule that was never in question.
+READ_IN_FULL = 5
 
 
 def _pace(settings) -> float:
@@ -121,7 +129,9 @@ def worth_naming(page) -> int:
     nobody gave a length for.
     """
     count = len(blocks_of(page))
-    return min(count, math.ceil(NAMING_SHARE * math.sqrt(count))) if count else 0
+    if not count:
+        return 0
+    return min(count, max(READ_IN_FULL, math.ceil(NAMING_SHARE * math.sqrt(count))))
 
 
 #: Past this, a page holds more than it can say and summarising it is the

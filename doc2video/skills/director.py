@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..core import ledger, tuning
 from ..schemas import (
@@ -140,6 +140,11 @@ class ActionChoice(BaseModel):
     #: block mentioned twice can be framed at the point it is *described*
     #: rather than at the point it is first brushed past.
     match: float = 0.0
+    #: The other things this same clause names. One frame covers all of them:
+    #: 「产业链结构，原料、产品、中间环节…」 is one thing being said, and a box
+    #: around the four characters of its name points at the label instead of at
+    #: what is being described.
+    also: list[str] = Field(default_factory=list)
 
 
 class SceneDirection(BaseModel):
@@ -223,7 +228,7 @@ class DirectorSkill(Skill):
 
         scored: list[tuple[float, ActionChoice]] = []
         for segment in scene.segments:
-            for target_id, fraction in self._targets_in(segment, page, threshold=threshold):
+            for target_id, also, fraction in self._targets_in(segment, page, threshold=threshold):
                 element = page.element(target_id)
                 if element is None or not _worth_pointing_at(element) or _is_banner(element, page):
                     continue
@@ -242,6 +247,7 @@ class DirectorSkill(Skill):
                         target=target_id,
                         at_fraction=fraction,
                         match=_match(element.text, segment.text),
+                        also=also,
                     ),
                 ))
 
@@ -308,7 +314,7 @@ class DirectorSkill(Skill):
 
     def _targets_in(
         self, segment: NarrationSegment, page: DocumentPage, *, threshold: float = MENTION_THRESHOLD
-    ) -> list[tuple[str, float]]:
+    ) -> list[tuple[str, list[str], float]]:
         """Everything this sentence talks about, and roughly when it gets there.
 
         One box per sentence was wrong the moment a sentence covered two items:
@@ -321,23 +327,26 @@ class DirectorSkill(Skill):
         pieces = [piece for piece in _CLAUSE_SPLIT.split(segment.text) if piece.strip()]
         if len(pieces) < 2:
             bound = self._resolve_target(segment, page, threshold=threshold)
-            return [(bound, 0.0)] if bound else []
+            if not bound:
+                return []
+            return [(bound, self._named_with(bound, segment, page, threshold=threshold), 0.0)]
 
-        found: list[tuple[str, float]] = []
+        found: list[tuple[str, list[str], float]] = []
         spent = 0
         for piece in pieces:
             fraction = spent / max(len(segment.text), 1)
             spent += len(piece)
-            target = self._resolve_target(
-                NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis),
-                page,
-                threshold=threshold,
-            )
+            clause = NarrationSegment(id=segment.id, text=piece, emphasis=segment.emphasis)
+            target = self._resolve_target(clause, page, threshold=threshold)
             if target and (not found or found[-1][0] != target):
-                found.append((target, fraction))
+                found.append(
+                    (target, self._named_with(target, clause, page, threshold=threshold), fraction)
+                )
         if not found:
             bound = self._resolve_target(segment, page, threshold=threshold)
-            return [(bound, 0.0)] if bound else []
+            if not bound:
+                return []
+            return [(bound, self._named_with(bound, segment, page, threshold=threshold), 0.0)]
         return found
 
     def _resolve_target(
@@ -385,6 +394,63 @@ class DirectorSkill(Skill):
             if best is None or score > best[0]:
                 best = (score, element.id)
         return best[1] if best else None
+
+    def _named_with(
+        self,
+        best: str,
+        segment: NarrationSegment,
+        page: DocumentPage,
+        *,
+        threshold: float,
+    ) -> list[str]:
+        """The other elements this same clause names, near enough to share a box.
+
+        A clause usually names one thing. When it names several — a heading and
+        the four chips under it, a label and the sentence beside it — framing
+        only the best-matching one points at a part of what is being said. They
+        go in one box.
+
+        Two guards, both about not letting the box become the page. Only things
+        the clause matches nearly as well as its best, and only things near what
+        is already in the box: two corners of a slide united make a rectangle
+        that contains everything between them, which is 「什么都框」.
+        """
+        element = page.element(best)
+        if element is None or not page.width or not page.height:
+            return []
+        top = _match(element.text, segment.text)
+        if top <= 0:
+            return []
+
+        rivals: list[tuple[float, str, BBox]] = []
+        for other in page.elements:
+            if other.id == best or other.kind is ElementKind.TITLE:
+                continue
+            if not _worth_pointing_at(other) or _is_banner(other, page):
+                continue
+            hit, share = _shared_grams(other.text, segment.text)
+            if share < threshold and hit < MENTION_PAIRS:
+                continue
+            score = _match(other.text, segment.text)
+            if score >= top * COMPANION_SHARE:
+                rivals.append((score, other.id, focus_box(other, page)))
+        if not rivals:
+            return []
+
+        rivals.sort(reverse=True, key=lambda r: r[0])
+        box = focus_box(element, page)
+        near_x, near_y = page.width * NEAR_SHARE, page.height * NEAR_SHARE
+        taken: list[str] = []
+        for _score, other_id, other_box in rivals:
+            dx, dy = _gap_between(box, other_box)
+            if dx > near_x or dy > near_y:
+                continue
+            grown = _union(box, other_box)
+            if _coverage_box(grown, page) > MAX_UNION_COVERAGE:
+                continue
+            box = grown
+            taken.append(other_id)
+        return taken
 
     @staticmethod
     def _fit_action_type(choice: ActionChoice, page: DocumentPage) -> ActionType:
@@ -498,7 +564,10 @@ class DirectorSkill(Skill):
                     target=choice.target or None,
                     effect=effect,
                     duration=round(duration, 2),
-                    params={"segment_id": choice.segment_id},
+                    # Everything this clause named, so the renderer can draw
+                    # one frame around the lot rather than around the best of
+                    # them.
+                    params={"segment_id": choice.segment_id, "with": list(choice.also)},
                 )
             )
 
@@ -546,6 +615,7 @@ def focus_box(element, page: DocumentPage) -> BBox:
 
     gap = page.height * GROUP_GAP
     slack = page.width * GROUP_SLACK
+    row_gap = page.width * ROW_GAP
     others = [
         other
         for other in page.elements
@@ -565,8 +635,9 @@ def focus_box(element, page: DocumentPage) -> BBox:
             grown
             for other in others
             if (
-                _belongs(box, other.bbox, gap=gap, slack=slack)
+                _belongs(element, box, other, gap=gap, slack=slack)
                 or _labels(box, other, gap=gap, slack=slack)
+                or _same_row(element, box, other, gap_x=row_gap)
             )
             # Something already inside the box unions to the box itself, and
             # that is the smallest candidate there is — taken, it would win
@@ -580,8 +651,17 @@ def focus_box(element, page: DocumentPage) -> BBox:
     return box
 
 
-def _belongs(box: BBox, near: BBox, *, gap: float, slack: float) -> bool:
-    """Whether `near` is something `box` is part of.
+def _belongs(element, box: BBox, other, *, gap: float, slack: float) -> bool:
+    """Whether `other` is something `box` is part of.
+
+    Something that spans it and is not a bigger piece of writing than it is.
+    This is the figure-over-caption shape and a figure carries no text at all;
+    the second line of a caption carries about as much as the first. A
+    paragraph laid out wide enough to span the heading above it has every
+    appearance of containing it and is simply the next block — 「技术牵头方：
+    浙大CCAI…」 absorbed the 342-character paragraph under it that way, and a
+    frame around the one line the narrator read became a frame around a
+    paragraph nobody mentioned.
 
     It has to span the box horizontally — that is what a figure does to its
     caption and a card to its contents — and either touch it or sit within a
@@ -596,6 +676,11 @@ def _belongs(box: BBox, near: BBox, *, gap: float, slack: float) -> bool:
     # Wider by a little, measured against the box rather than by the alignment
     # slack: the second line of a caption is twenty pixels wider than the
     # first, and a slide's slack is thirty-eight.
+    theirs = len((getattr(other, "text", "") or "").strip())
+    mine = len((getattr(element, "text", "") or "").strip())
+    if theirs > max(LABEL_CHARS, mine):
+        return False
+    near = other.bbox
     wider = near.w > box.w + max(1.0, box.w * SIBLING_WIDTH_TOLERANCE)
     spans = near.x <= box.x + slack and near.x + near.w >= box.x + box.w - slack and wider
     above = 0 <= box.y - (near.y + near.h) <= gap
@@ -644,6 +729,67 @@ def _is_container(element, page: DocumentPage) -> bool:
 
 #: How long a lead-in can be and still be a lead-in rather than a paragraph.
 LABEL_CHARS = 20
+
+#: How well a second element has to match the same clause, against the best
+#: one, before it shares the frame.
+COMPANION_SHARE = 0.55
+
+#: How far apart two things may be and still be one thing being talked about,
+#: as a share of the page. Two corners united make a rectangle holding
+#: everything between them.
+NEAR_SHARE = 0.22
+
+#: A frame may not grow past this much of the page. Past it, it is not pointing
+#: at anything.
+MAX_UNION_COVERAGE = 0.30
+
+
+def _gap_between(one: BBox, two: BBox) -> tuple[float, float]:
+    """How far apart two boxes are, horizontally and vertically. Zero if they touch."""
+    dx = max(0.0, max(one.x, two.x) - min(one.x + one.w, two.x + two.w))
+    dy = max(0.0, max(one.y, two.y) - min(one.y + one.h, two.y + two.h))
+    return dx, dy
+
+
+#: How far apart a lead-in and its body may sit and still be one line, as a
+#: share of the page's width.
+#:
+#: It is the number that tells a row from a column. On a page laid out as
+#: 「产业链结构 ｜ 原料、产品、中间环节… 」 the two sit 4% of the page apart; on a
+#: page laid out as three cards side by side, the nearest thing to the right of
+#: 「市场：AI重构行业淘汰节奏」 is the next card's heading, 10% away. Six percent
+#: takes the first and leaves the second — which matters, because swallowing
+#: the card beside it turns 「这一个」 into 「这两个」.
+ROW_GAP = 0.06
+
+
+def _same_row(element, box: BBox, near, *, gap_x: float) -> bool:
+    """A lead-in and the body beside it, on one line.
+
+    `_labels` knows the shape where the lead-in sits *above* what it leads
+    into. Plenty of decks lay the same thing out sideways — a short name in a
+    column of its own and the sentence it names to the right of it — and there
+    the two are never grouped, so a script that says 「产业链结构，原料、产品、
+    中间环节…」 got a frame around four characters. 「只框个名称的」 is that.
+
+    One of the two has to be short enough to be a name and the other longer
+    than it: two things of similar length side by side are two things, not one
+    thing and its label.
+    """
+    beside = near.bbox
+    overlap = min(box.y + box.h, beside.y + beside.h) - max(box.y, beside.y)
+    if overlap < 0.6 * min(box.h, beside.h):
+        return False
+    space = (
+        beside.x - (box.x + box.w) if beside.x >= box.x else box.x - (beside.x + beside.w)
+    )
+    if not 0 <= space <= gap_x:
+        return False
+    mine = len((getattr(element, "text", "") or "").strip())
+    theirs = len((near.text or "").strip())
+    if not mine or not theirs:
+        return False
+    return (mine <= LABEL_CHARS < theirs) or (theirs <= LABEL_CHARS < mine)
 
 
 def _labels(box: BBox, near, *, gap: float, slack: float) -> bool:
@@ -721,7 +867,20 @@ def _is_label(element, page: DocumentPage) -> bool:
     return False
 
 
-def _frame_key(target: str | None, page: DocumentPage) -> str | None:
+def frame_of(target: str, also: list[str], page: DocumentPage) -> BBox | None:
+    """The one box drawn for a choice: everything it named, united."""
+    element = page.element(target)
+    if element is None:
+        return None
+    box = focus_box(element, page)
+    for other_id in also or []:
+        other = page.element(other_id)
+        if other is not None:
+            box = _union(box, focus_box(other, page))
+    return box
+
+
+def _frame_key(target: str | None, page: DocumentPage, also: list[str] | None = None) -> str | None:
     """What will actually be drawn for this target, as something comparable.
 
     Not the element id. A lead-in and the paragraph under it are two elements
@@ -733,10 +892,9 @@ def _frame_key(target: str | None, page: DocumentPage) -> str | None:
     """
     if not target:
         return None
-    element = page.element(target)
-    if element is None:
+    box = frame_of(target, also or [], page)
+    if box is None:
         return target
-    box = focus_box(element, page)
     return f"{round(box.x)},{round(box.y)},{round(box.w)},{round(box.h)}"
 
 
@@ -758,7 +916,7 @@ def _merge_runs(
     「Same」 is by the box that gets drawn, not by the element that was matched
     — see `_frame_key`.
     """
-    keys = [_frame_key(choice.target, page) for choice in choices]
+    keys = [_frame_key(choice.target, page, choice.also) for choice in choices]
     merged: list[ActionChoice] = []
     merged_keys: list[str | None] = []
     for index, choice in enumerate(choices):
