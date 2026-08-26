@@ -443,3 +443,61 @@ def test_a_page_laid_out_as_a_table_says_so():
         ],
     )
     assert _matrix_of(cards) is None, "三栏并排不是表"
+
+
+def test_a_rewrite_may_drop_something_or_compressing_can_never_work():
+    """讲稿压了，成片用的却是压之前的。
+
+    The floor used to be 「不比原来少」 — the smaller of what the draft named and
+    what the page is worth. On a page where the draft already names exactly what
+    the page is worth, that makes the draft its own floor, and no rewrite can
+    ever be accepted, because dropping something is what compressing a page
+    *is*. Four of one deck's eight rejected rewrites were rejected that way, and
+    those pages stayed at twice their target while the record said 「压到 137
+    字」 and showed a 149-character 「压之后」 that was never used.
+
+    One item below the floor is allowed when the page is far past its length —
+    and recorded as a degradation, because that is the stated length costing a
+    piece of the page, not something to do quietly.
+    """
+    from doc2video.schemas import BBox, DocumentPage, ElementKind, PageType, SlideElement
+    from doc2video.skills.narration import _keeps_enough
+
+    page = DocumentPage(
+        index=5, title="页", page_type=PageType.CONTENT, width=1920, height=1080,
+        elements=[
+            SlideElement(id=f"e{i}", kind=ElementKind.PARAGRAPH, text=text,
+                         bbox=BBox(x=100, y=200 + i * 120, w=800, h=90))
+            for i, text in enumerate([
+                "企业定位是城市产业链智能创新生态运营商",
+                "企业愿景是全国产业链智能创新引领者",
+                "企业宗旨是服务智能生态助力四链融合",
+                "二〇一八年十二月教育部发文批复同意建设人工智能省部共建协同创新中心",
+            ])
+        ],
+    )
+    draft = (
+        "企业定位是城市产业链智能创新生态运营商。企业愿景是全国产业链智能创新引领者。"
+        "企业宗旨是服务智能生态助力四链融合。二〇一八年十二月教育部发文批复同意建设"
+        "人工智能省部共建协同创新中心。"
+    ) * 2
+    # Half the length, one thing fewer.
+    shorter = (
+        "企业定位是城市产业链智能创新生态运营商。企业愿景是全国产业链智能创新引领者。"
+        "二〇一八年十二月教育部发文批复同意建设人工智能省部共建协同创新中心。"
+    )
+
+    verdict, why = _keeps_enough(shorter, draft, page, allowed=len(shorter))
+    assert verdict == "costs", f"该采用并记一笔，实际 {verdict}：{why}"
+    assert "为压到" in why
+
+    # Dropping most of the page is still too much — at the same target length,
+    # which is what makes it a comparison. (Asked to fit twenty characters, one
+    # thing really is all that fits, and the floor follows the length down.)
+    gutted = "企业定位是城市产业链智能创新生态运营商。"
+    assert _keeps_enough(gutted, draft, page, allowed=len(shorter))[0] == "no"
+
+    # And a page this measure cannot match names nothing either way.
+    blank = DocumentPage(index=6, title="页", page_type=PageType.CONTENT,
+                         width=1920, height=1080, elements=[])
+    assert _keeps_enough("短一点的讲稿。", "长一点的讲稿，说了更多。", blank, allowed=20)[0] == "ok"
