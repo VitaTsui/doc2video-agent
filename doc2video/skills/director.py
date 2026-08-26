@@ -270,6 +270,24 @@ class DirectorSkill(Skill):
                 for score, choice in scored
             ]
 
+        # 「框标题这种是禁止的。」 A box around a name and nothing it names points
+        # at the label while the narrator describes what the label names —
+        # 「再说招募目的。」 announces a section, and the sentence after it frames
+        # what the section says. A pointer is exempt: it is a dot beside a
+        # thing, not a box around it.
+        #
+        # After the normalisation above, not before. A heading is small and
+        # briefly mentioned, so it is picked as a pointer — and then promoted
+        # to a box by the rule that a page uses one gesture. Checked first,
+        # every one of them slipped through as a pointer and came out a frame.
+        scored = [
+            (score, choice)
+            for score, choice in scored
+            if choice.type not in (ActionType.HIGHLIGHT, ActionType.ZOOM)
+            or choice.also
+            or not _just_a_name(page.element(choice.target), page)
+        ]
+
         scored.sort(key=lambda item: -item[0])
         chosen: list[ActionChoice] = []
         for _, choice in scored:
@@ -1002,6 +1020,64 @@ def _is_label(element, page: DocumentPage) -> bool:
         if below and near and longer:
             return True
     return False
+
+
+#: How many things have to sit beside a short line before it is heading them
+#: rather than standing among them.
+HEADS_A_ROW = 2
+
+
+def _just_a_name(element, page: DocumentPage) -> bool:
+    """Whether framing this alone would be framing a heading.
+
+    Short is not enough. A contents page is a column of short lines with
+    nothing underneath any of them, and 「(一)背景及技术牵头方」 *is* the content
+    there — a rule that went by length alone stopped framing the one thing
+    those pages have.
+
+    Three shapes, and they are all 「this names something else」:
+
+    - a longer block underneath it (`_is_label`) — 「招募目的」;
+    - a longer block beside it on the same line — 「产业链结构 ｜ 原料、产品…」;
+    - a row of things beside it on the same line — 「场景应用层」, whose
+      neighbours are chips as short as it is, which is why looking for a
+      *longer* one missed it.
+
+    A number or a picture is exempt: 「130305家」 is short and is the whole
+    point of pointing at it.
+    """
+    if element is None or element.kind in (
+        ElementKind.NUMBER,
+        ElementKind.CHART,
+        ElementKind.IMAGE,
+    ):
+        return False
+    text = (element.text or "").strip()
+    if not text or len(text) > LABEL_CHARS or element.bbox is None:
+        return False
+    if _is_label(element, page):
+        return True
+    # A short subtitle is a heading by its own account — that is what the kind
+    # means. 「场景应用层」 is one, and the things beside it are chips as short
+    # as it is, so neither of the shapes below finds it.
+    if element.kind is ElementKind.SUBTITLE:
+        return True
+
+    mine = element.bbox
+    gap_x = (page.width or 1920) * ROW_GAP
+    beside = 0
+    for other in page.elements:
+        body = (other.text or "").strip()
+        if other.id == element.id or other.bbox is None or not body:
+            continue
+        at = other.bbox
+        overlap = min(mine.y + mine.h, at.y + at.h) - max(mine.y, at.y)
+        if overlap < 0.6 * min(mine.h, at.h) or at.x < mine.x + mine.w:
+            continue
+        if len(body) >= len(text) * LABEL_BODY_RATIO and at.x - (mine.x + mine.w) <= gap_x:
+            return True
+        beside += 1
+    return beside >= HEADS_A_ROW
 
 
 def frame_of(target: str, also: list[str], page: DocumentPage) -> BBox | None:

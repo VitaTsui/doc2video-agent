@@ -752,3 +752,59 @@ def test_a_transition_gets_no_frame_when_the_page_bound_the_rest():
 
     assert skill._targets_in(passing, page, bound_page=True) == [], "绑过的页面，空就是空"
     assert skill._targets_in(passing, page, bound_page=False), "没绑过的页面还得猜"
+
+
+def test_a_name_on_its_own_is_not_something_to_frame():
+    """「框标题这种是禁止的。」
+
+    「再说招募目的。」 announces the next section; a frame around the four
+    characters of its name points at a label while the narrator is about to
+    describe what the label names. The sentence after it frames the section.
+
+    Decided by the thing, not by the layout: judging it by 「is there a longer
+    block under or beside this」 got 「招募目的」 right and 「场景应用层」 wrong,
+    because the things beside that one are chips as short as it is.
+    """
+    from doc2video.schemas import BBox, ElementKind, NarrationSegment, SlideElement
+    from doc2video.skills.director import ActionType, DirectorSkill
+
+    page = _two_block_page()
+    # A name with the paragraph it names underneath it.
+    page.elements.append(
+        SlideElement(id="head", kind=ElementKind.PARAGRAPH, text="招募目的",
+                     bbox=BBox(x=100, y=300, w=140, h=40))
+    )
+    page.elements.append(
+        SlideElement(id="head_body", kind=ElementKind.PARAGRAPH,
+                     text="为加快基地建设，依托行业大模型和数据服务平台等能力底座，推进先导场景招募揭榜。",
+                     bbox=BBox(x=100, y=350, w=900, h=80))
+    )
+    page.elements.append(
+        SlideElement(id="figure", kind=ElementKind.NUMBER, text="130305家",
+                     bbox=BBox(x=100, y=900, w=140, h=40))
+    )
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+
+    from doc2video.schemas import Scene
+
+    def boxes_for(segment):
+        scene = Scene(scene_id="sc", source_page=1, narration=segment.text,
+                      segments=[segment], duration=12.0)
+        return [
+            c for c in skill._choose_heuristically(scene, page)
+            if c.type in (ActionType.HIGHLIGHT, ActionType.ZOOM)
+        ]
+
+    naming = NarrationSegment(id="s1", text="再说招募目的。", element_refs=["head"],
+                              start=0.0, end=6.0)
+    assert boxes_for(naming) == [], "只报一个名字，不给框"
+
+    # Together with what it names, it is a frame again.
+    both = NarrationSegment(id="s2", text="招募目的讲的是第一块内容，说清楚为什么招募。",
+                            element_refs=["head", "e1"], start=0.0, end=6.0)
+    assert boxes_for(both), "名字加它领的内容，可以框"
+
+    # A figure is short and is the whole point of pointing at it.
+    counted = NarrationSegment(id="s3", text="上面挂着 130305 家企业，覆盖整条产业链。",
+                               element_refs=["figure"], start=0.0, end=6.0)
+    assert boxes_for(counted), "数字不算标题"
