@@ -1037,10 +1037,20 @@ export function App() {
               })
               return
             }
-            // Whatever is being waited on says so itself when the wait ends;
-            // a second line here would be the same news twice.
+            // Whatever is being waited on says so itself when the wait ends —
+            // aborting the fetch rejects it and its own catch writes the line.
             abort.current?.abort()
             setBusy(false)
+            // Unless nothing is in flight to reject. Then the promise never
+            // settles, no catch runs, and the turn keeps its spinner for good:
+            // 「正在解析…」 with nothing behind it and no way out, which is
+            // exactly what 「中止不了」 looks like from the outside. Whatever is
+            // still marked pending is not pending any more.
+            setMessages((prev) =>
+              prev.map((message) =>
+                message.pending ? { ...message, pending: false, text: '停下了。' } : message,
+              ),
+            )
           }}
           onDeck={acceptDeck}
           hint={projectId ? '想改哪里就直接说' : '说说你想要什么样的视频，并附上文档'}

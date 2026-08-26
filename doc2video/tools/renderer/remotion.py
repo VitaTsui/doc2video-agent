@@ -76,12 +76,18 @@ class RemotionAdapter(RendererAdapter):
             "--log=error",
         ]
         log.debug("remotion: %s", " ".join(cmd))
-        try:
-            with ledger.call(
-                f"renderer:{self.name}",
-                plan.scene_id,
-                covers=[ledger.scene_key(plan.scene_id)],
-            ):
+        # Translated inside the record, not around it. The context manager
+        # writes down whatever exception passes through it, and a bare
+        # CalledProcessError stringifies to the command line — so a failed
+        # scene was recorded as three hundred characters of node invocation,
+        # truncated at a hundred and sixty, with the browser's actual
+        # complaint discarded a line later.
+        with ledger.call(
+            f"renderer:{self.name}",
+            plan.scene_id,
+            covers=[ledger.scene_key(plan.scene_id)],
+        ):
+            try:
                 subprocess.run(
                     cmd,
                     cwd=self.renderer_dir,
@@ -89,16 +95,18 @@ class RemotionAdapter(RendererAdapter):
                     capture_output=True,
                     timeout=RENDER_TIMEOUT,
                 )
-        except subprocess.CalledProcessError as exc:
-            raise ToolFailed(
-                "Remotion 渲染失败",
-                detail={
-                    "scene_id": plan.scene_id,
-                    "stderr": exc.stderr.decode("utf-8", "ignore")[-1500:],
-                },
-            ) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise ToolFailed("Remotion 渲染超时", detail={"scene_id": plan.scene_id}) from exc
+            except subprocess.CalledProcessError as exc:
+                raise ToolFailed(
+                    "Remotion 渲染失败",
+                    detail={
+                        "scene_id": plan.scene_id,
+                        "stderr": exc.stderr.decode("utf-8", "ignore")[-1500:],
+                    },
+                ) from exc
+            except subprocess.TimeoutExpired as exc:
+                raise ToolFailed(
+                    "Remotion 渲染超时", detail={"scene_id": plan.scene_id}
+                ) from exc
         return out_path
 
     def _stage_assets(self, plan: ScenePlan) -> ScenePlan:

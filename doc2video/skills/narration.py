@@ -30,7 +30,7 @@ from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisu
 from ..tools.llm import model_schema
 from ..tools.tts import estimate_duration
 from .base import ProgressFn, Skill, load_prompt
-from .review import density, page_share_chars
+from .review import blocks_of, density, page_share_chars, worth_naming
 
 # Pages per model call. Small enough that a long deck cannot overrun the
 # output budget, large enough that each page can see its neighbours.
@@ -145,18 +145,20 @@ class NarrationResult(BaseModel):
 
 
 def _density_note(page, budget: int) -> str:
-    """How much of this page to tell, said as what to do rather than as a ratio.
+    """How much of this page to tell — as a count, not as a ratio.
 
-    Density used to be left to the writer to judge from the number of blocks it
-    could see, and blocks are the wrong measure: 「技术牵头方」 is four blocks —
-    three labels and one 342-character paragraph — so it read as a sparse page
-    and got read out in full. What matters is how much text there is against
-    what the budget can say.
+    The writer and the reviewer were reading from different sheets. `worth_naming`
+    already says how many of a page's blocks a script should get through: a page
+    with three is read, a page with sixteen is chosen from — eight of them. But
+    what the writer was handed was a band, and the middle band said 「每一处都要
+    点到」. So on the sixteen-block page it named twelve, against a target of
+    eight, and the film spent seventy seconds reading out sub-items nobody asked
+    to hear. 「有些点或细项是能不用讲的」 is that instruction, in one sentence.
 
-    Three bands rather than a switch. A page at 1.2× has to be tightened; a
-    page at 3× has to be chosen from; and telling a 1.2× page to 「挑重点」 is how
-    a script that was finally following the document starts summarising it
-    again.
+    So the writer is handed the same number the reviewer is holding. Where the
+    number covers the page there is nothing to choose and it says so; where it
+    does not, choosing is the whole instruction, and what to spend the places on
+    — the skeleton first, then the biggest of what is left — is said plainly.
     """
     # Cover, contents and section pages are not told by volume — they have
     # their own rule, and it is the opposite of this one. A cover at 1.7× was
@@ -164,21 +166,34 @@ def _density_note(page, budget: int) -> str:
     # date included, which is precisely what its own instruction forbids.
     if page.page_type in (PageType.COVER, PageType.AGENDA, PageType.SECTION):
         return ""
+    count = len(blocks_of(page))
+    if count == 0:
+        return ""
+    keep = worth_naming(page)
     ratio = density(page, budget)
+
+    # Two different questions, and a page can answer them differently. How many
+    # things to name is the count; how much of each to say is the ratio.
+    #
+    # A page whose text fits its budget has nothing to choose, however many
+    # boxes it is in: eight one-line bullets that all fit are eight bullets to
+    # say, and telling it to drop two is telling it to leave things out for no
+    # reason. And 「技术牵头方」 — three labels and one 342-character paragraph —
+    # is four blocks, all four worth naming, carrying two and a half times what
+    # it can say: everything gets named, nothing gets read out whole.
     if ratio <= 1.2:
+        return f"这一页有 {count} 处内容，都讲得下：按页面原文讲，一处一句，不要概括。"
+    if keep >= count:
         return (
-            f"这一页文字 {ratio:.1f} 倍于预算，装得下：按页面原文讲，"
-            "一处一句，不要概括。"
-        )
-    if ratio <= 2.0:
-        return (
-            f"这一页文字 {ratio:.1f} 倍于预算，略微超出：每一处都要点到，"
-            "但长的那一两处只讲要点——名称、数字、结论，不要照读整段。"
+            f"这一页 {count} 处都要讲到，但文字是预算的 {ratio:.1f} 倍："
+            "长的那几处只取名称、数字和结论，不要照读整段。"
         )
     return (
-        f"这一页文字 {ratio:.1f} 倍于预算，是密的页：挑重点讲。"
-        "先按骨架把每个板块点到（小标题、每一栏），长段落只取名称、数字和结论，"
-        "举例、括号里的补充、脚注可以不讲。没讲到的不要提。"
+        f"这一页有 {count} 处内容，讲其中 {keep} 处——文字是预算的 {ratio:.1f} 倍，"
+        "讲不完，也不该讲完。先把骨架点到：每个小标题、每一栏都要有；"
+        "剩下的名额留给最要紧的细项，其余的不讲。"
+        "长段落只取名称、数字和结论，举例、括号里的补充、脚注不讲。"
+        "没讲到的不要提，也不要用「等等」「以及其他」把它们带过去。"
     )
 
 
@@ -1182,7 +1197,14 @@ class NarrationSkill(Skill):
                     lines.append(
                         f"页面原文（{len(elements)} 处）——这是排版不是句子，"
                         "说成一到两句话：谁做的、做的是什么。"
-                        "日期、联系方式、单位后缀这类不用念出来："
+                        "日期和联系方式不用念出来。"
+                        # 「单位后缀」 used to be on that list, and it is the
+                        # reason 「宁波城知产业链数据科技有限公司」 was read as
+                        # 「宁波城知产业链数据科技」. A name shortened is a
+                        # different name — and on a cover the name is most of
+                        # what the page is for.
+                        "机构名照页面写全，不要削掉「有限公司」「中心」「研究院」"
+                        "这类后缀，也不要简称："
                     )
                 else:
                     lines.append(

@@ -6,7 +6,6 @@ import { readableTitle } from '../naming'
 import { Attachment, DeckMark, FilmMark } from './Attachment'
 import { Prose } from './Prose'
 import { Suggestions } from './Suggestions'
-import { TurnActions } from './TurnActions'
 import { Thinking } from './Thinking'
 import type { Message } from './types'
 
@@ -61,7 +60,10 @@ export function MessageList({
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`turn turn--${message.role}`}
+            // A turn that is only a folded chain is a row, not a paragraph:
+            // several of them stack, one per beat of a run, and they need to
+            // read as a list of what it did rather than as loose scraps.
+            className={`turn turn--${message.role}${message.kind === 'job' ? ' turn--job' : ''}`}
           >
             <div className="turn__body">
               {/* A turn that is still being worked on says so with the same
@@ -85,17 +87,6 @@ export function MessageList({
                   <span className="turn__file">{readableTitle(message.file)}</span>
                 </div>
               )}
-
-              {/* Under the words, on hover — and only under words. A reply
-                  that is a document, or an account of what is being thought,
-                  is not something anyone copies as text: the document is the
-                  card next to it, and the chain is a view of the record. Both
-                  had a 「复制」 under them that would have yielded one line of
-                  preamble. */}
-              {message.role === 'assistant' &&
-                message.kind === 'text' &&
-                !message.pending &&
-                message.text && <TurnActions text={message.text} />}
 
               {/* Every deck card is a record of what was said: the document,
                   openable. What can be *done* is not here — it moved to the

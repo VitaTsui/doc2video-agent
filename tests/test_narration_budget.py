@@ -364,8 +364,12 @@ def test_density_is_measured_in_words_not_in_boxes():
     dense = density(few_but_long, page_share_chars(few_but_long))
     sparse = density(many_but_short, page_share_chars(many_but_short))
     assert dense > 2 > sparse, f"四块的密页 {dense:.1f}，八块的稀疏页 {sparse:.1f}"
-    assert "挑重点" in _density_note(few_but_long, page_share_chars(few_but_long))
-    assert "挑重点" not in _density_note(many_but_short, page_share_chars(many_but_short))
+    # The property, not the wording: a page carrying more than it can say is
+    # told not to read its paragraphs out, and a page that fits is not.
+    crowded = _density_note(few_but_long, page_share_chars(few_but_long))
+    roomy = _density_note(many_but_short, page_share_chars(many_but_short))
+    assert "只取名称、数字和结论" in crowded, crowded
+    assert "不要概括" in roomy and "只取" not in roomy, roomy
 
 
 def test_another_round_is_only_worth_it_when_there_is_a_long_way_to_go():

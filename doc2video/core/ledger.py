@@ -149,7 +149,7 @@ class Recorder:
             yield artifacts
         except Exception as exc:
             status = "failed"
-            detail = detail or str(exc)[:200]
+            detail = detail or _why(exc)
             raise
         finally:
             used = _tools.get() or []
@@ -189,6 +189,28 @@ def _last_seq(path: Path) -> int:
 
 
 # -- module-level access ---------------------------------------------------
+
+def _why(exc: BaseException) -> str:
+    """Why it failed, in the space one line of the record has.
+
+    `str(exc)` is the wrong thing to write down for the failures that actually
+    happen here. A `CalledProcessError` stringifies to its command line — three
+    hundred characters of node invocation, of which the first hundred and sixty
+    were kept and the browser's actual complaint was not. Our own errors carry
+    the reason in `detail`, and its tail is where a stack trace or a renderer's
+    last words end up.
+    """
+    reason = str(getattr(exc, "message", "") or "") or str(exc)
+    extra = getattr(exc, "detail", None)
+    if isinstance(extra, dict):
+        for key in ("stderr", "stdout", "reason", "error"):
+            text = str(extra.get(key) or "").strip()
+            if text:
+                # The tail: a subprocess says what went wrong last.
+                return f"{reason}｜…{text[-140:]}"
+    return reason[:200]
+
+
 @contextmanager
 def recording(path: Path, run_id: str = "") -> Iterator[Recorder]:
     active = _current.get()
@@ -293,7 +315,8 @@ def call(
         yield made
     except Exception as exc:
         status = "failed"
-        detail = f"{detail}｜{str(exc)[:160]}" if detail else str(exc)[:200]
+        why = _why(exc)
+        detail = f"{detail}｜{why}" if detail else why
         raise
     finally:
         recorder.record(

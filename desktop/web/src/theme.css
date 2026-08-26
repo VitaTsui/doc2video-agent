@@ -175,41 +175,6 @@ body {
   margin-top: -18px;
 }
 
-/* Under the reply, and only while the pointer is on it. Always-on controls
-   under every paragraph make a transcript into a form. Kept in the layout even
-   while invisible, so nothing shifts when they appear. */
-.turnbar {
-  display: flex;
-  gap: 2px;
-  margin: 6px 0 -8px -6px;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.turn:hover .turnbar,
-.turnbar:focus-within {
-  opacity: 1;
-}
-
-.turnbar__button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: none;
-  background: none;
-  padding: 4px 7px;
-  border-radius: 7px;
-  font: inherit;
-  font-size: 12.5px;
-  color: var(--ink-soft);
-  cursor: pointer;
-}
-
-.turnbar__button:hover {
-  background: var(--user-bg);
-  color: var(--ink);
-}
-
 .turn__file {
   display: inline-block;
   margin-top: 6px;
@@ -1874,6 +1839,46 @@ body {
   color: var(--accent);
 }
 
+/* Three things on one row in a panel that can be three hundred points wide.
+   Left to themselves they all shrink together, and every one of them breaks:
+   the tool name splits across two lines as 「timelin／e」, the sentence breaks
+   mid-word at 「1 个动／作」, and 「1 项」 goes with them. Only the middle one
+   has anything to gain from wrapping, so only the middle one may: the name and
+   the counts keep their width, and the sentence takes what is left and folds
+   inside its own column. */
+.ledger__tool {
+  flex-shrink: 0;
+}
+
+.ledger__what {
+  flex: 1;
+  /* Without this a flex child refuses to go narrower than its content, which
+     is how the other two got squeezed in the first place. */
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.ledger__part {
+  white-space: nowrap;
+}
+
+/* The separator hangs off the end of the piece before it, never off the front
+   of the piece after. Attached the other way it wrapped along with whatever
+   followed and started the second line as 「｜1 个动作」; a break belongs after
+   the mark, which is where a line ending in 「…5 条字幕｜」 puts it. */
+.ledger__part:not(:last-child)::after {
+  content: '｜';
+  opacity: 0.5;
+}
+
+.ledger__meta {
+  flex-shrink: 0;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 .ledger__made {
   display: flex;
   flex-direction: column;
@@ -2233,6 +2238,19 @@ body {
   margin-top: 6px;
 }
 
+/* Folded, a chain is one quiet row, and there are usually several in a row —
+   one per beat of a run. Given a full turn's spacing and a paragraph's line
+   height they read as three loose scraps stacked down the page; tightened,
+   they read as a list of what it did. */
+.turn--job {
+  margin-bottom: 18px;
+  line-height: 1.5;
+}
+
+.turn--job + .turn--job {
+  margin-top: -12px;
+}
+
 /* The live line on the left, how far along and the way out on the right. One
    row, no frame: this replaced a bordered card with a progress bar in it,
    which is a control panel, and a conversation does not have one. */
@@ -2251,21 +2269,29 @@ body {
   flex-shrink: 0;
 }
 
+/* The row is a target, so it takes a target's shape under the pointer. The
+   negative margin pays for the padding: the chevron stays on the same left
+   edge as the words of a reply, which is what keeps a column of these looking
+   like one column. */
 .chain__head {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   border: none;
   background: none;
-  padding: 0;
+  margin-left: -8px;
+  padding: 4px 9px 4px 8px;
+  border-radius: 8px;
   font: inherit;
   font-size: 13.5px;
   color: var(--ink-soft);
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .chain__head:hover {
   color: var(--ink);
+  background: var(--user-bg);
 }
 
 /* Moving while it thinks. A still line of grey text and a finished one look

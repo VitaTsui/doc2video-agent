@@ -53,13 +53,23 @@ VOICES = (
 
 class EdgeProvider(TTSProvider):
     name = "edge"
-    # Eight percent under its own pace, which is where it stopped sounding
-    # hurried on a page of real narration.
-    natural_rate = 0.92
+    # Fourteen percent under its own pace. Eight was the first attempt and it
+    # was still 「有点快」 — measured on one paragraph of real narration:
+    #
+    #     -8%   14.28s   4.48 字/秒
+    #     -11%  14.76s   4.34
+    #     -14%  15.29s   4.19
+    #     -17%  15.84s   4.04
+    #
+    # A broadcast voice reading a deck is not a newsreader on the hour, and
+    # four characters a second is about where a person explaining something
+    # lands.
+    natural_rate = 0.86
     default_voice = DEFAULT_VOICE
-    # Measured over a 30-page deck at that pace: 2483 characters in 598
-    # seconds of speech.
-    chars_per_second = 4.15
+    # Lower than the figure above because this one is measured across a whole
+    # deck, gaps between sentences included: 4.15 stood against 4.48 on the
+    # paragraph, and the same ratio carried onto 4.19 gives this.
+    chars_per_second = 3.88
 
     def available(self) -> bool:
         return self._import_error() is None
