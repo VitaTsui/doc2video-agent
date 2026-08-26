@@ -227,8 +227,15 @@ class DirectorSkill(Skill):
             return []
 
         scored: list[tuple[float, ActionChoice]] = []
+        # Whether the writer did the binding step on this page at all. If it
+        # did, an empty list is an answer — 「这一句在页面上没有出处」 — and the
+        # camera should hold still rather than go looking. If it did not, the
+        # empty lists mean nothing and everything has to be guessed.
+        anyone_bound = any(segment.element_refs for segment in scene.segments)
         for segment in scene.segments:
-            for target_id, also, fraction in self._targets_in(segment, page, threshold=threshold):
+            for target_id, also, fraction in self._targets_in(
+                segment, page, threshold=threshold, bound_page=anyone_bound
+            ):
                 element = page.element(target_id)
                 if element is None or not _worth_pointing_at(element) or _is_banner(element, page):
                     continue
@@ -313,7 +320,12 @@ class DirectorSkill(Skill):
         return ActionType.HIGHLIGHT
 
     def _targets_in(
-        self, segment: NarrationSegment, page: DocumentPage, *, threshold: float = MENTION_THRESHOLD
+        self,
+        segment: NarrationSegment,
+        page: DocumentPage,
+        *,
+        threshold: float = MENTION_THRESHOLD,
+        bound_page: bool = False,
     ) -> list[tuple[str, list[str], float]]:
         """Everything this sentence talks about, and roughly when it gets there.
 
@@ -339,6 +351,11 @@ class DirectorSkill(Skill):
         ]
         if bound:
             return [(bound[0], self._that_fit(bound[0], bound[1:], page), 0.0)]
+        if bound_page:
+            # This page's sentences did say what they were about, and this one
+            # said 「nothing」. 「过渡句没必要框」 — and a guess here would be a
+            # frame drawn over a sentence that is not about the page.
+            return []
 
         pieces = [piece for piece in _CLAUSE_SPLIT.split(segment.text) if piece.strip()]
         if len(pieces) < 2:

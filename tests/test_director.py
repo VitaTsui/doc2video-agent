@@ -731,3 +731,24 @@ def _project_with(page):
         source=Source(type=SourceType.PPTX, file="d.pptx", path="source/d.pptx"),
         document=DocumentModel(pages=[page]),
     )
+
+
+def test_a_transition_gets_no_frame_when_the_page_bound_the_rest():
+    """「过渡句没必要框。」
+
+    An empty `element_refs` is an answer when the page's other sentences carry
+    ids: the writer looked and said this one is not about anything on the page.
+    Guessing anyway draws a frame over 「先看第一块建设内容」.
+
+    A page where nothing is bound is a page where the step was skipped, and
+    then the empty lists mean nothing — there the camera still has to guess.
+    """
+    from doc2video.schemas import NarrationSegment
+    from doc2video.skills.director import DirectorSkill
+
+    page = _two_block_page()
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+    passing = NarrationSegment(id="s2", text="第一块讲的内容说完了，接着看下一块。")
+
+    assert skill._targets_in(passing, page, bound_page=True) == [], "绑过的页面，空就是空"
+    assert skill._targets_in(passing, page, bound_page=False), "没绑过的页面还得猜"
