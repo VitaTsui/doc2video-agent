@@ -129,6 +129,11 @@ class TTSTool:
     ) -> str:
         """The words as the engine should receive them, before its own markers."""
         speaking = engine or self._provider
+        # An engine that needs none of our help gets none of it — not the two
+        # lists, and not the deck's own dictionary either. 「完全交由引擎自己
+        # 去。」 What it is handed is what the writer wrote.
+        if speaking.reads_polyphones and speaking.spells_initialisms:
+            return text
         return for_speech(
             text,
             self._pronunciation if pronunciation is None else pronunciation,
