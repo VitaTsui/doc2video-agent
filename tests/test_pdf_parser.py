@@ -142,3 +142,92 @@ def test_two_columns_do_not_come_back_as_one_element(tmp_path: Path):
     assert not any("01" in text and "02" in text for text in texts), texts.keys()
     # And each keeps its own column: neither box reaches the other's.
     assert texts["01"].bbox.x + texts["01"].bbox.w < texts["02"].bbox.x
+
+
+def test_a_centred_paragraph_is_put_back_together_too():
+    """Centred lines never line up on the left, by definition.
+
+    Their widths differ, so each line starts half the difference further in —
+    and the merge test only knew left edges, so a centred caption stayed in
+    pieces. Two real cases on one deck: 「浙江大学作为申报单位的」/「国家重点研发
+    计划项目」, left edges 5pt apart, and a two-line closing sentence 64pt
+    apart. Both had their centres identical to the pixel.
+
+    The vertical test kept them apart as well. It demanded a non-negative gap,
+    and a block's box spans the font's whole ascent and descent while the line
+    spacing is set tighter than that, so consecutive lines of one paragraph
+    overlap by a point or two as a matter of course — measured at -1.0pt and
+    -1.8pt.
+    """
+    from doc2video.tools.parsers.pdf_parser import _joined_paragraphs
+
+    def line(text: str) -> dict:
+        return {"spans": [{"text": text, "size": 12.0}]}
+
+    blocks = [
+        # Centres both at 252.5; left edges 5 apart; the second starts 1pt
+        # above where the first one's box ends.
+        {"type": 0, "bbox": (197, 452, 308, 465), "lines": [line("浙江大学作为申报单位的")]},
+        {"type": 0, "bbox": (202, 464, 303, 477), "lines": [line("国家重点研发计划项目")]},
+    ]
+    joined = _joined_paragraphs(blocks)
+
+    assert len(joined) == 1
+    assert len(joined[0]["lines"]) == 2
+
+
+def test_two_columns_still_do_not_merge_when_their_centres_differ():
+    """The overlap allowance must not open the door to a side-by-side pair."""
+    from doc2video.tools.parsers.pdf_parser import _joined_paragraphs
+
+    def line(text: str) -> dict:
+        return {"spans": [{"text": text, "size": 12.0}]}
+
+    blocks = [
+        {"type": 0, "bbox": (60, 100, 400, 116), "lines": [line("左栏")]},
+        # Same row, so it overlaps the one above by a whole line's height.
+        {"type": 0, "bbox": (700, 100, 1040, 116), "lines": [line("右栏")]},
+    ]
+    assert len(_joined_paragraphs(blocks)) == 2
+
+
+def test_a_wrapped_chinese_line_joins_the_next_with_nothing_between():
+    """A space between lines is an English word break, not a Chinese one.
+
+    「…同行产能规划、技」 and 「术路线，支撑企业…」 came back as 「技 术路线」. That
+    reaches the script, and then the engine, which reads the gap as a pause
+    inside a word — the same damage `phrasing.py` pays an extra synthesis call
+    to repair. 79 elements on one 30-page deck carried it.
+
+    A line the author ended early keeps its space: a label above its value is
+    two things, and 「企业定位」 glued to 「城市产业链智能创新生态运营商」 is one
+    unsayable one. Which is which is what the line widths say — measured over
+    the deck, wrapped lines stop 0.00–1.01 characters short of the column and
+    authored breaks stop 10.67 and 26.13 short.
+    """
+    from doc2video.tools.parsers.pdf_parser import _block_text
+
+    def line(text: str, x1: float) -> dict:
+        return {"bbox": (60, 100, x1, 116), "spans": [{"text": text, "size": 10.0}]}
+
+    wrapped = {
+        "type": 0,
+        "bbox": (60, 100, 560, 134),
+        "lines": [line("摸清同行产能规划、技", 550), line("术路线，支撑企业。", 400)],
+    }
+    assert _block_text(wrapped)[0] == "摸清同行产能规划、技术路线，支撑企业。"
+
+    authored = {
+        "type": 0,
+        "bbox": (60, 100, 560, 134),
+        "lines": [line("企业定位", 160), line("城市产业链智能创新生态运营商", 560)],
+    }
+    assert _block_text(authored)[0] == "企业定位 城市产业链智能创新生态运营商"
+
+    # English keeps the space either way: there the break really is one.
+    latin = {
+        "type": 0,
+        "bbox": (60, 100, 560, 134),
+        "lines": [line("a wrapped english", 550), line("sentence.", 300)],
+    }
+    assert _block_text(latin)[0] == "a wrapped english sentence."

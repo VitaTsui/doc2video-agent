@@ -7,6 +7,7 @@ line up with what the renderer actually draws.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -147,6 +148,15 @@ def _extract_elements(page: fitz.Page, page_number: int, zoom: float) -> list[Sl
 _SAME_LEFT_PT = 4.0
 _SAME_SIZE_RATIO = 0.15
 _LINE_GAP_RATIO = 0.9
+#: How much of the line above may hang into the one below and still be two
+#: lines of one paragraph rather than two things side by side.
+_LINE_OVERLAP_RATIO = 0.35
+#: How far short of the column a line may stop and still count as wrapped, in
+#: characters. The two classes are nowhere near each other: measured over one
+#: deck, lines the column broke stop 0.00–1.01 characters short (justification
+#: leaves a little), and lines the author broke stop 10.67 and 26.13 short. Set
+#: between them, nearer the tight side.
+_WRAPPED_SLACK_CHARS = 1.5
 
 
 def _joined_paragraphs(blocks: list[dict]) -> list[dict]:
@@ -282,12 +292,29 @@ def _continues(previous: dict, block: dict) -> bool:
         return False
     px0, _, px1, py1 = previous["bbox"]
     bx0, by0, bx1, _ = block["bbox"]
-    if abs(px0 - bx0) > _SAME_LEFT_PT:
+    # Left edges, or centres. Left alone this test only knew left-aligned
+    # paragraphs, and a centred one never lines up on the left by definition:
+    # its lines are different widths, so each one starts half the difference
+    # further in. Two real cases on one deck, both centred, both with their
+    # centres identical to the pixel — 「浙江大学作为申报单位的」/「国家重点研发
+    # 计划项目」 (left edges 10px apart) and a two-line closing sentence (128px
+    # apart) — stayed split, so the page offered the writer two half-phrases
+    # and the camera framed one line of a sentence.
+    same_left = abs(px0 - bx0) <= _SAME_LEFT_PT
+    same_centre = abs((px0 + px1) - (bx0 + bx1)) / 2 <= _SAME_LEFT_PT
+    if not same_left and not same_centre:
         return False
-    # Below it, by no more than a line's worth of space. `by0 < py1` would be
-    # an overlap — two columns, not two lines.
+    # Below it, by no more than a line's worth of space — and a little of the
+    # line above is allowed to hang into it. Demanding a non-negative gap was
+    # the thing that kept every one of these pairs apart: a block's box spans
+    # the font's full ascent and descent while the line spacing is set tighter
+    # than that, so two consecutive lines of one paragraph overlap by a point
+    # or two as a matter of course. Both real cases measured -1.0pt and -1.8pt.
+    # Two columns are still excluded and by a wide margin: side by side they
+    # overlap by a whole line's height, not by a fraction of one, and they fail
+    # the alignment test above as well.
     size = max(_max_size(previous), _max_size(block))
-    if not size or not (0 <= by0 - py1 <= size * _LINE_GAP_RATIO):
+    if not size or not (-size * _LINE_OVERLAP_RATIO <= by0 - py1 <= size * _LINE_GAP_RATIO):
         return False
     if abs(_max_size(previous) - _max_size(block)) > size * _SAME_SIZE_RATIO:
         return False
@@ -305,16 +332,61 @@ def _max_size(block: dict) -> float:
     return max(sizes, default=0.0)
 
 
+#: Characters that carry no word break of their own.
+_CJK = re.compile(r"[\u3000-\u9fff\uff00-\uffef]")
+
+
 def _block_text(block: dict) -> tuple[str, float]:
-    parts: list[str] = []
-    max_size = 0.0
-    for line in block.get("lines", []):
-        line_text = "".join(span.get("text", "") for span in line.get("spans", []))
-        if line_text.strip():
-            parts.append(line_text.strip())
-        for span in line.get("spans", []):
-            max_size = max(max_size, float(span.get("size", 0)))
-    return (" ".join(parts).strip(), max_size)
+    """The block's text, with its lines joined the way its script joins them.
+
+    A space between every line is right for English, where the word break at
+    the end of a line *is* a space, and wrong for Chinese where it is nothing:
+    「…同行产能规划、技」 and 「术路线，支撑企业…」 came back as 「技 术路线」. That
+    reaches the script — the writer is told to use the page's own words — and
+    then the engine, which reads the gap as a pause inside a word. It is the
+    same damage `phrasing.py` measures and repairs after the fact, one extra
+    synthesis call per line; 79 elements on one 30-page deck carried it.
+
+    Which breaks are wraps is what the line widths say. A wrapped line ends
+    where the column ends, because that is what made it wrap; a line the author
+    ended early — a label above its value, 「企业定位」 over 「城市产业链智能创新
+    生态运营商」 — stops well short of it, and gluing those two gives
+    「企业定位城市产业链…」.
+
+    A dictionary was tried here first and is the wrong instrument: asked
+    whether the join falls inside a word, jieba is right about 技术 and right
+    about 定位城市, and useless on the ordinary case, because a wrap usually
+    lands between two words as well — 「搭建赋能企业」 / 「经营决策的」 needs no
+    space either, and got one.
+    """
+    lines = [
+        (line, "".join(span.get("text", "") for span in line.get("spans", [])).strip())
+        for line in block.get("lines", [])
+    ]
+    lines = [(line, text) for line, text in lines if text]
+    max_size = max(
+        (
+            float(span.get("size", 0))
+            for line in block.get("lines", [])
+            for span in line.get("spans", [])
+        ),
+        default=0.0,
+    )
+    right = max((line["bbox"][2] for line, _ in lines), default=0.0)
+
+    text = ""
+    for index, (line, part) in enumerate(lines):
+        if not text:
+            text = part
+            continue
+        previous = lines[index - 1][0]
+        # Room for one more character at the end of the line before this one?
+        # If there was, the author put the break there; if there was not, the
+        # column did.
+        wrapped = right - previous["bbox"][2] <= max(max_size, 1.0) * _WRAPPED_SLACK_CHARS
+        cjk = _CJK.match(text[-1]) and _CJK.match(part[0])
+        text += ("" if wrapped and cjk else " ") + part
+    return (text.strip(), max_size)
 
 
 def _scaled_bbox(raw_bbox, zoom: float) -> BBox | None:
