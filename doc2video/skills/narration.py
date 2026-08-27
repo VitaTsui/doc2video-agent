@@ -302,9 +302,10 @@ class NarrationSkill(Skill):
     ) -> dict[int, PageNarration]:
         """Rewrite the pages that did not finish what they started.
 
-        Two faults, one repair — both are 「讲了一半就翻页」 and both are decided
-        by the same deterministic rules the quality report uses, so a page is
-        judged the same way before it is spoken as after.
+        Three faults, one repair, all three decided by the same deterministic
+        rules the quality report uses, so a page is judged the same way before
+        it is spoken as after. Two of them are 「讲了一半就翻页」; the third is
+        the page told out of one mould.
 
         「平台上有三块开放机制。」 and the page ends — the three are on the slide
         in front of the viewer, and the sentence set up an expectation the film
@@ -317,12 +318,21 @@ class NarrationSkill(Skill):
         Only those pages, and only once: a page that comes back dangling twice
         is a page the model cannot do better on, and re-asking forever costs
         minutes for nothing.
+
+        The third fault is repaired under guard. The first two ask for more of
+        the page and can only add; this one asks for the same page entered a
+        different way, and the cheapest way to vary an opening is to stop
+        saying one of the things. So its rewrite has to still name what the
+        draft named, or the draft stands — the page reading like a table is
+        the lesser of the two.
         """
-        from .review import _dangling_counts, missed_items
+        from .review import _dangling_counts, missed_items, stamped_openings
 
         frozen = frozen or set()
         by_index = {page.index: page for page in pages}
         broken: dict[int, str] = {}
+        # The pages whose rewrite has to prove it did not pay for the variety.
+        guarded: set[int] = set()
         for index, draft in drafts.items():
             if index in frozen or (page := by_index.get(index)) is None:
                 continue
@@ -359,6 +369,22 @@ class NarrationSkill(Skill):
                     f"漏掉的是：「{'」「'.join(missed[:6])}」。\n"
                     "每句短一点没关系，讲不全才是问题；细节留给观众自己看屏幕。"
                 )
+                continue
+            if stamped := stamped_openings(draft.narration):
+                # Last, because the two above are about the page going untold
+                # and this one is about how it is told. A page with both is
+                # sent back for the content first.
+                guarded.add(index)
+                broken[index] = (
+                    f"上一稿这一页连着 {len(stamped)} 句是同一个模子——"
+                    "「名称，动词……，动词……」，一处一句地排下来：\n"
+                    f"「{'」「'.join(stamped[:4])}」\n"
+                    "页面是一格一格的卡片，这样讲出来是在念表格。\n"
+                    "重写这一页：**讲到的处数一处不少，改的只是进入每一块的方式**——"
+                    "先给一句短的把这一组领进来（「底下三块。」），第一块讲开一点，"
+                    "后面的块递减，最后一两块可以并成一句带过。"
+                    "不要为了让句子不一样就多讲或少讲任何一处。"
+                )
         if not broken or not self.llm.available:
             return drafts
 
@@ -393,8 +419,12 @@ class NarrationSkill(Skill):
                 self.log.warning("第 %d 页返工失败，保留原稿：%s", index, exc)
                 continue
             for candidate in rewritten:
-                if candidate.index == index and candidate.narration.strip():
-                    drafts[index] = candidate
+                if candidate.index != index or not candidate.narration.strip():
+                    continue
+                if index in guarded and not _still_tells(candidate.narration, before, page):
+                    self.log.info("第 %d 页改了句式但少讲了内容，保留原稿", index)
+                    continue
+                drafts[index] = candidate
         return drafts
 
     # -- fitting --------------------------------------------------------
@@ -799,7 +829,11 @@ class NarrationSkill(Skill):
             self.log.warning("场景 %s 的新讲稿为空，跳过", scene.scene_id)
             return
         scene.narration = text
-        scene.segments = self._split_into_segments(text, scene.scene_id)
+        # Its own segments, so a sentence the edit left alone keeps what it was
+        # pointing at. A one-page edit rewrites a paragraph, not usually every
+        # sentence in it, and the untouched ones have no reason to lose the
+        # binding the writer gave them.
+        scene.segments = self._resplit(text, scene.scene_id, scene.segments)
         scene.duration = estimate_duration(
             text, self.ctx.settings.tts_speech_rate, self._pace()
         )
@@ -1425,6 +1459,35 @@ class NarrationSkill(Skill):
 
     # -- scene assembly -------------------------------------------------
     def _build_scenes(self, pages: list[DocumentPage], drafts: dict[int, PageNarration]) -> None:
+        # What this project already knew about its own sentences, before the
+        # rebuild overwrites them. Three paths arrive here with a page's text
+        # and no segments — `apply` takes `dict[int, str]` and has nowhere to
+        # put them, `_trim_to` returns a bare string, and hand-written pages
+        # never had any — and each one used to fall through to the splitter,
+        # which builds segments with an empty `element_refs`.
+        #
+        # That is the whole of 「框选始终有问题」. Measured across six real
+        # projects the field is bimodal, 0% or 98%, never in between: the decks
+        # written by `run` came back bound, and every deck that passed through
+        # `apply` — a re-render of a finished script included — arrived at the
+        # director with 158 of 158 sentences saying 「I am about nothing」. The
+        # director treats a bound page as authoritative and an unbound one as
+        # something to guess (`_targets_in`), so a script that knew exactly
+        # which line each sentence came from had the camera reverse-engineering
+        # it out of shared characters anyway.
+        #
+        # The text is the key because the text is what survives: a trim keeps
+        # whole sentences off the front, and a re-apply usually carries the
+        # very same string back in. A sentence that changed finds nothing and
+        # is guessed at, which is the right answer for a sentence nobody has
+        # bound yet.
+        known = {
+            scene.source_page: [
+                segment for segment in scene.segments if segment.text.strip()
+            ]
+            for scene in self.project.scenes
+            if scene.source_page
+        }
         scenes: list[Scene] = []
         for order, page in enumerate(pages, start=1):
             draft = drafts.get(page.index)
@@ -1448,7 +1511,9 @@ class NarrationSkill(Skill):
                     )
                 )
             if not segments:
-                segments = self._split_into_segments(draft.narration, scene_id(order))
+                segments = self._resplit(
+                    draft.narration, scene_id(order), known.get(page.index)
+                )
 
             narration = draft.narration.strip() or "".join(s.text for s in segments)
             scenes.append(
@@ -1470,13 +1535,49 @@ class NarrationSkill(Skill):
             )
         self.project.scenes = scenes
 
-    @staticmethod
-    def _split_into_segments(text: str, prefix: str) -> list[NarrationSegment]:
+    @classmethod
+    def _resplit(
+        cls, text: str, prefix: str, before: list[NarrationSegment] | None = None
+    ) -> list[NarrationSegment]:
+        """Cut text into segments, keeping whatever was known about them.
+
+        ``before`` is this page's previous segments. Two ways they help, and
+        the first is the one that matters:
+
+        * **The text did not change.** Then re-cutting it is not just lossy,
+          it is wrong: the writer chose where its sentences ended, and the
+          splitter does not reproduce that choice — a segment holding two
+          sentences comes back as two. On a real 30-page deck that alone moved
+          162 segments to 168 and dropped thirteen bindings that had matched
+          fine. So the old segments are kept whole, renumbered and nothing
+          else. Segments are what TTS times and what the camera follows; there
+          is no reason for adopting a script to re-decide either.
+        * **Some of it changed.** Then the sentences that came back word for
+          word keep what the writer said they pointed at, and keep their
+          emphasis. Both are answers given with the page's element list in
+          view, and neither survives the string once it is dropped.
+        """
+        before = before or []
+        joined = "".join(segment.text for segment in before).strip()
+        if before and joined == text.strip():
+            return [
+                segment.model_copy(update={"id": f"{prefix}_s{i:02d}"})
+                for i, segment in enumerate(before, start=1)
+            ]
+        known = {segment.text.strip(): segment for segment in before}
         parts = [p.strip() for p in SENTENCE_SPLIT.split(text) if p.strip()]
-        return [
-            NarrationSegment(id=f"{prefix}_s{i:02d}", text=part)
-            for i, part in enumerate(parts, start=1)
-        ]
+        segments: list[NarrationSegment] = []
+        for i, part in enumerate(parts, start=1):
+            was = known.get(part)
+            segments.append(
+                NarrationSegment(
+                    id=f"{prefix}_s{i:02d}",
+                    text=part,
+                    element_refs=list(was.element_refs) if was else [],
+                    emphasis=was.emphasis if was else False,
+                )
+            )
+        return segments
 
 
 def _as_draft(index: int, text: str) -> PageNarration:
@@ -1559,6 +1660,39 @@ def _binding_note(pages, written) -> str:
 def _worth_rewriting(candidate: str, draft: str) -> bool:
     """Whether a rewrite took enough off the page to be worth keeping."""
     return bool(candidate) and len(candidate) <= len(draft) * (1 - WORTH_ANOTHER_ROUND)
+
+
+#: How much of the draft a re-entered page has to keep. Entering four blocks
+#: differently costs about what entering them identically cost — measured on
+#: the case this was built from, 103 characters became 106. Giving two of them
+#: up costs a third of the page: the same rewrite with two blocks dropped came
+#: to 72. Set between them, near the draft.
+KEEPS_ENOUGH_OF_DRAFT = 0.85
+
+
+def _still_tells(candidate: str, draft: str, page) -> bool:
+    """Whether a rewrite still says what the draft said.
+
+    Asked only of the rewrite requested for the way a page reads rather than
+    for what it left out. The cheapest way to stop four sentences sounding like
+    one mould is to write three of them, so what is bought has to be checked
+    against what it could have been paid for with.
+
+    Not with `missed_items`, which is the instrument the other checks here use.
+    It decides a block was named by how much of the block's own wording the
+    script repeats — and re-wording is exactly what this rewrite was asked to
+    do. 「竞争跟踪，监测对手参与的项目和中标结果」 said again as 「竞争跟踪盯对手投
+    了哪些项目、中没中」 names the same card and shares few enough characters to
+    read as a card gone missing, so the good rewrite is the one it rejects.
+
+    Length is the crude measure that is crude in the right direction, and a
+    count announced and then not named is the one specific loss worth naming.
+    """
+    from .review import _dangling_counts
+
+    if _dangling_counts(candidate) and not _dangling_counts(draft):
+        return False
+    return len(candidate) >= len(draft) * KEEPS_ENOUGH_OF_DRAFT
 
 
 def _keeps_enough(candidate: str, draft: str, page, allowed: int) -> tuple[str, str]:

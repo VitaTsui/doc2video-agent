@@ -517,3 +517,169 @@ def test_a_round_that_only_shaves_words_is_not_worth_keeping():
     assert _worth_rewriting("上" * 150, draft), "真少讲了一处，该采用"
     assert not _worth_rewriting("", draft), "空稿不算压缩"
     assert not _worth_rewriting("上" * 220, draft), "反而更长了"
+
+
+def test_adopting_a_script_keeps_what_each_sentence_was_pointing_at(
+    settings: Settings, store: ProjectStore
+):
+    """Every project runs 生成讲稿 and then 采用讲稿, and the second one used to
+    throw away the first one's answer.
+
+    `apply` takes `dict[int, str]` — there is nowhere in it to put a segment —
+    so a page arrived as a bare string, was re-split, and came out as sentences
+    bound to nothing. Measured across six real projects the field is bimodal,
+    0% or 98%, and the zeros are every deck that reached 采用讲稿: 158 of 158
+    sentences saying 「I am about nothing」 to a director that treats a bound
+    page as authoritative and an unbound one as something to guess. The frames
+    in every finished film were reverse-engineered out of shared characters
+    while the writer's own answer sat in the boxes it had just been asked to
+    fill.
+    """
+    from doc2video.schemas import NarrationSegment, Scene, SceneVisual, VisualType
+
+    skill = _skill(settings, store, pages=2, duration=120.0)
+    for page in skill.project.document.pages:
+        page.elements = []
+    written = "先看供应链。回答的是怎么买、何时买。"
+    skill.project.scenes = [
+        Scene(
+            scene_id="scene_01",
+            source_page=1,
+            title="第 1 页",
+            narration=written,
+            segments=[
+                NarrationSegment(
+                    id="scene_01_s01", text="先看供应链。", element_refs=["p01_e05"]
+                ),
+                NarrationSegment(
+                    id="scene_01_s02",
+                    text="回答的是怎么买、何时买。",
+                    element_refs=["p01_e06", "p01_e07"],
+                    emphasis=True,
+                ),
+            ],
+            duration=10.0,
+            visual=SceneVisual(type=VisualType.SLIDE, source_page=1),
+        )
+    ]
+    # The ids have to survive the rebuild's own validity check.
+    page_one = skill.project.document.page(1)
+    from doc2video.schemas import BBox, ElementKind, SlideElement
+
+    page_one.elements = [
+        SlideElement(
+            id=f"p01_e0{n}",
+            kind=ElementKind.PARAGRAPH,
+            text=f"第 {n} 块",
+            bbox=BBox(x=0, y=100 * n, w=400, h=40),
+        )
+        for n in (5, 6, 7)
+    ]
+
+    skill.apply({2: "第二页是新写的。"})
+
+    first = next(s for s in skill.project.scenes if s.source_page == 1)
+    assert [seg.element_refs for seg in first.segments] == [
+        ["p01_e05"],
+        ["p01_e06", "p01_e07"],
+    ]
+    assert [seg.emphasis for seg in first.segments] == [False, True]
+
+
+def _mould_page(settings: Settings, store: ProjectStore, script: str):
+    """One page of four labelled cards, with `script` as the draft written for it."""
+    from doc2video.schemas import BBox, ElementKind, SlideElement
+
+    skill = _skill(settings, store, pages=1, duration=60.0)
+    page = skill.project.document.pages[0]
+    page.elements = [
+        SlideElement(
+            id=f"p01_e{i:02d}",
+            kind=ElementKind.SUBTITLE,
+            text=text,
+            bbox=BBox(x=0, y=i * 120, w=600, h=60),
+        )
+        for i, text in enumerate(["实时聚合，持续采集工程、装置与设备项目",
+                                  "智能匹配，按产品、地区与资质匹配企业条件",
+                                  "竞争跟踪，监测对手参与项目和中标结果",
+                                  "偏好分析，分析招标方采购周期与评标偏好"], start=1)
+    ]
+    from doc2video.skills.narration import PageNarration
+
+    return skill, page, {1: PageNarration(index=1, narration=script, segments=[])}
+
+
+STAMPED = (
+    "实时聚合，采集工程、装置、设备项目，清洗业主、金额和时间节点。"
+    "智能匹配，按产品、地区、金额、资质匹配企业条件，形成优先跟进清单。"
+    "竞争跟踪，监测对手参与的项目和中标结果。"
+    "偏好分析，看招标方的采购周期和评标偏好。"
+)
+
+
+class _Answers:
+    """Returns one prepared rewrite, and keeps the note it was sent."""
+
+    available = True
+    model = "fake"
+    source = "fake"
+
+    def __init__(self, narration: str):
+        self.narration = narration
+        self.prompts: list[str] = []
+
+    def complete_json(self, prompt: str, **kwargs):  # noqa: ARG002
+        self.prompts.append(prompt)
+        return {"pages": [{"index": 1, "narration": self.narration, "segments": []}]}
+
+    def complete_text(self, prompt: str, **kwargs):  # noqa: ARG002
+        return ""
+
+    def supports_images(self) -> bool:
+        return False
+
+
+def test_a_page_told_out_of_one_mould_is_sent_back(settings: Settings, store: ProjectStore):
+    """The same rule the quality report uses, applied before the page is spoken.
+
+    A model asked in the prompt not to do something does it less, not never —
+    which is why the two faults beside this one are checked rather than only
+    asked for. This one is checked the same way and quoted back the same way.
+    """
+    better = (
+        "先是实时聚合。工程、装置、设备的项目都采进来，业主、金额、时间节点洗一遍。"
+        "洗完了做智能匹配，按产品、地区、金额和资质对企业条件，出一张优先跟进清单。"
+        "另外两块轻一些：竞争跟踪盯对手投了哪些项目、中没中；"
+        "偏好分析看招标方的采购周期和评标偏好。"
+    )
+    skill, page, drafts = _mould_page(settings, store, STAMPED)
+    skill.ctx.llm = _Answers(better)
+
+    fixed = skill._repair_drafts([page], {1: 40.0}, drafts)
+
+    assert "一个模子" in "".join(skill.ctx.llm.prompts), "返工说明要把毛病讲出来"
+    assert "实时聚合，采集工程" in "".join(skill.ctx.llm.prompts), "要把犯规的句子引回去"
+    assert fixed[1].narration == better
+
+
+def test_a_rewrite_that_bought_its_variety_with_content_is_refused(
+    settings: Settings, store: ProjectStore
+):
+    """The cheapest way to stop four sentences sounding alike is to write three.
+
+    The two repairs beside this one ask for more of the page and can only add.
+    This one asks for the same page entered a different way, so what comes back
+    has to still name what the draft named — or the draft stands, because a
+    page that reads like a table is the lesser of the two faults.
+    """
+    dropped = (
+        "先是实时聚合。工程、装置、设备的项目都采进来，业主、金额、时间节点洗一遍。"
+        "洗完了做智能匹配，按产品、地区、金额和资质对企业条件，出一张优先跟进清单。"
+    )
+    skill, page, drafts = _mould_page(settings, store, STAMPED)
+    skill.ctx.llm = _Answers(dropped)
+
+    fixed = skill._repair_drafts([page], {1: 40.0}, drafts)
+
+    assert skill.ctx.llm.prompts, "这一页本来就该被送回去重写"
+    assert fixed[1].narration == STAMPED, "少讲了两块的改写不能采用"
