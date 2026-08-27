@@ -637,8 +637,13 @@ class DirectorSkill(Skill):
                 key=lambda p: p.end,
             )
             snapped = [starts[indexes[0]]] + [p.end for p in boundaries]
-            if all(a < b for a, b in zip(snapped, snapped[1:])):
-                for index, at in zip(indexes, snapped):
+            if all(a < b for a, b in zip(snapped, snapped[1:], strict=False)):
+                # strict, because these two are the same length by
+                # construction: `need` is len(indexes) - 1 and the too-few case
+                # has already been skipped, so `snapped` holds exactly one time
+                # per index. Should that ever stop being true, this says so
+                # rather than silently leaving the last box where it was.
+                for index, at in zip(indexes, snapped, strict=True):
                     starts[index] = at
 
     # -- turning choices into timed actions -------------------------------

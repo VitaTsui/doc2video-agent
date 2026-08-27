@@ -933,7 +933,6 @@ def test_a_walked_list_rides_the_clips_own_pauses():
     spoken list are precisely its longest silences, so the boxes start where
     those pauses end — the same clock the subtitles ride.
     """
-    from doc2video.schemas import ActionType as AT
     from doc2video.schemas import BBox, ElementKind, NarrationSegment, Scene, SlideElement
     from doc2video.skills.director import DirectorSkill
 
