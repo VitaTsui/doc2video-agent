@@ -519,6 +519,12 @@ class NarrationSkill(Skill):
 
         by_index = {page.index: page for page in pages}
         trimmed = dict(drafts)
+        # Pages that were asked to fit and could not. Collected rather than
+        # logged one by one: a log line is not something the person watching
+        # sees, and 「压不动」 said nothing about what it would cost to try
+        # harder. Whether to spend an item to buy the seconds is theirs to
+        # decide, so the choice is put where they are.
+        stubborn: list[tuple[int, int, int]] = []
         for _, index, allowed in over:
             if total <= target * (1 + DURATION_TOLERANCE):
                 break
@@ -568,12 +574,32 @@ class NarrationSkill(Skill):
                         break
                 if current is draft:
                     self.log.info("第 %d 页压不动：剪会少讲内容，改写也没写短", index)
+                    stubborn.append((index, len(draft.narration), ceiling))
                     continue
                 total -= spoken(draft.narration) - spoken(current.narration)
                 trimmed[index] = current
+                if len(current.narration) > ceiling * KEEP_COMPRESSING:
+                    stubborn.append((index, len(current.narration), ceiling))
                 continue
             total -= spoken(draft.narration) - spoken(shorter)
             trimmed[index] = PageNarration(index=index, narration=shorter, segments=[])
+
+        if stubborn:
+            worst = max(stubborn, key=lambda row: row[1] / max(row[2], 1))
+            # In page order, not worst-first: this is read against the deck.
+            indexes = sorted(row[0] for row in stubborn)
+            shown = "、".join(str(index) for index in indexes[:6])
+            where = (
+                f"第 {shown} 页"
+                if len(indexes) <= 6
+                else f"第 {shown} 页等 {len(indexes)} 页"
+            )
+            telemetry.record_degradation(
+                "讲稿",
+                f"{where}压不到目标字数"
+                f"（第 {worst[0]} 页 {worst[1]} 字，目标 {worst[2]} 字）："
+                "再短就要整条少讲一处，这一步没有替你决定，这几页会比预算长",
+            )
         return trimmed
 
     def _compress_with_model(
