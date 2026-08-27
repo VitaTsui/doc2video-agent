@@ -7,7 +7,10 @@ by subclassing TTSProvider — nothing above this file needs to change.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import re
+import signal
 import struct
 import subprocess
 import wave
@@ -45,15 +48,7 @@ class MacOSSayProvider(TTSProvider):
         return which("say") is not None
 
     def voices(self) -> list[str]:
-        say = which("say")
-        if say is None:
-            return []
-        try:
-            listed = subprocess.run(
-                [say, "-v", "?"], capture_output=True, text=True, timeout=10, check=True
-            ).stdout
-        except (subprocess.SubprocessError, OSError):
-            return []
+        listed = _say_voice_listing()
         names: list[str] = []
         for line in listed.splitlines():
             if "zh_CN" not in line:
@@ -158,6 +153,65 @@ AUTO_ORDER: tuple[type[TTSProvider], ...] = (
     PiperProvider,
     SilentProvider,
 )
+
+
+#: The machine's `say -v ?` output, fetched once per process. None until a
+#: listing has succeeded — failure is NOT cached, so a wedge now does not mean
+#: an empty voice menu until restart.
+_SAY_LISTING: str | None = None
+
+
+def _say_voice_listing() -> str:
+    """`say -v ?`, once, and wedge-proof.
+
+    Two separate faults met here and took the desktop backend down. The
+    listing was fetched fresh on every call, and `/health/voices` is polled by
+    the window — so when macOS's speech daemon wedged (it does, after enough
+    parallel synthesis), every poll spawned another 10-second probe. And the
+    probe's own timeout was not the guarantee it looks like: on expiry
+    `subprocess.run` kills the child and then waits for it again, and a child
+    stuck in an uninterruptible wait on the wedged daemon survives SIGKILL —
+    the wait blocks forever, one backend thread dies with it, and after a few
+    hours of polling every endpoint that shares anything with this path hangs.
+    「历史工程点开没东西了」 was this: the window's reopen flow awaits a request
+    that will never answer.
+
+    So: one probe per process, cached only on success; the child gets its own
+    process group so the kill reaches whatever `say` spawned; and reaping is
+    given one second, after which the zombie is abandoned — a leaked process
+    entry is nothing, a leaked thread is the backend.
+    """
+    global _SAY_LISTING
+    if _SAY_LISTING is not None:
+        return _SAY_LISTING
+    say = which("say")
+    if say is None:
+        return ""
+    try:
+        child = subprocess.Popen(
+            [say, "-v", "?"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            start_new_session=True,
+        )
+    except OSError:
+        return ""
+    try:
+        out, _ = child.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(OSError):
+            os.killpg(child.pid, signal.SIGKILL)
+        with contextlib.suppress(Exception):
+            child.communicate(timeout=1)
+        log.warning("say -v ? 超时——语音服务可能僵死，这次先返回空列表")
+        return ""
+    except Exception:  # noqa: BLE001 - a failed listing is an empty menu, not a crash
+        return ""
+    if child.returncode != 0:
+        return ""
+    _SAY_LISTING = out or ""
+    return _SAY_LISTING
 
 
 def resolve_provider(preference: str) -> TTSProvider:
