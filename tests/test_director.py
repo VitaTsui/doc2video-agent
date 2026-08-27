@@ -921,3 +921,70 @@ def test_a_sentence_that_walks_a_list_gets_a_box_per_item():
     assert [a.target for a in acts] == ["e1", "e2", "e3", "e4", "e5"], "五条一条不少，按序走"
     assert all(b.at > a.at for a, b in zip(acts, acts[1:], strict=False)), "时刻递增"
     assert all(a.duration >= 0.6 for a in acts), "每条都停得够读"
+
+
+def test_a_walked_list_rides_the_clips_own_pauses():
+    """The walk is timed by characters; the voice is not.
+
+    The engine pauses at the list's own commas, so the linear clock and the
+    audio drift apart item by item — measured on a contents page the box was a
+    full item behind by (四): the subtitle, cut against the clip's measured
+    silences, said 四 while the frame still sat on (三). The separators of a
+    spoken list are precisely its longest silences, so the boxes start where
+    those pauses end — the same clock the subtitles ride.
+    """
+    from doc2video.schemas import ActionType as AT
+    from doc2video.schemas import BBox, ElementKind, NarrationSegment, Scene, SlideElement
+    from doc2video.skills.director import DirectorSkill
+
+    titles = ["(一)背景及技术牵头方", "(二)核心市场痛点分析", "(三)项目建设主旨思路",
+              "(四)项目总体建设内容", "(五)联合揭榜商业价值"]
+    page = DocumentPage(
+        index=1, title="目录", width=1920, height=1080,
+        elements=[
+            SlideElement(id=f"e{i}", kind=ElementKind.PARAGRAPH, text=t,
+                         bbox=BBox(x=1017, y=267 + i * 103, w=300, h=47))
+            for i, t in enumerate(titles, start=1)
+        ],
+    )
+    scene = Scene(
+        scene_id="sc", source_page=1, narration="x", duration=17.5,
+        segments=[
+            NarrationSegment(
+                id="s2",
+                text="一是背景及技术牵头方，二是核心市场痛点分析，三是项目建设主旨思路，"
+                     "四是项目总体建设内容，五是联合揭榜商业价值。",
+                element_refs=[f"e{i}" for i in range(1, 6)],
+                start=3.8, end=17.1,
+            ),
+        ],
+    )
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+
+    # The clip's separators, pushed later than the character clock predicts —
+    # which is what real enumeration pauses do.
+    class Pause:
+        def __init__(self, end, duration):
+            self.end, self.duration = end, duration
+
+    measured = [Pause(7.9, 0.62), Pause(10.9, 0.58), Pause(13.9, 0.66), Pause(15.9, 0.60),
+                Pause(6.0, 0.12)]  # plus one small intra-item pause to be ignored
+
+    import doc2video.tools.tts.align as align
+    original = align.find_pauses
+    align.find_pauses = lambda clip: measured
+    try:
+        scene.audio.path = "audio/sc.wav"
+        import pathlib
+        skill.ctx.asset_path = lambda rel: pathlib.Path(__file__)  # exists ✓
+        acts = [
+            a for a in skill._to_actions(scene, page, skill._choose_heuristically(scene, page))
+            if a.type.value != "transition"
+        ]
+    finally:
+        align.find_pauses = original
+
+    assert [a.target for a in acts] == ["e1", "e2", "e3", "e4", "e5"]
+    # Items 2–5 start where the four longest pauses end, not on the character clock.
+    assert [a.at for a in acts][1:] == [7.9, 10.9, 13.9, 15.9]
+    assert acts[0].at < 7.9

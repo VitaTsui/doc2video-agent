@@ -586,6 +586,61 @@ class DirectorSkill(Skill):
         coverage = _coverage_box(focus_box(element, page), page)
         return ActionType.HIGHLIGHT if coverage > MAX_POINTER_COVERAGE else ActionType.POINTER
 
+    def _snap_walks_to_pauses(
+        self, scene: Scene, choices: list[ActionChoice], segments: dict, starts: list[float]
+    ) -> None:
+        """Move a walked list's boxes onto the clip's own pauses, in place.
+
+        A walk is timed by where each name sits in the sentence's *characters*,
+        and the voice does not speak characters at a constant rate: the engine
+        puts real pauses at the list's own commas, so the linear clock and the
+        audio drift apart item by item. Measured on a contents page, the box
+        was a full item behind by (四) — the subtitle (cut against the clip's
+        measured silences) said 四 while the frame still sat on (三).
+
+        So the boxes ride the same clock the subtitles do. The separators of a
+        spoken list are precisely the longest silences inside its segment: take
+        the N-1 longest, in time order, and start item k where pause k−1 ends.
+        Snapping is all-or-nothing per run — fewer pauses than boundaries means
+        the model does not fit this audio, and half-snapped is worse than
+        linear. No clip (a dry run, a test) leaves the linear times alone.
+        """
+        runs: dict[str, list[int]] = {}
+        for index, choice in enumerate(choices):
+            if choice.type is ActionType.RESET or not choice.target:
+                continue
+            runs.setdefault(choice.segment_id, []).append(index)
+        walks = {sid: idx for sid, idx in runs.items() if len(idx) >= 3}
+        if not walks or scene.audio is None or not scene.audio.path:
+            return
+        clip = self.ctx.asset_path(scene.audio.path)
+        if clip is None or not clip.exists():
+            return
+        try:
+            from ..tools.tts.align import find_pauses
+
+            pauses = find_pauses(clip)
+        except Exception:  # noqa: BLE001 - a failed probe keeps the linear times
+            return
+        for sid, indexes in walks.items():
+            segment = segments.get(sid)
+            if segment is None:
+                continue
+            inside = [
+                p for p in pauses if segment.start < (p.end - p.duration) and p.end < segment.end
+            ]
+            need = len(indexes) - 1
+            if len(inside) < need:
+                continue
+            boundaries = sorted(
+                sorted(inside, key=lambda p: p.duration, reverse=True)[:need],
+                key=lambda p: p.end,
+            )
+            snapped = [starts[indexes[0]]] + [p.end for p in boundaries]
+            if all(a < b for a, b in zip(snapped, snapped[1:])):
+                for index, at in zip(indexes, snapped):
+                    starts[index] = at
+
     # -- turning choices into timed actions -------------------------------
     def _to_actions(
         self, scene: Scene, page: DocumentPage, choices: list[ActionChoice]
@@ -626,6 +681,7 @@ class DirectorSkill(Skill):
                 continue
             span = max(segment.end - segment.start, 0.0)
             starts.append(max(0.0, segment.start + span * choice.at_fraction + AUDIO_LEAD))
+        self._snap_walks_to_pauses(scene, choices, segments, starts)
         next_at = {
             choice.segment_id + str(index): starts[index + 1]
             for index, choice in enumerate(choices)
@@ -646,7 +702,7 @@ class DirectorSkill(Skill):
                 if choice.target and choice.target == last_target:
                     continue
                 span = max(segment.end - segment.start, 0.0)
-                at = max(0.0, segment.start + span * choice.at_fraction + AUDIO_LEAD)
+                at = starts[index]
                 if choice.type is ActionType.POINTER:
                     duration = min(POINTER_DURATION, max(MIN_KEEP_DURATION, span - 0.2))
                 elif choice.holds_until:
