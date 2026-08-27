@@ -919,5 +919,5 @@ def test_a_sentence_that_walks_a_list_gets_a_box_per_item():
         if a.type.value != "transition"
     ]
     assert [a.target for a in acts] == ["e1", "e2", "e3", "e4", "e5"], "五条一条不少，按序走"
-    assert all(b.at > a.at for a, b in zip(acts, acts[1:])), "时刻递增"
+    assert all(b.at > a.at for a, b in zip(acts, acts[1:], strict=False)), "时刻递增"
     assert all(a.duration >= 0.6 for a in acts), "每条都停得够读"
