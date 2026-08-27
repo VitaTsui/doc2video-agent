@@ -45,6 +45,13 @@ class ElementScore(BaseModel):
     importance: float = Field(description="0..1")
 
 
+class GroupRead(BaseModel):
+    """One thing on the page, as the model sees it — a card, a label + body."""
+
+    members: list[str] = Field(default_factory=list)
+    label: str = ""
+
+
 class PageUnderstanding(BaseModel):
     index: int
     page_type: PageType
@@ -52,6 +59,7 @@ class PageUnderstanding(BaseModel):
     summary: str
     key_points: list[str]
     elements: list[ElementScore]
+    groups: list[GroupRead] = Field(default_factory=list)
 
 
 class DeckUnderstanding(BaseModel):
@@ -298,6 +306,23 @@ class DocumentSkill(Skill):
             element = by_id.get(score.id)
             if element is not None:
                 element.importance = max(0.0, min(1.0, score.importance))
+        # Groups are matched the same way: an invented member would aim the
+        # camera at nothing, and a group of one groups nothing. A member may
+        # belong to one group only — the first claim wins, later groups keep
+        # their remaining members.
+        from ..schemas import ElementGroup
+
+        taken: set[str] = set()
+        groups: list[ElementGroup] = []
+        for read_group in read.groups:
+            members = [m for m in read_group.members if m in by_id and m not in taken]
+            if len(members) < 2:
+                continue
+            taken.update(members)
+            label = read_group.label if read_group.label in members else ""
+            groups.append(ElementGroup(members=members, label=label))
+        if groups:
+            page.groups = groups
 
     def _images_for(self, batch: list[DocumentPage]) -> list:
         """Page renders for the most visual pages in this batch."""
@@ -324,9 +349,14 @@ class DocumentSkill(Skill):
                 lines.append(f"演讲者备注：{_truncate(page.speaker_notes, 300)}")
             elements = [e for e in page.elements if e.text]
             if elements:
-                lines.append("元素：")
+                # Geometry rides along — the grouping question is 「这几个元素
+                # 是不是一张卡」, and without positions the model can only
+                # guess from the words. Integers keep it cheap.
+                lines.append("元素（id｜类型｜位置 x,y,宽×高｜文本）：")
                 lines.extend(
-                    f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 150)}" for e in elements
+                    f"  - {e.id}｜{e.kind.value}｜{e.bbox.x:.0f},{e.bbox.y:.0f},"
+                    f"{e.bbox.w:.0f}×{e.bbox.h:.0f}｜{_truncate(e.text, 150)}"
+                    for e in elements
                 )
             else:
                 lines.append("（这一页没有可提取的文字，请看配图）")

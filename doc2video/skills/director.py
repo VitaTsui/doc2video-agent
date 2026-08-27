@@ -813,6 +813,26 @@ def focus_box(element, page: DocumentPage) -> BBox:
     if not page.width or not page.height:
         return box
 
+    # What the understanding model said this element is part of, before any
+    # geometry. The shapes below reconstruct 「这几个元素是一个东西」 from
+    # coordinates, and every deck layout they had not met cost a patch —
+    # `_labels`, then `_same_row`, then `_names_the_block`. The model reads it
+    # off the rendered page. Its group is taken whole, capped like geometric
+    # growth is: a hallucinated whole-page group must not make every frame the
+    # page. No group (an old project, a heuristic-only run) falls through to
+    # the same geometry as before.
+    for group in page.groups:
+        if element.id not in group.members:
+            continue
+        grown = element.bbox
+        for member_id in group.members:
+            member = page.element(member_id)
+            if member is not None and member.bbox.w > 0:
+                grown = _union(grown, member.bbox)
+        if _coverage_box(grown, page) <= MAX_GROUP_COVERAGE:
+            return grown
+        break
+
     gap = page.height * GROUP_GAP
     slack = page.width * GROUP_SLACK
     row_gap = page.width * ROW_GAP

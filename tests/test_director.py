@@ -1042,3 +1042,43 @@ def test_a_named_pair_walks_but_a_label_and_its_body_stay_one_frame():
         seg, body_page, bound_page=True
     )
     assert len(paired) == 1 and paired[0][1] == ["body"], "标签和它的正文仍是一个合框"
+
+
+def test_a_model_group_outranks_the_geometry():
+    """「这几个元素是一个东西」 is the understanding model's to say.
+
+    The geometric shapes reconstruct it from coordinates and every layout they
+    had not met cost a patch — `_labels`, then `_same_row`, then
+    `_names_the_block`. Where a group exists the frame is its union; a group
+    that swallows the page is ignored (the cap geometric growth already obeys);
+    and a page with no groups falls through to the same geometry as before.
+    """
+    from doc2video.schemas import BBox, ElementGroup, ElementKind, SlideElement
+    from doc2video.skills.director import focus_box
+
+    page = DocumentPage(
+        index=1, width=1920, height=1080,
+        elements=[
+            SlideElement(id="lbl", kind=ElementKind.PARAGRAPH, text="偏好分析",
+                         bbox=BBox(x=1035, y=695, w=160, h=53)),
+            # Far below — geometry would never reach it (gap way past LABEL_GAP).
+            SlideElement(id="body", kind=ElementKind.PARAGRAPH,
+                         text="分析招标方历史项目、采购周期、技术要求和评标偏好。",
+                         bbox=BBox(x=1035, y=1000, w=650, h=33)),
+        ],
+    )
+    bare = focus_box(page.element("lbl"), page)
+    assert bare.h < 100, "没有分组时，几何够不着那么远的正文"
+
+    page.groups = [ElementGroup(members=["lbl", "body"], label="lbl")]
+    grouped = focus_box(page.element("lbl"), page)
+    assert grouped.y + grouped.h >= 1033, "模型说是一组，框就画到一组"
+
+    # A group that swallows the page is a hallucination, not an answer.
+    page.elements.append(
+        SlideElement(id="corner", kind=ElementKind.PARAGRAPH, text="角落",
+                     bbox=BBox(x=10, y=10, w=100, h=30))
+    )
+    page.groups = [ElementGroup(members=["lbl", "body", "corner"])]
+    capped = focus_box(page.element("lbl"), page)
+    assert capped.h < 900, "全页级的组不采信，回退几何"

@@ -237,3 +237,36 @@ def test_the_long_stages_report_often_enough_to_be_stopped():
     driving = inspect.getsource(Executor)
     assert "DocumentSkill(self.ctx).run(progress=self._progress)" in driving
     assert "ReviewSkill(self.ctx).run(progress=self._progress)" in driving
+
+
+def test_groups_are_matched_never_trusted():
+    """A group is kept only where its members exist; the rest is dropped.
+
+    An invented member would aim the camera at nothing; a group of one groups
+    nothing; and an element claimed by two groups belongs to the first — one
+    thing on the page is one thing.
+    """
+    from doc2video.schemas import BBox, DocumentPage, ElementKind, PageType, SlideElement
+    from doc2video.skills.document import DocumentSkill, GroupRead, PageUnderstanding
+
+    page = DocumentPage(
+        index=1, page_type=PageType.CONTENT, width=1920, height=1080,
+        elements=[
+            SlideElement(id=f"e{i}", kind=ElementKind.PARAGRAPH, text=f"第 {i} 块",
+                         bbox=BBox(x=100, y=100 * i, w=400, h=60))
+            for i in (1, 2, 3)
+        ],
+    )
+    read = PageUnderstanding(
+        index=1, page_type=PageType.CONTENT, title="", summary="", key_points=[],
+        elements=[],
+        groups=[
+            GroupRead(members=["e1", "e2", "ghost"], label="e1"),
+            GroupRead(members=["e3"]),                      # 单成员，组不成组
+            GroupRead(members=["e2", "e3"], label="nope"),  # e2 已被占，label 不在组里
+        ],
+    )
+    DocumentSkill._apply_understanding(page, read)
+
+    assert [g.members for g in page.groups] == [["e1", "e2"]]
+    assert page.groups[0].label == "e1"
