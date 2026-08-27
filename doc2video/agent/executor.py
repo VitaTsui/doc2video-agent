@@ -131,6 +131,7 @@ _DIMENSION_OF = {
     "pacing": "节奏",
     "speech_rate": "节奏",
     "monotone": "节奏",
+    "stamped": "节奏",
     "ungrounded": "贴合文档",
     "ai_tic": "贴合文档",
     "dangling_action": "镜头",

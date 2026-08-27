@@ -276,6 +276,66 @@ AI_TICS: tuple[tuple[str, str, str], ...] = (
         "举牌提醒别人注意，改成把那件事讲具体",
     ),
 )
+#: How many sentences in a row have to open the same way before the page is
+#: being read out of a mould rather than told. Three, because two in a row is
+#: a pair and the page may only hold two of the thing.
+SAME_OPENING_RUN = 3
+#: The longest opening that still reads as a label rather than as a clause.
+#: 「实时聚合」 and 「贸易趋势分析」 are labels; 「洗完了做智能匹配」 (8) is someone
+#: entering the same block a different way, which is the thing being asked for.
+LABEL_OPENING_CHARS = 7
+#: What has to follow the label before the sentence counts as one of these.
+#: Below this the sentence is a short beat — 「先看数据。」 — not a stamped row.
+MIN_BODY_AFTER_LABEL = 6
+#: Characters that mean the head is not a bare label.
+_NOT_A_LABEL = set("、：；。！？…—「」『』（）()0123456789")
+
+
+def _label_opening(sentence: str) -> str | None:
+    """The bare label this sentence opens with, or None if it does not."""
+    head, comma, body = sentence.partition("，")
+    if not comma or len(body.strip()) < MIN_BODY_AFTER_LABEL:
+        return None
+    head = head.strip()
+    if not 2 <= len(head) <= LABEL_OPENING_CHARS:
+        return None
+    if any(char in _NOT_A_LABEL for char in head):
+        return None
+    return head
+
+
+def stamped_openings(narration: str) -> list[str]:
+    """The run of sentences that all enter their block the same way, or [].
+
+    The page is a grid of cards; one card per sentence, every sentence 「label,
+    verb, verb」, and the film is reading out a table however varied the
+    sentence lengths come out. Measured on a real deck this is what the pages
+    that get noticed have in common, and the length-spread check next door
+    sees only half of it: 「贸易趋势分析，跟踪…」/「市场准入分析，汇总…」/「目标市场
+    识别，看…」 runs 34, 35 and 34 characters — flagged for being flat — while
+    「实时聚合，采集…」/「智能匹配，按…」/「竞争跟踪，监测…」/「偏好分析，看…」 runs
+    31, 33, 20, 20, which is varied enough to pass and is the same mould.
+
+    No exemption for a page that really is a list of labelled cards. That page
+    is where this lives: it is precisely the one whose four cards should not
+    become four sentences of one shape, and a person telling it groups them,
+    enters them differently, and lets the last ones go short.
+
+    Returns the sentences themselves, so whoever acts on this can quote them.
+    """
+    sentences = [part.strip() for part in re.split(r"[。！？；]", narration) if part.strip()]
+    longest: list[str] = []
+    run: list[str] = []
+    for sentence in sentences:
+        if _label_opening(sentence) is None:
+            run = []
+            continue
+        run.append(sentence)
+        if len(run) > len(longest):
+            longest = list(run)
+    return longest if len(longest) >= SAME_OPENING_RUN else []
+
+
 MAX_SUBTITLE_CUE_CHARS = 34
 
 
@@ -425,7 +485,8 @@ class ReviewSkill(Skill):
                 detail=(
                     f"时长偏差与节奏问题 {by_kind.get('pacing', 0)} 条，"
                     f"语速 {by_kind.get('speech_rate', 0)} 条，"
-                    f"平铺直叙 {by_kind.get('monotone', 0)} 条"
+                    f"平铺直叙 {by_kind.get('monotone', 0)} 条，"
+                    f"句式一个模子 {by_kind.get('stamped', 0)} 条"
                 ),
             ),
             QualityDimension(
@@ -496,7 +557,15 @@ class ReviewSkill(Skill):
         # characters a minute is a page nobody follows, whatever the script
         # says. Weighed lighter than a structural pacing problem — it is a
         # blemish, not a scene that cannot be watched.
-        score -= 6.0 * (by_kind.get("speech_rate", 0) + by_kind.get("monotone", 0))
+        score -= 6.0 * (
+            by_kind.get("speech_rate", 0)
+            + by_kind.get("monotone", 0)
+            # Same weight class: a page told out of one mould is a blemish in
+            # how it is delivered, not a page nobody can follow. It also
+            # overlaps the flatness check next door, and a scene should not be
+            # charged twice at full rate for one defect.
+            + by_kind.get("stamped", 0)
+        )
         return max(0.0, score)
 
     def _direction_score(self, dangling: int) -> float:
@@ -635,6 +704,18 @@ class ReviewSkill(Skill):
                         message=(
                             f"句子长度过于均匀（离散度 {flat:.2f}），"
                             "念出来是一条直线，长短句交错一下"
+                        ),
+                    )
+                )
+
+            if stamped := stamped_openings(scene.narration):
+                findings.append(
+                    ReviewFinding(
+                        severity="warning", kind="stamped", scene_id=scene.scene_id,
+                        message=(
+                            f"连着 {len(stamped)} 句都是「名称，动词……」一个模子"
+                            f"（「{'」「'.join(s[:12] for s in stamped[:3])}」），"
+                            "听起来是在念表格，换着进入每一块"
                         ),
                     )
                 )

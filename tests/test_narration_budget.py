@@ -585,3 +585,101 @@ def test_adopting_a_script_keeps_what_each_sentence_was_pointing_at(
     ]
     assert [seg.emphasis for seg in first.segments] == [False, True]
 
+
+def _mould_page(settings: Settings, store: ProjectStore, script: str):
+    """One page of four labelled cards, with `script` as the draft written for it."""
+    from doc2video.schemas import BBox, ElementKind, SlideElement
+
+    skill = _skill(settings, store, pages=1, duration=60.0)
+    page = skill.project.document.pages[0]
+    page.elements = [
+        SlideElement(
+            id=f"p01_e{i:02d}",
+            kind=ElementKind.SUBTITLE,
+            text=text,
+            bbox=BBox(x=0, y=i * 120, w=600, h=60),
+        )
+        for i, text in enumerate(["实时聚合，持续采集工程、装置与设备项目",
+                                  "智能匹配，按产品、地区与资质匹配企业条件",
+                                  "竞争跟踪，监测对手参与项目和中标结果",
+                                  "偏好分析，分析招标方采购周期与评标偏好"], start=1)
+    ]
+    from doc2video.skills.narration import PageNarration
+
+    return skill, page, {1: PageNarration(index=1, narration=script, segments=[])}
+
+
+STAMPED = (
+    "实时聚合，采集工程、装置、设备项目，清洗业主、金额和时间节点。"
+    "智能匹配，按产品、地区、金额、资质匹配企业条件，形成优先跟进清单。"
+    "竞争跟踪，监测对手参与的项目和中标结果。"
+    "偏好分析，看招标方的采购周期和评标偏好。"
+)
+
+
+class _Answers:
+    """Returns one prepared rewrite, and keeps the note it was sent."""
+
+    available = True
+    model = "fake"
+    source = "fake"
+
+    def __init__(self, narration: str):
+        self.narration = narration
+        self.prompts: list[str] = []
+
+    def complete_json(self, prompt: str, **kwargs):  # noqa: ARG002
+        self.prompts.append(prompt)
+        return {"pages": [{"index": 1, "narration": self.narration, "segments": []}]}
+
+    def complete_text(self, prompt: str, **kwargs):  # noqa: ARG002
+        return ""
+
+    def supports_images(self) -> bool:
+        return False
+
+
+def test_a_page_told_out_of_one_mould_is_sent_back(settings: Settings, store: ProjectStore):
+    """The same rule the quality report uses, applied before the page is spoken.
+
+    A model asked in the prompt not to do something does it less, not never —
+    which is why the two faults beside this one are checked rather than only
+    asked for. This one is checked the same way and quoted back the same way.
+    """
+    better = (
+        "先是实时聚合。工程、装置、设备的项目都采进来，业主、金额、时间节点洗一遍。"
+        "洗完了做智能匹配，按产品、地区、金额和资质对企业条件，出一张优先跟进清单。"
+        "另外两块轻一些：竞争跟踪盯对手投了哪些项目、中没中；"
+        "偏好分析看招标方的采购周期和评标偏好。"
+    )
+    skill, page, drafts = _mould_page(settings, store, STAMPED)
+    skill.ctx.llm = _Answers(better)
+
+    fixed = skill._repair_drafts([page], {1: 40.0}, drafts)
+
+    assert "一个模子" in "".join(skill.ctx.llm.prompts), "返工说明要把毛病讲出来"
+    assert "实时聚合，采集工程" in "".join(skill.ctx.llm.prompts), "要把犯规的句子引回去"
+    assert fixed[1].narration == better
+
+
+def test_a_rewrite_that_bought_its_variety_with_content_is_refused(
+    settings: Settings, store: ProjectStore
+):
+    """The cheapest way to stop four sentences sounding alike is to write three.
+
+    The two repairs beside this one ask for more of the page and can only add.
+    This one asks for the same page entered a different way, so what comes back
+    has to still name what the draft named — or the draft stands, because a
+    page that reads like a table is the lesser of the two faults.
+    """
+    dropped = (
+        "先是实时聚合。工程、装置、设备的项目都采进来，业主、金额、时间节点洗一遍。"
+        "洗完了做智能匹配，按产品、地区、金额和资质对企业条件，出一张优先跟进清单。"
+    )
+    skill, page, drafts = _mould_page(settings, store, STAMPED)
+    skill.ctx.llm = _Answers(dropped)
+
+    fixed = skill._repair_drafts([page], {1: 40.0}, drafts)
+
+    assert skill.ctx.llm.prompts, "这一页本来就该被送回去重写"
+    assert fixed[1].narration == STAMPED, "少讲了两块的改写不能采用"

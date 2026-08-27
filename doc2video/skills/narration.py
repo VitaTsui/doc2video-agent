@@ -302,9 +302,10 @@ class NarrationSkill(Skill):
     ) -> dict[int, PageNarration]:
         """Rewrite the pages that did not finish what they started.
 
-        Two faults, one repair — both are 「讲了一半就翻页」 and both are decided
-        by the same deterministic rules the quality report uses, so a page is
-        judged the same way before it is spoken as after.
+        Three faults, one repair, all three decided by the same deterministic
+        rules the quality report uses, so a page is judged the same way before
+        it is spoken as after. Two of them are 「讲了一半就翻页」; the third is
+        the page told out of one mould.
 
         「平台上有三块开放机制。」 and the page ends — the three are on the slide
         in front of the viewer, and the sentence set up an expectation the film
@@ -317,12 +318,21 @@ class NarrationSkill(Skill):
         Only those pages, and only once: a page that comes back dangling twice
         is a page the model cannot do better on, and re-asking forever costs
         minutes for nothing.
+
+        The third fault is repaired under guard. The first two ask for more of
+        the page and can only add; this one asks for the same page entered a
+        different way, and the cheapest way to vary an opening is to stop
+        saying one of the things. So its rewrite has to still name what the
+        draft named, or the draft stands — the page reading like a table is
+        the lesser of the two.
         """
-        from .review import _dangling_counts, missed_items
+        from .review import _dangling_counts, missed_items, stamped_openings
 
         frozen = frozen or set()
         by_index = {page.index: page for page in pages}
         broken: dict[int, str] = {}
+        # The pages whose rewrite has to prove it did not pay for the variety.
+        guarded: set[int] = set()
         for index, draft in drafts.items():
             if index in frozen or (page := by_index.get(index)) is None:
                 continue
@@ -359,6 +369,22 @@ class NarrationSkill(Skill):
                     f"漏掉的是：「{'」「'.join(missed[:6])}」。\n"
                     "每句短一点没关系，讲不全才是问题；细节留给观众自己看屏幕。"
                 )
+                continue
+            if stamped := stamped_openings(draft.narration):
+                # Last, because the two above are about the page going untold
+                # and this one is about how it is told. A page with both is
+                # sent back for the content first.
+                guarded.add(index)
+                broken[index] = (
+                    f"上一稿这一页连着 {len(stamped)} 句是同一个模子——"
+                    "「名称，动词……，动词……」，一处一句地排下来：\n"
+                    f"「{'」「'.join(stamped[:4])}」\n"
+                    "页面是一格一格的卡片，这样讲出来是在念表格。\n"
+                    "重写这一页：**讲到的处数一处不少，改的只是进入每一块的方式**——"
+                    "先给一句短的把这一组领进来（「底下三块。」），第一块讲开一点，"
+                    "后面的块递减，最后一两块可以并成一句带过。"
+                    "不要为了让句子不一样就多讲或少讲任何一处。"
+                )
         if not broken or not self.llm.available:
             return drafts
 
@@ -393,8 +419,12 @@ class NarrationSkill(Skill):
                 self.log.warning("第 %d 页返工失败，保留原稿：%s", index, exc)
                 continue
             for candidate in rewritten:
-                if candidate.index == index and candidate.narration.strip():
-                    drafts[index] = candidate
+                if candidate.index != index or not candidate.narration.strip():
+                    continue
+                if index in guarded and not _still_tells(candidate.narration, before, page):
+                    self.log.info("第 %d 页改了句式但少讲了内容，保留原稿", index)
+                    continue
+                drafts[index] = candidate
         return drafts
 
     # -- fitting --------------------------------------------------------
@@ -1630,6 +1660,39 @@ def _binding_note(pages, written) -> str:
 def _worth_rewriting(candidate: str, draft: str) -> bool:
     """Whether a rewrite took enough off the page to be worth keeping."""
     return bool(candidate) and len(candidate) <= len(draft) * (1 - WORTH_ANOTHER_ROUND)
+
+
+#: How much of the draft a re-entered page has to keep. Entering four blocks
+#: differently costs about what entering them identically cost — measured on
+#: the case this was built from, 103 characters became 106. Giving two of them
+#: up costs a third of the page: the same rewrite with two blocks dropped came
+#: to 72. Set between them, near the draft.
+KEEPS_ENOUGH_OF_DRAFT = 0.85
+
+
+def _still_tells(candidate: str, draft: str, page) -> bool:
+    """Whether a rewrite still says what the draft said.
+
+    Asked only of the rewrite requested for the way a page reads rather than
+    for what it left out. The cheapest way to stop four sentences sounding like
+    one mould is to write three of them, so what is bought has to be checked
+    against what it could have been paid for with.
+
+    Not with `missed_items`, which is the instrument the other checks here use.
+    It decides a block was named by how much of the block's own wording the
+    script repeats — and re-wording is exactly what this rewrite was asked to
+    do. 「竞争跟踪，监测对手参与的项目和中标结果」 said again as 「竞争跟踪盯对手投
+    了哪些项目、中没中」 names the same card and shares few enough characters to
+    read as a card gone missing, so the good rewrite is the one it rejects.
+
+    Length is the crude measure that is crude in the right direction, and a
+    count announced and then not named is the one specific loss worth naming.
+    """
+    from .review import _dangling_counts
+
+    if _dangling_counts(candidate) and not _dangling_counts(draft):
+        return False
+    return len(candidate) >= len(draft) * KEEPS_ENOUGH_OF_DRAFT
 
 
 def _keeps_enough(candidate: str, draft: str, page, allowed: int) -> tuple[str, str]:
