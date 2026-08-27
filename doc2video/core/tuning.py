@@ -48,7 +48,7 @@ def _knobs(settings: Settings | None = None) -> dict[str, Knob]:
     two of these knobs default to a setting, and reading the global copy made
     a caller's own configuration invisible to them.
     """
-    from ..skills import director, render_review, speech_review
+    from ..skills import render_review, speech_review
     from ..tools.tts import units
 
     settings = settings or get_settings()
@@ -161,34 +161,6 @@ def _knobs(settings: Settings | None = None) -> dict[str, Knob]:
             0.0,
             2.0,
             "秒",
-        ),
-        Knob(
-            "shot.max_zoom_chars",
-            "值得推近的字数",
-            "整段正文推近没有意义",
-            float(director.MAX_ZOOM_CHARS),
-            10,
-            200,
-            "字",
-            integer=True,
-        ),
-        Knob(
-            "shot.max_scale",
-            "最大放大倍数",
-            "再大就糊了",
-            director.RENDER_MAX_SCALE,
-            1.2,
-            6.0,
-            "×",
-        ),
-        Knob(
-            "shot.min_result",
-            "推近的最小收益",
-            "放大不到这个幅度就不推",
-            director.MIN_ZOOM_RESULT,
-            0.0,
-            0.5,
-            "",
         ),
         Knob(
             "review.too_fast",
