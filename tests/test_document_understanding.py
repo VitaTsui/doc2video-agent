@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from doc2video.core.config import Settings
 from doc2video.schemas import (
     BBox,
@@ -144,13 +146,18 @@ def test_a_batch_may_still_drop_a_page_it_did_read():
     assert len(order) == PAGES - 1
 
 
-def test_one_unreadable_batch_costs_only_its_own_pages():
-    """It used to cost every batch after it as well.
+def test_a_batch_the_model_cannot_read_stops_the_run():
+    """读不下来的一批，重试之后仍然读不下来，就不出片了。
 
-    The exception left the loop, so a single page whose title carried a
-    quotation mark sent the remaining batches to the heuristics too — pages
-    that had nothing wrong with them, for a reason none of them caused.
+    这条规矩换过两次。最早是一批失败带走它后面所有批次——一页标题里的引号
+    让别的页也去走启发式规则，那些页什么错都没有。改成「只赔上自己那几页」
+    之后，一份三十页的文档遇上网关不认的请求，五个批次全部降级：五行一模一
+    样的记录，一部按规则做出来的片子，而看片的人不会打开那个面板。
+
+    所以现在：先重试，仍然不行就整轮失败，并说清是哪几页、为什么。宁可不出
+    片，也不出一份悄悄变差的片子。
     """
+    from doc2video.core.errors import SkillFailed
 
     class _OneBadBatch(_PerBatchModel):
         def complete_json(self, prompt: str, **kwargs):
@@ -161,16 +168,34 @@ def test_one_unreadable_batch_costs_only_its_own_pages():
 
     project = _project()
     model = _OneBadBatch()
-    _understand(project, model)
+    with pytest.raises(SkillFailed) as caught:
+        _understand(project, model)
 
-    assert model.calls == 5, "坏掉的那一批之后，剩下的批次还要接着读"
+    said = str(caught.value)
+    assert "19" in said or "24" in said, f"要说清是哪几页：{said}"
+    assert model.calls > 5, "那一批要重试过，不是一次就放弃"
+
+
+def test_a_moment_is_retried_rather_than_fatal():
+    """大多数失败是一阵子，不是一堵墙——第二次就好了的，不该赔上整轮。"""
+
+    class _FlakyOnce(_PerBatchModel):
+        seen: set = set()
+
+        def complete_json(self, prompt: str, **kwargs):
+            answer = super().complete_json(prompt, **kwargs)
+            first = answer["presentation_order"][0]
+            if first == 19 and first not in _FlakyOnce.seen:
+                _FlakyOnce.seen.add(first)
+                raise ValueError("连接断了")
+            return answer
+
+    _FlakyOnce.seen = set()
+    project = _project()
+    _understand(project, _FlakyOnce())
+
     titles = {p.index: p.title for p in project.document.pages}
-    # The batch that failed keeps whatever the heuristics gave it...
-    assert titles[20] == "第 20 页"
-    # ...and every other page still has the model's answer, including the
-    # batches that came after the failure.
-    assert titles[3] == "模型读过的第 3 页"
-    assert titles[26] == "模型读过的第 26 页"
+    assert titles[20] == "模型读过的第 20 页", "重试拿到了结果，这几页不该退回规则"
     assert len(project.document.presentation_order) == PAGES
 
 

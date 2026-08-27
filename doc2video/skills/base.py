@@ -15,6 +15,7 @@ fallback the service has always had, and says so in the run record.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,10 +23,20 @@ from typing import TypeVar
 
 from ..core import ledger, telemetry
 from ..core.config import Settings, get_settings
+from ..core.errors import SkillFailed
 from ..core.logging import get_logger
 from ..schemas import VideoProject
 from ..storage import ProjectStore
 from ..tools.llm import LLMTool, get_llm
+
+#: How many times one model call is worth asking for. Most of what goes wrong
+#: is a moment — a dropped connection, a truncated reply, one 401 out of
+#: seventy-one calls eleven seconds apart. Past three it is usually a wall,
+#: and a gateway that rejects a request shape rejects it every time.
+MODEL_ATTEMPTS = 3
+
+#: Multiplied by the attempt number, so the waits are 2s then 4s.
+MODEL_BACKOFF_S = 2.0
 
 T = TypeVar("T")
 
@@ -129,32 +140,66 @@ class Skill:
         raise NotImplementedError
 
     def try_llm(self, fn: Callable[[], T], fallback: Callable[[], T], *, what: str) -> T:
-        """Run the model path, falling back to the deterministic one.
+        """Run the model path. Without a model, run the deterministic one.
 
-        Every reason for not getting a model answer is treated the same way,
-        because from the video's point of view they are the same: the fallback
-        runs and the run record gains a degradation. That record is the only
-        way anyone finds out afterwards that a run succeeded while quietly
-        producing something worse.
+        Two things used to be treated as one, and they are not:
+
+        **No model configured** is a mode, not a failure. Someone who has not
+        configured one writes the script themselves and everything downstream
+        is deterministic — that is what this engine was before it held a model
+        at all. The fallback is the product, and it runs.
+
+        **A configured model that failed** is a failure. It used to take the
+        same exit: the heuristics ran, the record gained one line, and a video
+        came out that nobody had been told was worse. On one real deck that was
+        every batch of a thirty-page document — five identical lines, a film
+        made from rules, and 「文档理解降级」 five times in a panel most people
+        never open. So now it is retried, and if it still will not answer, the
+        run stops and says which step and why.
         """
         if not self.llm.available:
             telemetry.record_degradation(what, "未配置模型")
             return fallback()
+        # No retry here. Retrying belongs where a single call is made — see
+        # `insist` — and a stage that batches its work has already done it:
+        # wrapping the stage in another three attempts turned one bad batch
+        # into nine calls and twenty-six seconds of waiting to reach the same
+        # answer, and said it twice in the message.
+        ledger.used(self.llm.source)
+        return fn()
+
+    def insist(self, fn: Callable[[], T], *, what: str, attempts: int = MODEL_ATTEMPTS) -> T:
+        """Call the model, retrying, and fail the run rather than degrade.
+
+        Retried because most of what goes wrong is a moment rather than a
+        wall — a dropped connection, a reply that came back truncated, one
+        401 out of seventy-one calls eleven seconds apart. Bounded because
+        some of it really is a wall: a gateway that rejects a request shape
+        answers the same way however many times it is asked.
+        """
         # Named before the call, so a failed one still shows what was tried.
         # `source` already distinguishes "gpt-5 via OpenAI" from "gpt-5 via
         # someone's gateway", which is the difference worth seeing here.
         ledger.used(self.llm.source)
-        try:
-            return fn()
-        except Exception as exc:  # noqa: BLE001 - any failure degrades, none aborts
-            # The useful half of these failures lives in `detail` — the reply
-            # that would not parse, the CLI's stderr — and a degradation that
-            # records only the summary leaves the next person with
-            # "返回的结构化结果不是合法 JSON 对象" and nothing to look at.
-            reason = str(exc)
-            detail = getattr(exc, "detail", None)
-            if detail:
-                reason += "｜" + "；".join(f"{k}={str(v)[:200]}" for k, v in detail.items())
-            self.log.warning("%s 的模型调用失败，改用启发式规则：%s", what, reason)
-            telemetry.record_degradation(what, reason)
-            return fallback()
+        last = ""
+        for attempt in range(1, attempts + 1):
+            try:
+                return fn()
+            except Exception as exc:  # noqa: BLE001 - reported below as a failure
+                # The useful half of these failures lives in `detail` — the
+                # reply that would not parse, the CLI's stderr — and a report
+                # that keeps only the summary leaves the next person with
+                # "返回的结构化结果不是合法 JSON 对象" and nothing to look at.
+                last = str(exc)
+                detail = getattr(exc, "detail", None)
+                if detail:
+                    last += "｜" + "；".join(f"{k}={str(v)[:200]}" for k, v in detail.items())
+                self.log.warning(
+                    "%s 的模型调用失败（第 %d/%d 次）：%s", what, attempt, attempts, last
+                )
+                if attempt < attempts:
+                    time.sleep(MODEL_BACKOFF_S * attempt)
+        raise SkillFailed(
+            f"{what}失败：模型试了 {attempts} 次都没给出可用的结果",
+            detail={"reason": last[:400], "step": what},
+        )

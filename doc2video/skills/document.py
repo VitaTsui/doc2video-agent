@@ -11,7 +11,7 @@ from contextvars import copy_context
 
 from pydantic import BaseModel, Field
 
-from ..core import ledger, telemetry, tuning
+from ..core import ledger, tuning
 from ..schemas import DocumentPage, ElementKind, PageType, Section
 from ..tools.llm import model_schema
 from .base import ProgressFn, Skill, load_prompt
@@ -163,7 +163,6 @@ class DocumentSkill(Skill):
         pages = document.pages
         by_index = {p.index: p for p in pages}
 
-        failures = 0
         batches = [
             (start, pages[start : start + BATCH_SIZE])
             for start in range(0, len(pages), BATCH_SIZE)
@@ -180,17 +179,21 @@ class DocumentSkill(Skill):
         for start, batch, result, exc in self._read_batches(batches, progress):
             where = f"第 {batch[0].index}-{batch[-1].index} 页"
             if exc is not None:
-                # One batch failing must not cost the others. It used to: the
-                # exception left the loop, and a single page whose title
-                # contained a quotation mark took the remaining batches with it
-                # — those pages fell back to heuristics for no reason of their
-                # own.
-                failures += 1
-                detail = f"{exc}"
-                self.log.warning("%s的理解失败，这几页改用启发式规则：%s", where, detail)
-                telemetry.record_degradation("文档理解", f"{where}：{detail}"[:300])
-                ledger.degradation("文档理解降级", f"{where} 改用启发式规则：{detail}"[:300])
-                continue
+                # It used to keep going: this batch's pages fell back to the
+                # heuristics, one line went into the record, and the film came
+                # out. On a real deck that was every batch of thirty pages —
+                # five identical lines in a panel most people never open, and a
+                # video made from rules that nobody was told about.
+                #
+                # The batch has already been retried inside `_read_batches`.
+                # Still failing means the model cannot answer for these pages,
+                # and a film built on rules instead is not the film that was
+                # asked for. Say which pages and why, and stop.
+                # Raised as it came: `insist` already names the pages and
+                # says how many times it asked. Wrapping it again said the
+                # same sentence twice.
+                self.log.error("%s的理解失败：%s", where, exc)
+                raise exc
             for read in result.pages:
                 page = by_index.get(read.index)
                 if page is not None:
@@ -223,11 +226,6 @@ class DocumentSkill(Skill):
                         and page.page_type is not PageType.CONTACT
                     ]
 
-        if failures and failures * BATCH_SIZE >= len(pages):
-            # Nothing came back at all — say so as one degradation about the
-            # stage rather than as a list of per-batch ones nobody reads.
-            raise RuntimeError(f"{failures} 批全部失败，文档理解没有任何模型结果")
-
     def _read_batches(self, batches, progress: ProgressFn | None = None):
         """Each batch's answer, in page order, whether it worked or not.
 
@@ -239,17 +237,24 @@ class DocumentSkill(Skill):
 
         def read(batch):
             where = f"第 {batch[0].index}-{batch[-1].index} 页"
-            with ledger.call(
-                self.llm.source, where, covers=[ledger.page_key(p.index) for p in batch]
-            ):
-                return DeckUnderstanding.model_validate(
-                    self.llm.complete_json(
-                        self._prompt(batch),
-                        schema=model_schema(DeckUnderstanding),
-                        system=load_prompt("document_understanding"),
-                        images=self._images_for(batch),
+
+            def once():
+                with ledger.call(
+                    self.llm.source, where, covers=[ledger.page_key(p.index) for p in batch]
+                ):
+                    return DeckUnderstanding.model_validate(
+                        self.llm.complete_json(
+                            self._prompt(batch),
+                            schema=model_schema(DeckUnderstanding),
+                            system=load_prompt("document_understanding"),
+                            images=self._images_for(batch),
+                        )
                     )
-                )
+
+            # Retried per batch rather than per stage: the batches are read in
+            # parallel and one of them stumbling is the common case, so asking
+            # again for those six pages is cheaper than asking again for thirty.
+            return self.insist(once, what=f"{where}的理解")
 
         # Said as each batch is reached and as each one lands. Not decoration:
         # a job is only asked whether it should stop when progress is reported,

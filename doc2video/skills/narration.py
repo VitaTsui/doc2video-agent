@@ -25,6 +25,7 @@ from contextvars import copy_context
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from ..core import ledger, telemetry, tuning
+from ..core.errors import SkillFailed
 from ..core.ids import scene_id
 from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisual, VisualType
 from ..tools.llm import model_schema
@@ -1220,6 +1221,20 @@ class NarrationSkill(Skill):
         pages: list[DocumentPage],
     ) -> list[PageNarration]:
         """One batch, asked for and validated. Nothing here touches the project."""
+        return self.insist(
+            lambda: self._write_batch_once(start, batch, budgets, kept, pages),
+            what=f"第 {batch[0].index}-{batch[-1].index} 页的讲稿",
+        )
+
+    def _write_batch_once(
+        self,
+        start: int,
+        batch: list[DocumentPage],
+        budgets: dict[int, float],
+        kept: dict[int, str],
+        pages: list[DocumentPage],
+    ) -> list[PageNarration]:
+        """One attempt at one batch."""
         with ledger.call(
             self.llm.source,
             f"第 {batch[0].index}-{batch[-1].index} 页",
@@ -1254,10 +1269,15 @@ class NarrationSkill(Skill):
         wanted = {p.index for p in pages}
         missing = sorted(wanted - drafts.keys())
         if missing:
-            telemetry.record_degradation("讲稿", f"模型漏掉第 {missing} 页，改用占位文本")
-            self.log.warning("模型未覆盖 %s，这几页使用占位讲稿", missing)
-            drafts.update(
-                self._write_heuristically([p for p in pages if p.index in set(missing)], budgets)
+            # Filling these in with placeholder text used to let the run finish:
+            # a film came out, some of its pages read 「本页介绍……」, and one
+            # line in a panel said so. A page the model answered for and simply
+            # left out is the same failure as a batch that would not parse, and
+            # it gets the same answer — say which pages, and stop.
+            self.log.error("模型未覆盖 %s", missing)
+            raise SkillFailed(
+                f"第 {'、'.join(str(i) for i in missing)} 页没有讲稿：模型没有写它们",
+                detail={"pages": str(missing)},
             )
         return {index: drafts[index] for index in sorted(wanted)}
 
