@@ -873,3 +873,51 @@ def test_a_run_on_one_block_is_one_hold_for_the_whole_run():
     assert len(actions) == 1, "同一块上的连续三句是一次注视，不是三次"
     action = actions[0]
     assert action.at + action.duration >= 16.0, "框要停到这一串讲完，不是第一句完就下"
+
+
+def test_a_sentence_that_walks_a_list_gets_a_box_per_item():
+    """One sentence, five bound entries — the box walks them as they are named.
+
+    What the film shipped instead was the truncated union: `_that_fit` packed
+    entries into one frame until the coverage cap and kept what had fitted, so
+    the first framed page of the video showed a box around (一)(二)(三) with
+    (四)(五) sitting outside it. A frame holding *some* of what the sentence
+    names is worse than either honest option.
+
+    Two of the entries open with the same two characters (「项目建设主旨思路」/
+    「项目总体建设内容」), which is what pins the cursor: found without one,
+    both landed at the same instant and the walk skipped (三).
+    """
+    from doc2video.schemas import BBox, ElementKind, NarrationSegment, Scene, SlideElement
+    from doc2video.skills.director import DirectorSkill
+
+    titles = ["(一)背景及技术牵头方", "(二)核心市场痛点分析", "(三)项目建设主旨思路",
+              "(四)项目总体建设内容", "(五)联合揭榜商业价值"]
+    page = DocumentPage(
+        index=1, title="目录", width=1920, height=1080,
+        elements=[
+            SlideElement(id=f"e{i}", kind=ElementKind.PARAGRAPH, text=t,
+                         bbox=BBox(x=1017, y=267 + i * 103, w=300, h=47))
+            for i, t in enumerate(titles, start=1)
+        ],
+    )
+    scene = Scene(
+        scene_id="sc", source_page=1, narration="x", duration=14.7,
+        segments=[
+            NarrationSegment(
+                id="s2",
+                text="一是背景及技术牵头方，二是核心市场痛点分析，三是项目建设主旨思路，"
+                     "四是项目总体建设内容，五是联合揭榜商业价值。",
+                element_refs=[f"e{i}" for i in range(1, 6)],
+                start=3.5, end=14.2,
+            ),
+        ],
+    )
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+    acts = [
+        a for a in skill._to_actions(scene, page, skill._choose_heuristically(scene, page))
+        if a.type.value != "transition"
+    ]
+    assert [a.target for a in acts] == ["e1", "e2", "e3", "e4", "e5"], "五条一条不少，按序走"
+    assert all(b.at > a.at for a, b in zip(acts, acts[1:], strict=False)), "时刻递增"
+    assert all(a.duration >= 0.6 for a in acts), "每条都停得够读"
