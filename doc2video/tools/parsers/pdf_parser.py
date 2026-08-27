@@ -318,6 +318,26 @@ def _continues(previous: dict, block: dict) -> bool:
         return False
     if abs(_max_size(previous) - _max_size(block)) > size * _SAME_SIZE_RATIO:
         return False
+    # An unfinished sentence claims its tail whatever the tail's width. The
+    # comparable-width test below is right for captions and headings, and it
+    # is what stranded 「揭榜实施。」: a 40-character line ending 「…组建创新联合
+    # 体」 with a five-character remainder under it stayed two elements, and
+    # the film framed the long line first and the orphan tail second. Three
+    # guards keep this narrow — the line above must be long enough to be a
+    # paragraph line (a chip like 「感谢聆听」 stays a chip), must end mid-
+    # sentence, and the tail must be no wider than it (a label above its
+    # longer body is the opposite shape and stays out).
+    prev_text = "".join(
+        span.get("text", "")
+        for line in previous.get("lines", [])
+        for span in line.get("spans", [])
+    ).strip()
+    if (
+        len(prev_text) >= 15
+        and not prev_text.endswith(tuple("。！？；：.!?;:"))
+        and (bx1 - bx0) <= (px1 - px0)
+    ):
+        return True
     # Comparable width: a one-word line under a full-width paragraph is a
     # caption or a heading, not its continuation.
     return min(px1 - px0, bx1 - bx0) >= 0.35 * max(px1 - px0, bx1 - bx0)
