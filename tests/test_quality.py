@@ -527,3 +527,95 @@ def test_a_page_with_no_text_says_so_instead_of_scoring_a_pass(score):
     assert grounding.score == 100
     # But it no longer reads as five scenes that passed.
     assert "5 个场景所在的页没有文字可比对" in grounding.detail
+
+
+def _reader(answer: dict):
+    """A model that answers the script review with whatever it is handed."""
+    from doc2video.tools.llm import MockLLM
+
+    class _Reads(MockLLM):
+        available = True
+        source = "reader"
+        seen: list[str] = []
+
+        def complete_json(self, prompt: str, **kwargs):
+            _Reads.seen.append(prompt)
+            return answer
+
+    _Reads.seen = []
+    return _Reads()
+
+
+def test_the_script_is_read_as_well_as_measured(
+    settings: Settings, store: ProjectStore
+):
+    """质检以前只查数得出来的东西，读讲稿才发现的那几类没人管。
+
+    review.py 的开头一直写着「加一层可选的模型复核——念得平、只是在读幻灯
+    片、事实漂移」，而文件里一个模型调用都没有。现在补上。
+    """
+    project = _project([_scene(i) for i in range(1, 4)])
+    project.scenes[1].narration = "企业定位，城市产业链智能创新生态运营商。"
+    model = _reader(
+        {
+            "findings": [
+                {
+                    "page": 2,
+                    "kind": "flat",
+                    "severity": "warning",
+                    "quote": "企业定位，城市产业链智能创新生态运营商。",
+                    "message": "把页面上的短语连起来念了一遍",
+                }
+            ]
+        }
+    )
+    ctx = SkillContext.build(project, store=store, settings=settings, llm=model)
+    ReviewSkill(ctx).run()
+
+    said = [f for f in project.review if f.kind.startswith("script_")]
+    assert said, [f.kind for f in project.review]
+    assert said[0].kind == "script_flat"
+    assert "第 2 页" in said[0].message
+    assert said[0].scene_id == project.scenes[1].scene_id
+    # 页面上的原文和讲稿都要给它看，否则「只是在读幻灯片」无从判断。
+    assert "页面上：" in model.seen[0] and "讲稿：" in model.seen[0]
+
+
+def test_a_finding_that_quotes_words_the_script_never_said_is_dropped(
+    settings: Settings, store: ProjectStore
+):
+    """这是唯一一个能自己编造证据的检查项。
+
+    引的话必须在讲稿里找得到——找不到，说明它在说一份不存在的讲稿。
+    """
+    project = _project([_scene(i) for i in range(1, 4)])
+    model = _reader(
+        {
+            "findings": [
+                {
+                    "page": 2,
+                    "kind": "drift",
+                    "severity": "error",
+                    "quote": "这句话讲稿里根本没有",
+                    "message": "编的",
+                }
+            ]
+        }
+    )
+    ctx = SkillContext.build(project, store=store, settings=settings, llm=model)
+    ReviewSkill(ctx).run()
+
+    assert not [f for f in project.review if f.kind.startswith("script_")]
+
+
+def test_without_a_model_the_script_is_simply_not_read(
+    settings: Settings, store: ProjectStore
+):
+    """没配模型是一种模式，不是失败——其余的检查照跑。"""
+    project = _project([_scene(i) for i in range(1, 4)])
+    ctx = SkillContext.build(project, store=store, settings=settings)
+    assert not ctx.llm.available
+    ReviewSkill(ctx).run()
+
+    assert not [f for f in project.review if f.kind.startswith("script_")]
+    assert project.quality.score > 0
