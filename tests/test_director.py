@@ -987,3 +987,58 @@ def test_a_walked_list_rides_the_clips_own_pauses():
     # Items 2–5 start where the four longest pauses end, not on the character clock.
     assert [a.at for a in acts][1:] == [7.9, 10.9, 13.9, 15.9]
     assert acts[0].at < 7.9
+
+
+def test_a_named_pair_walks_but_a_label_and_its_body_stay_one_frame():
+    """Two refs is two shapes, and the sentence tells them apart.
+
+    The writer split the contents across two sentences and 「四是……，五是……」
+    came back as one box around both entries while the narrator named them in
+    turn. A pair walks when both names are actually found in the sentence, in
+    order, and the first's drawn frame does not already hold the second. A
+    label bound with its own body is the other shape — the label's frame grows
+    over the body, so they stay one frame.
+    """
+    from doc2video.schemas import BBox, ElementKind, NarrationSegment, Scene, SlideElement
+    from doc2video.skills.director import DirectorSkill
+
+    page = DocumentPage(
+        index=1, title="目录", width=1920, height=1080,
+        elements=[
+            SlideElement(id="four", kind=ElementKind.PARAGRAPH, text="(四)项目总体建设内容",
+                         bbox=BBox(x=1017, y=576, w=300, h=47)),
+            SlideElement(id="five", kind=ElementKind.PARAGRAPH, text="(五)联合揭榜商业价值",
+                         bbox=BBox(x=1017, y=679, w=300, h=47)),
+        ],
+    )
+    scene = Scene(
+        scene_id="sc", source_page=1, narration="x", duration=7.0,
+        segments=[
+            NarrationSegment(id="s3", text="四是项目总体建设内容，五是联合揭榜的商业价值。",
+                             element_refs=["four", "five"], start=1.0, end=6.8),
+        ],
+    )
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+    acts = [
+        a for a in skill._to_actions(scene, page, skill._choose_heuristically(scene, page))
+        if a.type.value != "transition"
+    ]
+    assert [a.target for a in acts] == ["four", "five"], "点名的两条各自走"
+    assert acts[0].at < acts[1].at
+
+    body_page = DocumentPage(
+        index=1, width=1920, height=1080,
+        elements=[
+            SlideElement(id="lbl", kind=ElementKind.PARAGRAPH, text="供应链情报",
+                         bbox=BBox(x=100, y=100, w=170, h=45)),
+            SlideElement(id="body", kind=ElementKind.PARAGRAPH,
+                         text="监测价格、供需、库存、装置运行与物流事件，研判成本趋势、采购窗口和供应中断风险。",
+                         bbox=BBox(x=100, y=180, w=900, h=60)),
+        ],
+    )
+    seg = NarrationSegment(id="s1", text="供应链情报监测价格、供需和库存，回答怎么买。",
+                           element_refs=["lbl", "body"], start=0.0, end=6.0)
+    paired = DirectorSkill(SkillContext.build(_project_with(body_page)))._targets_in(
+        seg, body_page, bound_page=True
+    )
+    assert len(paired) == 1 and paired[0][1] == ["body"], "标签和它的正文仍是一个合框"
