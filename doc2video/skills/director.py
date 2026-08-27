@@ -360,7 +360,27 @@ class DirectorSkill(Skill):
             and not _is_banner(found, page)
         ]
         if bound:
-            return [(bound[0], self._that_fit(bound[0], bound[1:], page), 0.0)]
+            span = max(segment.end - segment.start, 0.0)
+            fractions = _walk_fractions(
+                segment.text, [page.element(ref) for ref in bound]
+            )
+            walk = [(ref, [], fractions[index]) for index, ref in enumerate(bound)]
+            # A sentence that walks a list gets a box that walks it too. One
+            # frame around five contents entries sits there for ten seconds
+            # while the narrator names them one by one — and the truncated
+            # version of that frame is what the film actually shipped: a box
+            # around (一)(二)(三) with (四)(五) sitting outside it, on the
+            # first framed page of the video. Walking needs room to be read,
+            # so it only happens when each name gets at least a readable beat.
+            if len(bound) >= 3 and span / len(bound) >= MIN_ACTION_DURATION:
+                return walk
+            also = self._that_fit(bound[0], bound[1:], page)
+            left = [ref for ref in bound[1:] if ref not in also]
+            if not left:
+                return [(bound[0], also, 0.0)]
+            # A frame that holds *some* of what the sentence names is worse
+            # than either honest option — walk even when it is brisk.
+            return walk
         if bound_page:
             # This page's sentences did say what they were about, and this one
             # said 「nothing」. 「过渡句没必要框」 — and a guess here would be a
@@ -1258,6 +1278,44 @@ def _match(element_text: str, sentence: str) -> float:
     grams = {element_text[i : i + 2] for i in range(len(element_text) - 1)}
     said = {sentence[i : i + 2] for i in range(len(sentence) - 1)}
     return 2 * len(grams & said) / (len(grams) + len(said))
+
+
+#: Leading numbering a page prints before an item's name — 「(一)」「1.」「①」.
+_NUMBERING = re.compile(r"^[\s(（\[【]*[一二三四五六七八九十\d①-⑩]+[)）\]】.、：:]*")
+
+
+def _walk_fractions(sentence: str, elements: list) -> list[float]:
+    """Where in the sentence each element's name is said, 0–1, in order.
+
+    A walked list is timed by its own words: 「一是背景及技术牵头方，二是核心
+    市场痛点分析，……」 reaches 「核心」 about a quarter of the way in, and that
+    is when its box should go up. The page's numbering is stripped first —
+    the sentence says 「二是」 where the page prints 「(二)」.
+
+    Found in order, behind a cursor, longest prefix first. Two of this deck's
+    contents entries both open 「项目」, and a bare `find` put them at the same
+    instant — the second box then had no room to live and was dropped, so the
+    walk skipped (三). The cursor holds the one fact a spoken list guarantees:
+    the names are said in the order the refs were given. A name that cannot be
+    found falls back to even spacing, which is what a spoken list is.
+    """
+    total = max(len(sentence), 1)
+    out: list[float] = []
+    cursor = 0
+    for index, element in enumerate(elements):
+        text = _NUMBERING.sub("", (getattr(element, "text", "") or "").strip())
+        at = -1
+        for width in (4, 3, 2):
+            if len(text) >= width:
+                at = sentence.find(text[:width], cursor)
+                if at >= 0:
+                    break
+        if at < 0:
+            out.append(index / max(len(elements), 1))
+            continue
+        out.append(at / total)
+        cursor = at + 1
+    return out
 
 
 def _mentioned(element_text: str, sentence: str) -> float:
