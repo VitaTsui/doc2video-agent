@@ -89,6 +89,28 @@ export function App() {
     return id
   }, [])
 
+  /**
+   * Stop watching whatever the conversation being left was doing.
+   *
+   * Not cancel it. A render in flight writes to its own project and stays
+   * reachable from the sidebar; killing someone's work because they opened
+   * another conversation is not what 「新会话」 means. But it has to stop
+   * writing *here*, and it has to stop leaving the box in its running state —
+   * which is what 「历史工程不应该影响新对话」 looked like from the outside: an
+   * empty opening screen with a stop button sitting on it.
+   *
+   * Aborting is what unwinds `follow`: the wait rejects, its catch amends a
+   * card that no longer exists (a no-op on a cleared transcript), and its
+   * finally clears the poll and the flags. Set here as well, so the box
+   * changes on the click rather than a tick later.
+   */
+  const leaveRun = useCallback(() => {
+    abort.current?.abort()
+    setRunning(false)
+    setRunningJob(null)
+    setBusy(false)
+  }, [])
+
   const amend = useCallback((id: string, patch: MessagePatch) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? ({ ...m, ...patch } as Message) : m)))
   }, [])
@@ -157,6 +179,7 @@ export function App() {
    */
   const openProject = useCallback(
     async (summary: ProjectSummary, greeting?: string) => {
+      leaveRun()
       setProjectId(summary.project_id)
       setMessages([])
 
@@ -255,7 +278,7 @@ export function App() {
         setPanelOpen(true)
       }
     },
-    [hasModel, loadArtifacts, say],
+    [hasModel, leaveRun, loadArtifacts, say],
   )
 
   /** Everything on this machine, newest first — the sidebar's whole content. */
@@ -286,6 +309,7 @@ export function App() {
       // Looking at the one that just went: back to the opening screen rather
       // than at a transcript for something that no longer exists.
       if (projectId === project.project_id) {
+        leaveRun()
         setProjectId(null)
         setMessages([])
         setArtifacts(null)
@@ -294,18 +318,19 @@ export function App() {
       }
       return items
     },
-    [loadProjects, projectId, say],
+    [leaveRun, loadProjects, projectId, say],
   )
 
   /** Start over: no project, an empty transcript, back to the opening screen. */
   const startNew = useCallback(() => {
+    leaveRun()
     setProjectId(null)
     setMessages([])
     setArtifacts(null)
     setPanelOpen(false)
     setDrafts({})
     greeted.current = false
-  }, [])
+  }, [leaveRun])
 
   /** Connect, learn what the backend can do, and open the conversation. */
   const begin = useCallback(async () => {
