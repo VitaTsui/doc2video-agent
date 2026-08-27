@@ -201,8 +201,17 @@ class DirectorSkill(Skill):
             segment = segments.get(segment_id or "")
             element = page.element(action.target) if action.target else None
             if action.target and element is not None and segment is not None:
+                # A target the writer bound is not re-derived from shared
+                # characters — that is the very reverse-engineering the bound
+                # branch of `_targets_in` exists to bypass, and the check here
+                # was quietly running it anyway. 「链上挂企业。」 says 「企业挂接」
+                # in other words, which is what a script that does not read the
+                # slide aloud is supposed to do; the overlap test read the
+                # paraphrase as a miss and un-did the binding. The veto stays
+                # for guessed targets, which is who it was written for.
+                bound = action.target in segment.element_refs
                 hit, share = _shared_grams(element.text, segment.text)
-                if share < MENTION_THRESHOLD and hit < MENTION_PAIRS:
+                if not bound and share < MENTION_THRESHOLD and hit < MENTION_PAIRS:
                     dropped += 1
                     continue
             kept.append(action)
@@ -286,6 +295,13 @@ class DirectorSkill(Skill):
             if choice.type not in (ActionType.HIGHLIGHT, ActionType.ZOOM)
             or choice.also
             or not _just_a_name(page.element(choice.target), page)
+            # Judged on what will actually be drawn, like `_frame_key`: a name
+            # whose frame has grown into its block is framing the block, and
+            # dropping it leaves the camera parked while the narrator announces
+            # the one thing the page lays out to be looked at next. Measured
+            # before this check existed: thirty bound sentences on one deck
+            # lost their gesture this way, all of them category heads.
+            or _frames_the_block(page.element(choice.target), page)
         ]
 
         scored.sort(key=lambda item: -item[0])
@@ -297,16 +313,14 @@ class DirectorSkill(Skill):
         # Keep narrative order — ranking was only for selection.
         order = {s.id: i for i, s in enumerate(scene.segments)}
         chosen.sort(key=lambda c: (order.get(c.segment_id, 0), c.at_fraction))
-        # Never the same box twice *in a row* — that reads as a stutter. Twice
-        # with something else in between is not a stutter but a return, and
-        # refusing it left the picture still while the narration came back to
-        # a box it had already left. (`_to_actions` enforces the same rule on
-        # the timed actions; this keeps the count honest before the budget.)
-        chosen = [
-            choice
-            for index, choice in enumerate(chosen)
-            if index == 0 or choice.target != chosen[index - 1].target
-        ]
+        # Consecutive looks at the same thing are NOT deduplicated here. They
+        # used to be — 「never the same box twice in a row」 — and the dedup ran
+        # before `_merge_runs` ever saw the list, so a run of three sentences
+        # on one paragraph arrived as a single choice and the hold it should
+        # have become covered only the first: the box came down at 25s while
+        # the narrator stayed on the block to 51s. Merging is `_merge_runs`'s
+        # whole job, it does it by the drawn frame rather than the element id,
+        # and it needs the run intact to know how long the hold lasts.
 
         if sum(1 for c in chosen if c.type is ActionType.ZOOM) >= 2 and scene.segments:
             chosen.append(
@@ -599,8 +613,21 @@ class DirectorSkill(Skill):
             )
         )
 
+        # A run of choices on the same target is one look at it, not several.
+        # 「很长一段都是同一块内容」 came out as a box that appeared, went away
+        # four seconds later, and came back for the next sentence — the picture
+        # blinking while the narration never left the block. Merged, the box
+        # goes up when the block is first mentioned and stays until the
+        # narration moves on.
+        choices = _merge_runs(choices, segments, page)
+
         # When the next marker lands, keyed by the choice it follows. Computed
-        # up front because a choice does not know what comes after it.
+        # AFTER the merge, on the list the loop below will walk: built before
+        # it, the keys carried pre-merge indices, and every lookup on the
+        # merged list either missed or — worse — hit a neighbour. A hold meant
+        # to last through its body was truncated at the very sentence it was
+        # holding for: 「产业链结构」 kept 5.7 of its 11.4 seconds to a stale
+        # entry that happened to share an index.
         starts: list[float] = []
         for choice in choices:
             segment = segments.get(choice.segment_id)
@@ -614,14 +641,6 @@ class DirectorSkill(Skill):
             for index, choice in enumerate(choices)
             if index + 1 < len(starts)
         }
-
-        # A run of choices on the same target is one look at it, not several.
-        # 「很长一段都是同一块内容」 came out as a box that appeared, went away
-        # four seconds later, and came back for the next sentence — the picture
-        # blinking while the narration never left the block. Merged, the box
-        # goes up when the block is first mentioned and stays until the
-        # narration moves on.
-        choices = _merge_runs(choices, segments, page)
 
         last_target: str | None = None
         for index, choice in enumerate(choices):
@@ -727,6 +746,10 @@ def focus_box(element, page: DocumentPage) -> BBox:
     gap = page.height * GROUP_GAP
     slack = page.width * GROUP_SLACK
     row_gap = page.width * ROW_GAP
+    # A label reaches further down for its body than siblings reach for each
+    # other: card layouts put real padding between a category head and its
+    # text, and `_is_label` already accepts that distance when vetoing.
+    label_gap = page.height * LABEL_GAP
     others = [
         other
         for other in page.elements
@@ -749,6 +772,7 @@ def focus_box(element, page: DocumentPage) -> BBox:
                 _belongs(element, box, other, gap=gap, slack=slack)
                 or _labels(box, other, gap=gap, slack=slack)
                 or _same_row(element, box, other, gap_x=row_gap)
+                or _names_the_block(element, box, other, gap=label_gap, slack=slack)
             )
             # Something already inside the box unions to the box itself, and
             # that is the smallest candidate there is — taken, it would win
@@ -971,6 +995,38 @@ def _labels(box: BBox, near, *, gap: float, slack: float) -> bool:
     return aligned and above and at.w <= box.w and at.h <= box.h
 
 
+def _names_the_block(element, box: BBox, near, *, gap: float, slack: float) -> bool:
+    """Whether `near` is the body that `element` is the label of.
+
+    The mirror of `_labels`, and the shape the vocabulary was missing. The
+    writer binds 「第一类，供应链情报。」 to the five-character label — correctly,
+    that is the element the sentence says — and the label's body is the
+    paragraph under it, which `_belongs` refuses on purpose: a block of writing
+    longer than LABEL_CHARS below you is the next block, not a part of you.
+    True of a paragraph; exactly backwards for a label, whose whole job is to
+    name the block below it. On one real deck the labels this stranded were
+    every category head on four pages — 「供应链情报」「应用方向一」「日报」 — and
+    each one's gesture was then dropped for framing a bare name, so the camera
+    sat still precisely while the narrator announced the next thing.
+
+    Same thresholds as `_is_label`, which already recognises this shape and
+    was only ever used to veto. The element (not the grown box) has to be
+    short enough to be a name, so ordinary paragraphs never grow this way; the
+    body has to be flush left and carry several times the label's text, which
+    is what keeps a contents page — a column of same-length lines — a column.
+    """
+    text = (getattr(element, "text", "") or "").strip()
+    if not text or len(text) > LABEL_CHARS:
+        return False
+    body = (getattr(near, "text", "") or "").strip()
+    if len(body) < len(text) * LABEL_BODY_RATIO:
+        return False
+    at = near.bbox
+    aligned = abs(at.x - box.x) <= slack
+    below = 0 <= at.y - (box.y + box.h) <= gap
+    return aligned and below
+
+
 def _is_backdrop(element, page: DocumentPage) -> bool:
     """Whether this is the slide's decoration rather than one of its parts.
 
@@ -1025,6 +1081,24 @@ def _is_label(element, page: DocumentPage) -> bool:
 #: How many things have to sit beside a short line before it is heading them
 #: rather than standing among them.
 HEADS_A_ROW = 2
+
+
+#: How much bigger than the bare element its drawn frame has to be before the
+#: frame is showing the block rather than the name. Measured: a frame that did
+#: not grow is exactly 1.0×, and the ones that grew into their blocks run 3× to
+#: 13.6× — nothing lives near the line.
+FRAME_OUTGROWN = 1.5
+
+
+def _frames_the_block(element, page: DocumentPage) -> bool:
+    """Whether this element's drawn frame covers its block, not just itself."""
+    if element is None or element.bbox is None:
+        return False
+    drawn = focus_box(element, page)
+    mine = element.bbox
+    if mine.w <= 0 or mine.h <= 0:
+        return False
+    return drawn.w * drawn.h >= mine.w * mine.h * FRAME_OUTGROWN
 
 
 def _just_a_name(element, page: DocumentPage) -> bool:
@@ -1140,8 +1214,20 @@ def _merge_runs(
             merged_keys.append(key)
             continue
         end = segment.end
-        if merged and merged_keys[-1] and merged_keys[-1] == key:
-            merged[-1] = merged[-1].model_copy(update={"holds_until": end})
+        # Same drawn frame, or same element: both are the narration staying on
+        # one thing. The frame alone missed the second case — a sentence that
+        # named the paragraph and a companion drew a slightly larger box than
+        # the two sentences after it that named the paragraph alone, so the
+        # keys differed, the run broke, and the follow-on hold was then thrown
+        # away downstream as a repeat of the same target. Three sentences on
+        # one block came out as a box that left at the first full stop.
+        same = merged and merged_keys[-1] and (
+            merged_keys[-1] == key
+            or (choice.target and merged[-1].target == choice.target)
+        )
+        if same:
+            also = list(dict.fromkeys([*merged[-1].also, *choice.also]))
+            merged[-1] = merged[-1].model_copy(update={"holds_until": end, "also": also})
             continue
         merged.append(choice.model_copy(update={"holds_until": end}))
         merged_keys.append(key)

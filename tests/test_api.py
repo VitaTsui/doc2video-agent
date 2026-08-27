@@ -404,7 +404,6 @@ def test_the_plugins_page_carries_the_prompts_themselves(client):
     read from the constants, so the page cannot drift away from the code.
     """
     from doc2video.skills.base import load_prompt
-    from doc2video.skills.speech_review import TOO_FAST
 
     found = {p["id"]: p for p in client.get("/health/plugins").json()["plugins"]}
 
@@ -413,10 +412,10 @@ def test_the_plugins_page_carries_the_prompts_themselves(client):
     # The agent's own instructions are a prompt too, and the most consequential.
     assert "write_script" in found["agent:loop"]["prompt"]
 
-    # A deterministic skill has no prompt and says so by having none.
-    assert found["presentation-review"]["prompt"] == ""
-    rates = [r["value"] for r in found["presentation-review"]["rules"] if r["name"] == "语速上限"]
-    assert rates == [f"{TOO_FAST:.0f} 字/分"]
+    # The offline stages are not in the shop window: a plugin list that shows
+    # 镜头 and 质检 promises two things no plan will run.
+    assert "presentation-director" not in found
+    assert "presentation-review" not in found
 
 
 def test_every_quality_dimension_has_a_chinese_name_in_the_window():

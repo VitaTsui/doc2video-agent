@@ -29,15 +29,19 @@ class Stage(StrEnum):
     REVIEW = "review"
 
 
+# DIRECT and REVIEW are deliberately absent from every list below. 「镜头、质检
+# ……现在毫无作用」 was the verdict after watching the films these stages made,
+# and the pipeline is now the straight line the user asked for: parse → write →
+# voice → timeline → render. The stages, their skills and their tests remain in
+# the tree — a later decision can put them back by adding two names to a list —
+# but no plan produced here will run them.
 FULL_PIPELINE = [
     Stage.PARSE,
     Stage.UNDERSTAND,
     Stage.NARRATE,
     Stage.VOICE,
-    Stage.DIRECT,
     Stage.MOTION,
     Stage.RENDER,
-    Stage.REVIEW,
 ]
 
 
@@ -46,19 +50,15 @@ FULL_PIPELINE = [
 POST_SCRIPT_STAGES = [
     Stage.NARRATE,
     Stage.VOICE,
-    Stage.DIRECT,
     Stage.MOTION,
     Stage.RENDER,
-    Stage.REVIEW,
 ]
 
 REVISION_STAGES = [
     Stage.NARRATE,
     Stage.VOICE,
-    Stage.DIRECT,
     Stage.MOTION,
     Stage.RENDER,
-    Stage.REVIEW,
 ]
 
 
@@ -144,14 +144,7 @@ class Planner:
         """
         return ExecutionPlan(
             summary="逐页写讲稿并生成视频",
-            stages=[
-                Stage.NARRATE,
-                Stage.VOICE,
-                Stage.DIRECT,
-                Stage.MOTION,
-                Stage.RENDER,
-                Stage.REVIEW,
-            ],
+            stages=[Stage.NARRATE, Stage.VOICE, Stage.MOTION, Stage.RENDER],
             adopts_script=False,
             narrations=dict(written or {}),
         )
@@ -167,7 +160,7 @@ class Planner:
         """
         return ExecutionPlan(
             summary="换个声音重新配音",
-            stages=[Stage.VOICE, Stage.MOTION, Stage.RENDER, Stage.REVIEW],
+            stages=[Stage.VOICE, Stage.MOTION, Stage.RENDER],
             force_voice=True,
         )
 
@@ -233,9 +226,11 @@ class Planner:
             scene_ids = [e.scene_id for e in edits]
             stages = REVISION_STAGES
         elif plan.redirect:
-            stages = [Stage.DIRECT, Stage.MOTION, Stage.RENDER, Stage.REVIEW]
+            # The camera stage is offline; a re-render is the closest thing
+            # this request can still mean.
+            stages = [Stage.MOTION, Stage.RENDER]
         elif plan.revoice:
-            stages = [Stage.VOICE, Stage.MOTION, Stage.RENDER, Stage.REVIEW]
+            stages = [Stage.VOICE, Stage.MOTION, Stage.RENDER]
         else:
             stages = [Stage.MOTION, Stage.RENDER]
 
