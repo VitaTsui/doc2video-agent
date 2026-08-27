@@ -105,7 +105,7 @@ def test_changing_the_voice_does_not_rewrite_the_script(settings, store):
 
     assert Stage.NARRATE not in plan.stages
     assert Stage.DIRECT not in plan.stages
-    assert plan.stages == [Stage.VOICE, Stage.MOTION, Stage.RENDER, Stage.REVIEW]
+    assert plan.stages == [Stage.VOICE, Stage.MOTION, Stage.RENDER]
     assert plan.force_voice is True
 
 

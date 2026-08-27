@@ -755,15 +755,19 @@ def test_a_transition_gets_no_frame_when_the_page_bound_the_rest():
 
 
 def test_a_name_on_its_own_is_not_something_to_frame():
-    """「框标题这种是禁止的。」
+    """「框标题这种是禁止的。」 — judged by what would actually be drawn.
 
-    「再说招募目的。」 announces the next section; a frame around the four
-    characters of its name points at a label while the narrator is about to
-    describe what the label names. The sentence after it frames the section.
+    「再说招募目的。」 announces the next section. A frame around the four
+    characters of its name would point at a label; a frame around the label
+    *and the block it names* is the section being announced, and that is what
+    `focus_box` now draws — the label grows down into its body the same way a
+    caption grows up into its figure. So the sentence keeps its gesture, and
+    what the test pins is the frame: bigger than the name, never just it.
 
-    Decided by the thing, not by the layout: judging it by 「is there a longer
-    block under or beside this」 got 「招募目的」 right and 「场景应用层」 wrong,
-    because the things beside that one are chips as short as it is.
+    Dropping these outright was measured on one deck: thirty bound sentences,
+    all category heads — 「供应链情报」「应用方向一」「日报」 — each announced
+    while the camera sat still. A name with nothing to grow into (nothing
+    under it, chips beside it as short as it is) still gets no frame.
     """
     from doc2video.schemas import BBox, ElementKind, NarrationSegment, SlideElement
     from doc2video.skills.director import ActionType, DirectorSkill
@@ -797,7 +801,27 @@ def test_a_name_on_its_own_is_not_something_to_frame():
 
     naming = NarrationSegment(id="s1", text="再说招募目的。", element_refs=["head"],
                               start=0.0, end=6.0)
-    assert boxes_for(naming) == [], "只报一个名字，不给框"
+    from doc2video.skills.director import focus_box
+
+    named = boxes_for(naming)
+    assert named, "报出名字的那一句，框它名下的整块"
+    head = page.element("head")
+    drawn = focus_box(head, page)
+    assert drawn.w * drawn.h > head.bbox.w * head.bbox.h * 1.5, "画的是块，不是名字"
+
+    # A name with nothing to grow into still gets nothing: chips beside it as
+    # short as it is, nothing underneath.
+    page.elements.append(
+        SlideElement(id="chip", kind=ElementKind.SUBTITLE, text="场景应用层",
+                     bbox=BBox(x=1100, y=900, w=140, h=40))
+    )
+    page.elements.append(
+        SlideElement(id="chip2", kind=ElementKind.SUBTITLE, text="模型能力层",
+                     bbox=BBox(x=1300, y=900, w=140, h=40))
+    )
+    bare = NarrationSegment(id="s1b", text="先看场景应用层。", element_refs=["chip"],
+                            start=0.0, end=6.0)
+    assert boxes_for(bare) == [], "孤立的名字仍然不框"
 
     # Together with what it names, it is a frame again.
     both = NarrationSegment(id="s2", text="招募目的讲的是第一块内容，说清楚为什么招募。",
@@ -808,3 +832,94 @@ def test_a_name_on_its_own_is_not_something_to_frame():
     counted = NarrationSegment(id="s3", text="上面挂着 130305 家企业，覆盖整条产业链。",
                                element_refs=["figure"], start=0.0, end=6.0)
     assert boxes_for(counted), "数字不算标题"
+
+
+def _card_walk_page() -> DocumentPage:
+    """A category card: label, its body under it, and a second card below."""
+    return DocumentPage(
+        index=1,
+        title="页",
+        width=1920,
+        height=1080,
+        elements=[
+            SlideElement(id="lbl1", kind=ElementKind.PARAGRAPH, text="企业挂接",
+                         bbox=BBox(x=130, y=300, w=120, h=40)),
+            SlideElement(id="body1", kind=ElementKind.PARAGRAPH,
+                         text="主营产品、产能项目、区域布局、产业位置和竞合关系，形成企业档案。",
+                         bbox=BBox(x=130, y=350, w=900, h=40)),
+            SlideElement(id="lbl2", kind=ElementKind.PARAGRAPH, text="技术挂接",
+                         bbox=BBox(x=130, y=500, w=120, h=40)),
+            SlideElement(id="body2", kind=ElementKind.PARAGRAPH,
+                         text="技术方向、专利成果、研发主体、成熟度和演进趋势，形成技术档案。",
+                         bbox=BBox(x=130, y=550, w=900, h=40)),
+        ],
+    )
+
+
+def test_a_bound_paraphrase_is_not_undone_by_the_overlap_check():
+    """「链上挂企业。」 says 「企业挂接」 in other words — which is the job.
+
+    `_check_and_redo` re-derives every action from shared characters, and for
+    a target the writer bound that is the very reverse-engineering the bound
+    branch of `_targets_in` exists to bypass. The paraphrase read as a miss,
+    the binding was undone, and on one deck the camera lost every category
+    head whose sentence did not quote the slide: a 35-second hole in the
+    middle of a page that walks four cards.
+    """
+    from doc2video.schemas import NarrationSegment, Scene
+    from doc2video.skills.director import DirectorSkill
+
+    page = _card_walk_page()
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+    scene = Scene(
+        scene_id="sc", source_page=1, narration="链上挂企业。再挂技术。",
+        segments=[
+            NarrationSegment(id="s1", text="链上挂企业。", element_refs=["lbl1"],
+                             start=0.0, end=6.0),
+            NarrationSegment(id="s2", text="再挂技术。", element_refs=["lbl2"],
+                             start=6.0, end=12.0),
+        ],
+        duration=12.0,
+    )
+    scene.actions = skill._to_actions(scene, page, skill._choose_heuristically(scene, page))
+    kept = skill._check_and_redo(scene, page)
+    targets = {a.target for a in kept if a.target}
+    assert "lbl1" in targets and "lbl2" in targets, "写手绑定的换说法不能被字面比对否决"
+
+
+def test_a_run_on_one_block_is_one_hold_for_the_whole_run():
+    """Three sentences on one paragraph are one box that stays up.
+
+    Two bugs hid here. `next_at` was built before `_merge_runs` on pre-merge
+    indices, so a lookup on the merged list could hit a stale neighbour and
+    truncate a hold at the very sentence it was holding for — 「产业链结构」
+    kept 5.7 of its 11.4 seconds. And a run whose first sentence carried a
+    companion (`also`) drew a slightly different frame from the bare ones
+    after it, so the keys differed, the run broke, and the rest was dropped
+    as a repeat: the box left at the first full stop while the narrator
+    stayed on the block to 51s.
+    """
+    from doc2video.schemas import NarrationSegment, Scene
+    from doc2video.skills.director import DirectorSkill
+
+    page = _card_walk_page()
+    skill = DirectorSkill(SkillContext.build(_project_with(page)))
+    scene = Scene(
+        scene_id="sc", source_page=1, narration="三句话都在讲同一块。",
+        segments=[
+            NarrationSegment(id="s1", text="先说企业挂接这一层。",
+                             element_refs=["lbl1", "body1"], start=0.0, end=6.0),
+            NarrationSegment(id="s2", text="主营产品、产能项目和区域布局都挂上。",
+                             element_refs=["body1"], start=6.0, end=12.0),
+            NarrationSegment(id="s3", text="产业位置和竞合关系也在这一层。",
+                             element_refs=["body1"], start=12.0, end=18.0),
+        ],
+        duration=18.0,
+    )
+    actions = [
+        a for a in skill._to_actions(scene, page, skill._choose_heuristically(scene, page))
+        if a.type.value != "transition"
+    ]
+    assert len(actions) == 1, "同一块上的连续三句是一次注视，不是三次"
+    action = actions[0]
+    assert action.at + action.duration >= 16.0, "框要停到这一串讲完，不是第一句完就下"

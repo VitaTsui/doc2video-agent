@@ -66,13 +66,15 @@ def test_the_offline_path_reports_its_degradations(agent, demo_pptx: Path):
     assert all(d.reason for d in project.telemetry.degradations)
 
 
-def test_quality_is_scored_and_surfaced_on_the_result(agent, demo_pptx: Path):
+def test_quality_is_not_scored_now_that_review_is_offline(agent, demo_pptx: Path):
+    """The review stage is out of the pipeline. A run must not carry a stale
+    or fabricated score — no report is the truthful record of no review."""
     result = agent.run(message="生成一个3分钟的讲解视频", files=[demo_pptx])
     project = agent.get_project(result.project_id)
 
-    assert project.quality is not None
-    assert result.quality == project.quality.score
-    assert project.telemetry.quality is not None
+    assert project.quality is None
+    assert "review" not in result.stages
+    assert result.quality is None
 
 
 def test_a_failed_run_is_recorded_rather_than_lost(

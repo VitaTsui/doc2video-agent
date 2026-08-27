@@ -683,3 +683,42 @@ def test_a_rewrite_that_bought_its_variety_with_content_is_refused(
 
     assert skill.ctx.llm.prompts, "这一页本来就该被送回去重写"
     assert fixed[1].narration == STAMPED, "少讲了两块的改写不能采用"
+
+
+def test_a_covers_date_never_reaches_the_writer(settings: Settings, store: ProjectStore):
+    """「日期和联系方式不用念出来」 was in the cover brief, and the films read the
+    date anyway — 「2026年8月。」 as its own sentence on the cover, 「时间是2026年
+    8月。」 on the thank-you page. An instruction the model reads past twice is
+    not the mechanism: what it cannot see it cannot say.
+
+    Only whole lines that are typesetting. 「2023年3月共建宁波中心」 opens with a
+    date and is a sentence — content pages keep every word.
+    """
+    from doc2video.schemas import BBox, ElementKind, PageType, SlideElement
+
+    skill = _skill(settings, store, pages=2, duration=60.0)
+    cover, content = skill.project.document.pages
+    cover.page_type = PageType.COVER
+
+    def element(eid: str, text: str, y: int) -> SlideElement:
+        return SlideElement(
+            id=eid, kind=ElementKind.PARAGRAPH, text=text,
+            bbox=BBox(x=100, y=y, w=600, h=40),
+        )
+
+    cover.elements = [
+        element("t", "石化AI商业情报中心", 100),
+        element("who", "宁波城知产业链数据科技有限公司", 200),
+        element("date", "2026年8月", 300),
+        element("mail", "hello@cityknow.cn", 400),
+    ]
+    content.elements = [element("story", "2023年3月共建宁波中心，并成立实体运营机构。", 100)]
+
+    budgets = skill._allocate_budget(skill.project.document.pages)
+    on_cover = skill._prompt([cover], budgets, position=0)
+    assert "2026年8月" not in on_cover
+    assert "hello@cityknow.cn" not in on_cover
+    assert "宁波城知产业链数据科技有限公司" in on_cover
+
+    on_content = skill._prompt([content], budgets, position=1)
+    assert "2023年3月共建宁波中心" in on_content

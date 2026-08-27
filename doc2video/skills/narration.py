@@ -1334,6 +1334,15 @@ class NarrationSkill(Skill):
             # wrote a summary of that. 「之前的讲稿太总结了」 has a cause, and
             # this is most of it.
             elements = [e for e in page.elements if e.text]
+            if page.page_type in (PageType.COVER, PageType.CONTACT):
+                # Dates and contact lines never reach the writer at all on the
+                # pages that are made of them. The instruction 「日期和联系方式
+                # 不用念出来」 has been in the cover brief since it was written,
+                # and the finished films read the date anyway — 「2026年8月。」
+                # as its own sentence on the cover, 「时间是2026年8月。」 on the
+                # thank-you page. An instruction the model reads past twice is
+                # not the mechanism; what it cannot see it cannot say.
+                elements = [e for e in elements if not _typesetting(e.text)]
             if elements:
                 # 「按这个顺序讲」 is right for a content page and wrong for a
                 # cover: it is the line that made a cover read its four lines
@@ -1813,6 +1822,22 @@ def _matrix_of(page: DocumentPage) -> tuple[list[str], list[str]] | None:
         [(e.text or "").strip() for e in sorted(across, key=lambda e: e.bbox.x)],
         [(e.text or "").strip() for e in sorted(down, key=lambda e: e.bbox.y)],
     )
+
+
+#: A line that is typesetting rather than content: a bare date, a phone
+#: number, an email, a URL. Matched whole — 「2026年8月」 is a date, and
+#: 「2023年3月共建宁波中心」 is a sentence that opens with one.
+_TYPESETTING = (
+    re.compile(r"^(20\d{2}\s*[年./-]\s*\d{1,2}\s*月?)([\s·]*\d{1,2}\s*日?)?$"),
+    re.compile(r"^[\d\s+()\-—–]{7,}$"),
+    re.compile(r"^\S+@\S+\.\S+$", re.ASCII),
+    re.compile(r"^(https?://|www\.)\S+$", re.IGNORECASE),
+)
+
+
+def _typesetting(text: str) -> bool:
+    line = (text or "").strip()
+    return bool(line) and any(rule.fullmatch(line) for rule in _TYPESETTING)
 
 
 def _trim_to(text: str, limit: int) -> str:

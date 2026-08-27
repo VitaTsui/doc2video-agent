@@ -71,11 +71,14 @@ def test_execution_plan_for_scene_edit_is_narrow():
 
 
 def test_execution_plan_for_camera_only_change_skips_narration():
+    """The camera stage is offline; a camera request re-renders and touches
+    nothing the person has approved — never the script."""
     planner = Planner()
     plan = planner.edit_plan("所有关键数字都放大", _project())
 
     assert Stage.NARRATE not in plan.stages
-    assert Stage.DIRECT in plan.stages
+    assert Stage.DIRECT not in plan.stages
+    assert Stage.RENDER in plan.stages
 
 
 def test_an_empty_script_still_asks_for_a_render(settings, store):

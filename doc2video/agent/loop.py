@@ -7,9 +7,9 @@ it. That is a hand-rolled agent loop that cannot think — and it showed: the ed
 path was a no-op for weeks because nothing downstream did anything with what
 the regex parsed.
 
-Here the model sees the deck, the script, and the review, and picks the next
-action. The actions are exactly the operations that already existed; nothing
-here gives it new powers over the machine. It cannot read files, run commands
+Here the model sees the deck and the script, and picks the next action. The
+actions are exactly the operations that already existed; nothing here gives it
+new powers over the machine. It cannot read files, run commands
 or reach the network — it can write a script, rewrite one page, ask a question,
 or stop.
 
@@ -288,11 +288,9 @@ class AgentLoop:
                 if page.key_points:
                     lines.append("    要点：" + "；".join(page.key_points))
 
-        if project.quality:
-            lines += ["", f"# 上次质检：{project.quality.score} 分"]
-            lines += [
-                f"- [{f.severity}] {f.scene_id or '整体'}：{f.message}" for f in project.review
-            ]
+        # No review block. The review stage is offline, and an old project's
+        # stored report describes a film that no longer exists — handing the
+        # decision model a stale score is worse than handing it nothing.
 
         lines += ["", "# 对话"]
         lines += [f"{turn.speaker.value}：{turn.text}" for turn in session.recent(12)]

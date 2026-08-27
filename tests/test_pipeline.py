@@ -16,7 +16,6 @@ from doc2video.agent.planner import Stage
 from doc2video.core.config import Settings
 from doc2video.core.errors import SkillFailed
 from doc2video.schemas import (
-    ActionType,
     BBox,
     DocumentModel,
     DocumentPage,
@@ -91,17 +90,13 @@ def test_timeline_is_contiguous_and_matches_scenes(built_project: VideoProject):
         assert 0 <= cue.start < cue.end <= timeline.duration + 0.01
 
 
-def test_zoom_cues_carry_normalized_areas(built_project: VideoProject):
-    zooms = [
-        cue
-        for cue in built_project.timeline.actions
-        if cue.type in (ActionType.ZOOM, ActionType.HIGHLIGHT)
-    ]
-    assert zooms, "启发式导演至少应产生一个视觉动作"
-    for cue in zooms:
-        assert cue.area is not None
-        assert 0 <= cue.area.x <= 1 and 0 <= cue.area.y <= 1
-        assert cue.area.x + cue.area.w <= 1.0001
+def test_the_straight_pipeline_makes_no_camera_moves(built_project: VideoProject):
+    """The director stage is offline: the pipeline is parse → write → voice →
+    timeline → render, and a full run's timeline carries no action cues. The
+    director's own behaviour is still pinned in test_director.py — the module
+    stays in the tree, only the stage is out of the plan."""
+    assert built_project.timeline.actions == []
+    assert built_project.timeline.video, "画面片段照常生成"
 
 
 def test_project_round_trips_through_storage(built_project: VideoProject, store: ProjectStore):

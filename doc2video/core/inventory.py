@@ -177,11 +177,9 @@ def _prompt(name: str) -> tuple[str, str, str]:
 def plugins(settings: Settings | None = None) -> list[Plugin]:
     """Every part of this build, in the order the pipeline reaches for them."""
     from ..skills import (
-        DirectorSkill,
         DocumentSkill,
         MotionSkill,
         NarrationSkill,
-        ReviewSkill,
         VoiceSkill,
     )
     from ..tools.llm import llm_status
@@ -263,31 +261,15 @@ def plugins(settings: Settings | None = None) -> list[Plugin]:
             what=VoiceSkill.description + "：分句合成，给出句级时间戳，字幕跟着它走。",
             rules=_rules("voice.", settings),
         ),
-        Plugin(
-            id=DirectorSkill.name,
-            name="镜头",
-            kind="skill",
-            stage="镜头",
-            what=DirectorSkill.description + "：讲到哪就框到哪、推到哪，讲不清的地方不动。",
-            rules=[
-                *_rules("shot.", settings),
-                Rule("不框的页", "封面 / 目录 / 章节页", "这几种页面上没有要指的东西"),
-            ],
-        ),
+        # 镜头与质检两个阶段已下线（planner 的阶段清单里不再有它们）：
+        # 「镜头、质检……现在毫无作用」。代码与测试都在，恢复只要把两个名字
+        # 放回清单——但不该在设置里陈列两个永远不会跑的插件。
         Plugin(
             id=MotionSkill.name,
             name="时间轴",
             kind="skill",
             stage="时间轴",
             what=MotionSkill.description + "：画面、字幕、镜头动作对齐到绝对时间。",
-        ),
-        Plugin(
-            id=ReviewSkill.name,
-            name="质检",
-            kind="skill",
-            stage="质检",
-            what=ReviewSkill.description + "：全是量出来的，不请模型给自己打分。",
-            rules=_rules("review.", settings),
         ),
         Plugin(
             id="agent:loop",
