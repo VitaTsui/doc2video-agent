@@ -456,9 +456,11 @@ def test_a_rewrite_may_drop_something_or_compressing_can_never_work():
     those pages stayed at twice their target while the record said 「压到 137
     字」 and showed a 149-character 「压之后」 that was never used.
 
-    One item below the floor is allowed when the page is far past its length —
-    and recorded as a degradation, because that is the stated length costing a
-    piece of the page, not something to do quietly.
+    Below the floor is a cost, not a veto — 「允许少讲几处，因为有些点只是写在
+    上面展示的，没必要特意讲解」. Which items survive a squeeze is the rewrite's
+    judgement, and this measure cannot tell a dropped point from a reworded one
+    anyway. Only a rewrite that keeps nothing still fails: that is not a
+    shorter page, it is a missing one.
     """
     from doc2video.schemas import BBox, DocumentPage, ElementKind, PageType, SlideElement
     from doc2video.skills.narration import _keeps_enough
@@ -491,11 +493,11 @@ def test_a_rewrite_may_drop_something_or_compressing_can_never_work():
     assert verdict == "costs", f"该采用并记一笔，实际 {verdict}：{why}"
     assert "为压到" in why
 
-    # Dropping most of the page is still too much — at the same target length,
-    # which is what makes it a comparison. (Asked to fit twenty characters, one
-    # thing really is all that fits, and the floor follows the length down.)
+    # Even one item kept is the rewrite's call — recorded as a cost, never
+    # silently. Only a rewrite that keeps nothing at all is refused.
     gutted = "企业定位是城市产业链智能创新生态运营商。"
-    assert _keeps_enough(gutted, draft, page, allowed=len(shorter))[0] == "no"
+    assert _keeps_enough(gutted, draft, page, allowed=len(shorter))[0] == "costs"
+    assert _keeps_enough("这一页略过。", draft, page, allowed=len(shorter))[0] == "no"
 
     # And a page this measure cannot match names nothing either way.
     blank = DocumentPage(index=6, title="页", page_type=PageType.CONTENT,

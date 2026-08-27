@@ -231,3 +231,34 @@ def test_a_wrapped_chinese_line_joins_the_next_with_nothing_between():
         "lines": [line("a wrapped english", 550), line("sentence.", 300)],
     }
     assert _block_text(latin)[0] == "a wrapped english sentence."
+
+
+def test_an_unfinished_sentence_claims_its_short_tail():
+    """A wrapped paragraph's last line is its tail, however short.
+
+    The comparable-width guard is right for captions and headings and wrong
+    for 「揭榜实施。」: a 40-character line ending mid-sentence with a
+    five-character remainder under it stayed two elements, and the film framed
+    the long line first and the orphan tail second. A chip stays a chip (the
+    line above must be long enough to be a paragraph line), and a label above
+    its longer body keeps the old rule (the tail must be no wider).
+    """
+    from doc2video.tools.parsers.pdf_parser import _joined_paragraphs
+
+    def line(text: str) -> dict:
+        return {"spans": [{"text": text, "size": 10.0}]}
+
+    wrapped = [
+        {"type": 0, "bbox": (62, 84, 176, 87), "lines": [
+            line("聚焦基地建设任务，重点解决人工智能技术赋能行业关键问题，由企业组建创新联合体")]},
+        {"type": 0, "bbox": (62, 88, 72, 91), "lines": [line("揭榜实施。")]},
+    ]
+    assert len(_joined_paragraphs(wrapped)) == 1
+
+    # A label above its longer body is the opposite shape.
+    label = [
+        {"type": 0, "bbox": (62, 84, 80, 87), "lines": [line("供应链情报")]},
+        {"type": 0, "bbox": (62, 88, 176, 91), "lines": [
+            line("监测价格、供需、库存、装置运行与物流事件，研判成本趋势和采购窗口。")]},
+    ]
+    assert len(_joined_paragraphs(label)) == 2

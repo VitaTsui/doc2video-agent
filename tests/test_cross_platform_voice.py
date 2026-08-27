@@ -531,3 +531,51 @@ def test_what_is_installed_there_is_importable():
 
     source = inspect.getsource(cli._use_installed_packages)
     assert "sys.path.insert(0" in source, "要放在最前面：有意装的那个才是想用的"
+
+
+def test_the_voice_listing_is_probed_once_per_process(monkeypatch):
+    """`say -v ?` runs once and its answer is kept; failure is not kept.
+
+    The listing used to be fetched fresh on every call, and `/health/voices`
+    is polled by the window — so when macOS's speech daemon wedged, every poll
+    spawned another probe, each one parked a backend thread in an
+    uninterruptible wait, and after a few hours every endpoint that shared the
+    path hung. 「历史工程点开没东西了」 was the window awaiting one of those
+    requests forever.
+    """
+    from doc2video.tools.tts import providers
+
+    calls = {"n": 0}
+
+    class FakeChild:
+        pid = 999999
+        returncode = 0
+
+        def communicate(self, timeout=None):  # noqa: ARG002
+            calls["n"] += 1
+            return ("Tingting zh_CN    # 你好\n", "")
+
+    monkeypatch.setattr(providers, "_SAY_LISTING", None)
+    monkeypatch.setattr(providers.subprocess, "Popen", lambda *a, **k: FakeChild())
+    monkeypatch.setattr(providers, "which", lambda name: "/usr/bin/say")
+
+    first = providers.MacOSSayProvider().voices()
+    second = providers.MacOSSayProvider().voices()
+    assert first == second == ["Tingting"]
+    assert calls["n"] == 1, "第二次要走缓存，不再生子进程"
+
+    # A failed probe is answered with an empty menu and is NOT cached: the
+    # next call gets to try again.
+    monkeypatch.setattr(providers, "_SAY_LISTING", None)
+
+    class WedgedChild(FakeChild):
+        def communicate(self, timeout=None):  # noqa: ARG002
+            calls["n"] += 1
+            raise providers.subprocess.TimeoutExpired(cmd="say", timeout=10)
+
+    kills = {"n": 0}
+    monkeypatch.setattr(providers.subprocess, "Popen", lambda *a, **k: WedgedChild())
+    monkeypatch.setattr(providers.os, "killpg", lambda *a: kills.__setitem__("n", kills["n"] + 1))
+    assert providers.MacOSSayProvider().voices() == []
+    assert kills["n"] >= 1, "超时要杀整个进程组"
+    assert providers._SAY_LISTING is None, "失败不缓存，下次还能再探"
