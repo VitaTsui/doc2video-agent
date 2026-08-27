@@ -375,7 +375,7 @@ def _block_text(block: dict) -> tuple[str, float]:
     right = max((line["bbox"][2] for line, _ in lines), default=0.0)
 
     text = ""
-    for index, (line, part) in enumerate(lines):
+    for index, (_line, part) in enumerate(lines):
         if not text:
             text = part
             continue
