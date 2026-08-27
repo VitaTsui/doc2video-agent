@@ -349,7 +349,25 @@ export function App() {
     // first — and its answer decides whether this is a chat or a download.
     api
       .runtimeStatus()
-      .then((status) => {
+      .then(async (status) => {
+        // A version-to-version update is the app layer alone — two megabytes,
+        // the 400MB base unchanged — and putting a screen and a button in front
+        // of it gates nothing. Worse, it looks like nothing: the window sits on
+        // an install page, no backend starts, and 「为什么打不开」 is what that
+        // is from the outside. Fetch it and carry on.
+        //
+        // The first install still asks. Four hundred megabytes on someone's
+        // connection is a thing to be told about, not a thing to discover.
+        if (!status.ready && !status.needs_base && status.installed) {
+          try {
+            await api.installRuntime()
+            setRuntime({ ...status, ready: true })
+            return begin()
+          } catch {
+            // Fall through to the screen, which can say what went wrong and
+            // offer the button again.
+          }
+        }
         setRuntime(status)
         return status.ready ? begin() : undefined
       })
