@@ -1738,9 +1738,17 @@ def _keeps_enough(candidate: str, draft: str, page, allowed: int) -> tuple[str, 
     floor = max(1, min(worth_naming(page), allowed // MIN_ITEM_CHARS_FOR_FLOOR))
     if named >= floor:
         return "ok", ""
-    if named >= floor - 1 and len(draft) > allowed * KEEP_COMPRESSING:
-        return "costs", f"{walked} 处减到 {named} 处，为压到 {allowed} 字"
-    return "no", f"改写后只讲到 {named} 处，短到 {allowed} 字也该讲 {floor} 处"
+    # Below the floor is a cost, not a veto. The floor used to reject outright
+    # — a page compressed from 4 items to 2 was thrown away with 「短到 137 字
+    # 也该讲 4 处」, and the page kept its overrun instead. 「允许少讲几处，因为
+    # 有些点只是写在上面展示的，没必要特意讲解」: which items survive a squeeze
+    # is the rewrite's judgement to make, and this measure cannot tell a
+    # dropped point from a reworded one anyway. Only a rewrite that keeps
+    # nothing at all still fails — that is not a shorter page, it is a missing
+    # one. (A count announced and not named is still refused above.)
+    if named == 0:
+        return "no", "改写后一处都没讲到"
+    return "costs", f"{walked} 处减到 {named} 处，为压到 {allowed} 字"
 
 
 def _matrix_of(page: DocumentPage) -> tuple[list[str], list[str]] | None:
