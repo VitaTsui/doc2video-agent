@@ -799,7 +799,11 @@ class NarrationSkill(Skill):
             self.log.warning("场景 %s 的新讲稿为空，跳过", scene.scene_id)
             return
         scene.narration = text
-        scene.segments = self._split_into_segments(text, scene.scene_id)
+        # Its own segments, so a sentence the edit left alone keeps what it was
+        # pointing at. A one-page edit rewrites a paragraph, not usually every
+        # sentence in it, and the untouched ones have no reason to lose the
+        # binding the writer gave them.
+        scene.segments = self._resplit(text, scene.scene_id, scene.segments)
         scene.duration = estimate_duration(
             text, self.ctx.settings.tts_speech_rate, self._pace()
         )
@@ -1425,6 +1429,35 @@ class NarrationSkill(Skill):
 
     # -- scene assembly -------------------------------------------------
     def _build_scenes(self, pages: list[DocumentPage], drafts: dict[int, PageNarration]) -> None:
+        # What this project already knew about its own sentences, before the
+        # rebuild overwrites them. Three paths arrive here with a page's text
+        # and no segments — `apply` takes `dict[int, str]` and has nowhere to
+        # put them, `_trim_to` returns a bare string, and hand-written pages
+        # never had any — and each one used to fall through to the splitter,
+        # which builds segments with an empty `element_refs`.
+        #
+        # That is the whole of 「框选始终有问题」. Measured across six real
+        # projects the field is bimodal, 0% or 98%, never in between: the decks
+        # written by `run` came back bound, and every deck that passed through
+        # `apply` — a re-render of a finished script included — arrived at the
+        # director with 158 of 158 sentences saying 「I am about nothing」. The
+        # director treats a bound page as authoritative and an unbound one as
+        # something to guess (`_targets_in`), so a script that knew exactly
+        # which line each sentence came from had the camera reverse-engineering
+        # it out of shared characters anyway.
+        #
+        # The text is the key because the text is what survives: a trim keeps
+        # whole sentences off the front, and a re-apply usually carries the
+        # very same string back in. A sentence that changed finds nothing and
+        # is guessed at, which is the right answer for a sentence nobody has
+        # bound yet.
+        known = {
+            scene.source_page: [
+                segment for segment in scene.segments if segment.text.strip()
+            ]
+            for scene in self.project.scenes
+            if scene.source_page
+        }
         scenes: list[Scene] = []
         for order, page in enumerate(pages, start=1):
             draft = drafts.get(page.index)
@@ -1448,7 +1481,9 @@ class NarrationSkill(Skill):
                     )
                 )
             if not segments:
-                segments = self._split_into_segments(draft.narration, scene_id(order))
+                segments = self._resplit(
+                    draft.narration, scene_id(order), known.get(page.index)
+                )
 
             narration = draft.narration.strip() or "".join(s.text for s in segments)
             scenes.append(
@@ -1470,13 +1505,49 @@ class NarrationSkill(Skill):
             )
         self.project.scenes = scenes
 
-    @staticmethod
-    def _split_into_segments(text: str, prefix: str) -> list[NarrationSegment]:
+    @classmethod
+    def _resplit(
+        cls, text: str, prefix: str, before: list[NarrationSegment] | None = None
+    ) -> list[NarrationSegment]:
+        """Cut text into segments, keeping whatever was known about them.
+
+        ``before`` is this page's previous segments. Two ways they help, and
+        the first is the one that matters:
+
+        * **The text did not change.** Then re-cutting it is not just lossy,
+          it is wrong: the writer chose where its sentences ended, and the
+          splitter does not reproduce that choice — a segment holding two
+          sentences comes back as two. On a real 30-page deck that alone moved
+          162 segments to 168 and dropped thirteen bindings that had matched
+          fine. So the old segments are kept whole, renumbered and nothing
+          else. Segments are what TTS times and what the camera follows; there
+          is no reason for adopting a script to re-decide either.
+        * **Some of it changed.** Then the sentences that came back word for
+          word keep what the writer said they pointed at, and keep their
+          emphasis. Both are answers given with the page's element list in
+          view, and neither survives the string once it is dropped.
+        """
+        before = before or []
+        joined = "".join(segment.text for segment in before).strip()
+        if before and joined == text.strip():
+            return [
+                segment.model_copy(update={"id": f"{prefix}_s{i:02d}"})
+                for i, segment in enumerate(before, start=1)
+            ]
+        known = {segment.text.strip(): segment for segment in before}
         parts = [p.strip() for p in SENTENCE_SPLIT.split(text) if p.strip()]
-        return [
-            NarrationSegment(id=f"{prefix}_s{i:02d}", text=part)
-            for i, part in enumerate(parts, start=1)
-        ]
+        segments: list[NarrationSegment] = []
+        for i, part in enumerate(parts, start=1):
+            was = known.get(part)
+            segments.append(
+                NarrationSegment(
+                    id=f"{prefix}_s{i:02d}",
+                    text=part,
+                    element_refs=list(was.element_refs) if was else [],
+                    emphasis=was.emphasis if was else False,
+                )
+            )
+        return segments
 
 
 def _as_draft(index: int, text: str) -> PageNarration:

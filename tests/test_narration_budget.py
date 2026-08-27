@@ -517,3 +517,71 @@ def test_a_round_that_only_shaves_words_is_not_worth_keeping():
     assert _worth_rewriting("上" * 150, draft), "真少讲了一处，该采用"
     assert not _worth_rewriting("", draft), "空稿不算压缩"
     assert not _worth_rewriting("上" * 220, draft), "反而更长了"
+
+
+def test_adopting_a_script_keeps_what_each_sentence_was_pointing_at(
+    settings: Settings, store: ProjectStore
+):
+    """Every project runs 生成讲稿 and then 采用讲稿, and the second one used to
+    throw away the first one's answer.
+
+    `apply` takes `dict[int, str]` — there is nowhere in it to put a segment —
+    so a page arrived as a bare string, was re-split, and came out as sentences
+    bound to nothing. Measured across six real projects the field is bimodal,
+    0% or 98%, and the zeros are every deck that reached 采用讲稿: 158 of 158
+    sentences saying 「I am about nothing」 to a director that treats a bound
+    page as authoritative and an unbound one as something to guess. The frames
+    in every finished film were reverse-engineered out of shared characters
+    while the writer's own answer sat in the boxes it had just been asked to
+    fill.
+    """
+    from doc2video.schemas import NarrationSegment, Scene, SceneVisual, VisualType
+
+    skill = _skill(settings, store, pages=2, duration=120.0)
+    for page in skill.project.document.pages:
+        page.elements = []
+    written = "先看供应链。回答的是怎么买、何时买。"
+    skill.project.scenes = [
+        Scene(
+            scene_id="scene_01",
+            source_page=1,
+            title="第 1 页",
+            narration=written,
+            segments=[
+                NarrationSegment(
+                    id="scene_01_s01", text="先看供应链。", element_refs=["p01_e05"]
+                ),
+                NarrationSegment(
+                    id="scene_01_s02",
+                    text="回答的是怎么买、何时买。",
+                    element_refs=["p01_e06", "p01_e07"],
+                    emphasis=True,
+                ),
+            ],
+            duration=10.0,
+            visual=SceneVisual(type=VisualType.SLIDE, source_page=1),
+        )
+    ]
+    # The ids have to survive the rebuild's own validity check.
+    page_one = skill.project.document.page(1)
+    from doc2video.schemas import BBox, ElementKind, SlideElement
+
+    page_one.elements = [
+        SlideElement(
+            id=f"p01_e0{n}",
+            kind=ElementKind.PARAGRAPH,
+            text=f"第 {n} 块",
+            bbox=BBox(x=0, y=100 * n, w=400, h=40),
+        )
+        for n in (5, 6, 7)
+    ]
+
+    skill.apply({2: "第二页是新写的。"})
+
+    first = next(s for s in skill.project.scenes if s.source_page == 1)
+    assert [seg.element_refs for seg in first.segments] == [
+        ["p01_e05"],
+        ["p01_e06", "p01_e07"],
+    ]
+    assert [seg.emphasis for seg in first.segments] == [False, True]
+
