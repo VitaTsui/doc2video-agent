@@ -29,17 +29,18 @@ class Stage(StrEnum):
     REVIEW = "review"
 
 
-# DIRECT and REVIEW are deliberately absent from every list below. 「镜头、质检
-# ……现在毫无作用」 was the verdict after watching the films these stages made,
-# and the pipeline is now the straight line the user asked for: parse → write →
-# voice → timeline → render. The stages, their skills and their tests remain in
-# the tree — a later decision can put them back by adding two names to a list —
-# but no plan produced here will run them.
+# REVIEW is deliberately absent from every list below — 「质检……毫无作用」 was
+# the verdict, and the stage is offline (its deterministic rules still serve
+# the narration repair, which is narration's own machinery). DIRECT went
+# offline in the same decision and came back the next day: 「框选还是要的」 —
+# what was useless was the framing with its bindings wiped and its five
+# selection bugs, not the idea of a camera.
 FULL_PIPELINE = [
     Stage.PARSE,
     Stage.UNDERSTAND,
     Stage.NARRATE,
     Stage.VOICE,
+    Stage.DIRECT,
     Stage.MOTION,
     Stage.RENDER,
 ]
@@ -50,6 +51,7 @@ FULL_PIPELINE = [
 POST_SCRIPT_STAGES = [
     Stage.NARRATE,
     Stage.VOICE,
+    Stage.DIRECT,
     Stage.MOTION,
     Stage.RENDER,
 ]
@@ -57,6 +59,7 @@ POST_SCRIPT_STAGES = [
 REVISION_STAGES = [
     Stage.NARRATE,
     Stage.VOICE,
+    Stage.DIRECT,
     Stage.MOTION,
     Stage.RENDER,
 ]
@@ -144,7 +147,7 @@ class Planner:
         """
         return ExecutionPlan(
             summary="逐页写讲稿并生成视频",
-            stages=[Stage.NARRATE, Stage.VOICE, Stage.MOTION, Stage.RENDER],
+            stages=[Stage.NARRATE, Stage.VOICE, Stage.DIRECT, Stage.MOTION, Stage.RENDER],
             adopts_script=False,
             narrations=dict(written or {}),
         )
@@ -226,9 +229,7 @@ class Planner:
             scene_ids = [e.scene_id for e in edits]
             stages = REVISION_STAGES
         elif plan.redirect:
-            # The camera stage is offline; a re-render is the closest thing
-            # this request can still mean.
-            stages = [Stage.MOTION, Stage.RENDER]
+            stages = [Stage.DIRECT, Stage.MOTION, Stage.RENDER]
         elif plan.revoice:
             stages = [Stage.VOICE, Stage.MOTION, Stage.RENDER]
         else:

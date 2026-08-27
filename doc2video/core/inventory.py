@@ -177,6 +177,7 @@ def _prompt(name: str) -> tuple[str, str, str]:
 def plugins(settings: Settings | None = None) -> list[Plugin]:
     """Every part of this build, in the order the pipeline reaches for them."""
     from ..skills import (
+        DirectorSkill,
         DocumentSkill,
         MotionSkill,
         NarrationSkill,
@@ -261,9 +262,19 @@ def plugins(settings: Settings | None = None) -> list[Plugin]:
             what=VoiceSkill.description + "：分句合成，给出句级时间戳，字幕跟着它走。",
             rules=_rules("voice.", settings),
         ),
-        # 镜头与质检两个阶段已下线（planner 的阶段清单里不再有它们）：
-        # 「镜头、质检……现在毫无作用」。代码与测试都在，恢复只要把两个名字
-        # 放回清单——但不该在设置里陈列两个永远不会跑的插件。
+        Plugin(
+            id=DirectorSkill.name,
+            name="镜头",
+            kind="skill",
+            stage="镜头",
+            what=DirectorSkill.description + "：讲到哪就框到哪、推到哪，讲不清的地方不动。",
+            rules=[
+                *_rules("shot.", settings),
+                Rule("不框的页", "封面 / 目录 / 章节页", "这几种页面上没有要指的东西"),
+            ],
+        ),
+        # 质检阶段已下线（planner 的阶段清单里没有它）——它的确定性规则仍在
+        # 讲稿返工里生效，但不该在设置里陈列一个永远不会跑的插件。
         Plugin(
             id=MotionSkill.name,
             name="时间轴",

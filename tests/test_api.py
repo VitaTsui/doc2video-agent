@@ -412,9 +412,10 @@ def test_the_plugins_page_carries_the_prompts_themselves(client):
     # The agent's own instructions are a prompt too, and the most consequential.
     assert "write_script" in found["agent:loop"]["prompt"]
 
-    # The offline stages are not in the shop window: a plugin list that shows
-    # 镜头 and 质检 promises two things no plan will run.
-    assert "presentation-director" not in found
+    # The camera is back in the pipeline and in the window; the review stage
+    # stays offline and out of it — a plugin list must not promise a stage no
+    # plan will run.
+    assert "presentation-director" in found
     assert "presentation-review" not in found
 
 
@@ -456,8 +457,8 @@ def test_a_rule_can_be_changed_and_put_back(client, tmp_path, monkeypatch):
     assert _emphasis_of("这一句是重点。", True) == 0.9
 
     # Out of range is clamped rather than refused: a stored file is not a form.
-    client.put("/health/plugins/rules", json={"id": "shot.max_scale", "value": 99})
-    assert tuning.value("shot.max_scale") == tuning.knobs()["shot.max_scale"].high
+    client.put("/health/plugins/rules", json={"id": "voice.pause_sentence", "value": 99})
+    assert tuning.value("voice.pause_sentence") == tuning.knobs()["voice.pause_sentence"].high
 
     # And no value at all puts the measured default back.
     client.put("/health/plugins/rules", json={"id": "voice.pause_emphasis"})

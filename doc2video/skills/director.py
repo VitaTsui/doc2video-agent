@@ -13,7 +13,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-from ..core import ledger, tuning
+from ..core import ledger
 from ..schemas import (
     ActionType,
     BBox,
@@ -75,33 +75,17 @@ MAX_ACTION_DURATION = 4.0
 # Below this an action flashes rather than reads; drop it instead of squeezing it.
 MIN_KEEP_DURATION = 0.6
 RESET_DURATION = 1.0
-# A target covering more of the page than this is not worth zooming into.
-MAX_ZOOM_COVERAGE = 0.35
 # A pointer is a quick "look here" beat: it suits a passing mention of a small,
-# precise target. Dwelling on something calls for a highlight or a zoom instead.
+# precise target. Dwelling on something calls for a highlight instead.
 MAX_POINTER_COVERAGE = 0.10
 MAX_POINTER_SPAN = 2.6
-# A zoom says "look closely at this". Past this much text there is nothing to
-# look closely at — a paragraph enlarged is still a paragraph, the narrator is
-# not reading it, and the viewer gets a slow push into a wall of words. Found
-# in a finished video: eleven of twenty-six zooms landed on blocks over forty
-# characters, the largest of them 342. Those become outlines instead, which
-# say "this block" without promising it is worth enlarging.
-MAX_ZOOM_CHARS = 40
-# The renderer will not push past this, so a target's size after zooming is
-# known before the zoom is chosen. Kept in step with `MAX_SCALE` in
-# `renderer/src/components/useCameraTransform.ts`; a test asserts they agree.
-RENDER_MAX_SCALE = 3.0
-# How much of the frame a target has to fill once the camera has done all it
-# can. Below this the push buys nothing: the label is still too small to read
-# and the page around it — which is what told the viewer where the label was —
-# has been cropped away. Measured on a real deck: eight of twenty-six zooms
-# landed on things that stayed under five percent of the frame at full scale.
-MIN_ZOOM_RESULT = 0.05
 POINTER_DURATION = 1.4
 # Let the viewer hear the sentence start before the camera moves.
 AUDIO_LEAD = 0.3
-ZOOM_KINDS = {ElementKind.NUMBER, ElementKind.CHART, ElementKind.TABLE, ElementKind.IMAGE}
+# The kinds that carry data rather than prose — a number, a chart, a table, a
+# picture. They used to earn a zoom; zooms are gone (「镜头zoom就不需要了」) and
+# what remains of the distinction is that these always earn their box.
+DATA_KINDS = {ElementKind.NUMBER, ElementKind.CHART, ElementKind.TABLE, ElementKind.IMAGE}
 
 # Pages whose whole content is 「here is where we are」: a cover, a section
 # divider. There is nothing on them to point at, and boxing something anyway is
@@ -322,10 +306,6 @@ class DirectorSkill(Skill):
         # whole job, it does it by the drawn frame rather than the element id,
         # and it needs the run intact to know how long the hold lasts.
 
-        if sum(1 for c in chosen if c.type is ActionType.ZOOM) >= 2 and scene.segments:
-            chosen.append(
-                ActionChoice(segment_id=scene.segments[-1].id, type=ActionType.RESET, target="")
-            )
         return chosen
 
     @staticmethod
@@ -337,14 +317,12 @@ class DirectorSkill(Skill):
         the pointer branch the director had only two gestures, so quick
         name-checks came out looking like the same emphasis as a key figure.
         """
-        if segment.emphasis or element.kind in ZOOM_KINDS:
-            # Unless it is a wall of text: a picture or a number rewards being
-            # enlarged, a paragraph does not.
-            wordy = element.kind not in ZOOM_KINDS and len(element.text or "") > tuning.value(
-                "shot.max_zoom_chars"
-            )
-            if not wordy and _zoom_pays_off(element, page):
-                return ActionType.ZOOM
+        # No zoom, by request: 「镜头zoom就不需要了」. A push-in crops the page
+        # away and magnifies every timing or coordinate error with it; an
+        # outline says 「看这里」 without spending the context. Emphasis and
+        # data-bearing elements get the outline every other mention gets — the
+        # box is the gesture, not the crop.
+        if segment.emphasis or element.kind in DATA_KINDS:
             return ActionType.HIGHLIGHT
         span = max(segment.end - segment.start, 0.0)
         if span and span <= MAX_POINTER_SPAN and _coverage(element, page) <= MAX_POINTER_COVERAGE:
@@ -579,22 +557,14 @@ class DirectorSkill(Skill):
 
     @staticmethod
     def _fit_action_type(choice: ActionChoice, page: DocumentPage) -> ActionType:
-        """Downgrade a zoom whose target already fills most of the page.
-
-        Zooming to a box that covers half the slide magnifies everything and
-        singles out nothing — an outline communicates the same thing without
-        throwing away context.
-        """
-        if choice.type not in (ActionType.ZOOM, ActionType.POINTER) or not choice.target:
+        """Pointing at a box that fills the page indicates nothing."""
+        if choice.type is not ActionType.POINTER or not choice.target:
             return choice.type
         element = page.element(choice.target)
         if element is None or not page.width or not page.height:
             return choice.type
         coverage = _coverage_box(focus_box(element, page), page)
-        if choice.type is ActionType.POINTER:
-            # Pointing at a box that fills the page indicates nothing.
-            return ActionType.HIGHLIGHT if coverage > MAX_POINTER_COVERAGE else ActionType.POINTER
-        return ActionType.HIGHLIGHT if coverage > MAX_ZOOM_COVERAGE else ActionType.ZOOM
+        return ActionType.HIGHLIGHT if coverage > MAX_POINTER_COVERAGE else ActionType.POINTER
 
     # -- turning choices into timed actions -------------------------------
     def _to_actions(
@@ -1308,22 +1278,6 @@ def _action_budget(scene: Scene) -> int:
     return max(MIN_ACTIONS_PER_SCENE, min(MAX_ACTIONS_PER_SCENE, room))
 
 
-def _zoom_pays_off(element, page: DocumentPage) -> bool:
-    """Whether pushing in on this actually shows the viewer anything.
-
-    A zoom trades context for size: the page around the target is what said
-    where the target was, and the camera crops it away. That trade is only
-    worth making if the target ends up big enough to be worth looking at, and
-    for a small label it never does — at the renderer's largest push a box
-    covering two thousandths of the page still covers under two percent of the
-    frame. The viewer loses the page and gains nothing.
-    """
-    # Judged on what will actually be framed. A caption on its own never pays
-    # off; the figure it belongs to usually does, and that is what gets shown.
-    coverage = _coverage_box(focus_box(element, page), page)
-    return coverage * tuning.value("shot.max_scale") ** 2 >= tuning.value("shot.min_result")
-
-
 def _is_banner(element, page: DocumentPage) -> bool:
     """Whether this element is the page's own heading.
 
@@ -1350,7 +1304,7 @@ def _worth_pointing_at(element) -> bool:
     is page furniture, and a box drawn around furniture reads as a mistake even
     when the sentence it belongs to is right.
     """
-    if element.kind in ZOOM_KINDS and element.kind is not ElementKind.NUMBER:
+    if element.kind in DATA_KINDS and element.kind is not ElementKind.NUMBER:
         return True
     text = (element.text or "").strip()
     if len(text) < MIN_TARGET_CHARS:
