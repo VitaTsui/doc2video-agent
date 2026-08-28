@@ -169,6 +169,13 @@
           ],
           "default": null
         },
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/ElementGroup"
+          },
+          "title": "Groups",
+          "type": "array"
+        },
         "speaker_notes": {
           "default": "",
           "title": "Speaker Notes",
@@ -213,6 +220,25 @@
         "index"
       ],
       "title": "DocumentPage",
+      "type": "object"
+    },
+    "ElementGroup": {
+      "description": "Elements that read as one thing — a card, a label with its body, a row.\n\nWritten by the understanding step, which sees the rendered page; the\ngeometric grouping in the director (`_belongs`, `_labels`, `_names_the_\nblock`, `_same_row`) reconstructs the same answer shape by shape and has\nbeen patched once per deck layout it had not met. Where a group exists it\nis authoritative; where it does not, geometry still answers.",
+      "properties": {
+        "members": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Members",
+          "type": "array"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "title": "ElementGroup",
       "type": "object"
     },
     "ElementKind": {
