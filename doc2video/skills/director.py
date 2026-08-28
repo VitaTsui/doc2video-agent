@@ -361,10 +361,11 @@ class DirectorSkill(Skill):
         ]
         if bound:
             span = max(segment.end - segment.start, 0.0)
-            fractions = _walk_fractions(
+            fractions, found = _walk_fractions(
                 segment.text, [page.element(ref) for ref in bound]
             )
             walk = [(ref, [], fractions[index]) for index, ref in enumerate(bound)]
+            roomy = span / len(bound) >= MIN_ACTION_DURATION
             # A sentence that walks a list gets a box that walks it too. One
             # frame around five contents entries sits there for ten seconds
             # while the narrator names them one by one — and the truncated
@@ -372,8 +373,26 @@ class DirectorSkill(Skill):
             # around (一)(二)(三) with (四)(五) sitting outside it, on the
             # first framed page of the video. Walking needs room to be read,
             # so it only happens when each name gets at least a readable beat.
-            if len(bound) >= 3 and span / len(bound) >= MIN_ACTION_DURATION:
+            if len(bound) >= 3 and roomy:
                 return walk
+            # A pair walks too, under stricter proof — the writer split the
+            # contents across two sentences and 「四是……，五是……」 came back as
+            # one box around both entries while the narrator named them in
+            # turn. Stricter, because two refs is also the label-and-body
+            # shape, which is rightly one frame: here both names must actually
+            # be found in the sentence, in order, and the first's drawn frame
+            # must not already hold the second (a label's frame grows over its
+            # body; two sibling entries stay their own boxes).
+            if len(bound) == 2 and roomy and all(found) and fractions[1] > fractions[0]:
+                first = page.element(bound[0])
+                second = page.element(bound[1])
+                held = (
+                    first is not None
+                    and second is not None
+                    and _holds(focus_box(first, page), second.bbox)
+                )
+                if not held:
+                    return walk
             also = self._that_fit(bound[0], bound[1:], page)
             left = [ref for ref in bound[1:] if ref not in also]
             if not left:
@@ -794,6 +813,26 @@ def focus_box(element, page: DocumentPage) -> BBox:
     if not page.width or not page.height:
         return box
 
+    # What the understanding model said this element is part of, before any
+    # geometry. The shapes below reconstruct 「这几个元素是一个东西」 from
+    # coordinates, and every deck layout they had not met cost a patch —
+    # `_labels`, then `_same_row`, then `_names_the_block`. The model reads it
+    # off the rendered page. Its group is taken whole, capped like geometric
+    # growth is: a hallucinated whole-page group must not make every frame the
+    # page. No group (an old project, a heuristic-only run) falls through to
+    # the same geometry as before.
+    for group in page.groups:
+        if element.id not in group.members:
+            continue
+        grown = element.bbox
+        for member_id in group.members:
+            member = page.element(member_id)
+            if member is not None and member.bbox.w > 0:
+                grown = _union(grown, member.bbox)
+        if _coverage_box(grown, page) <= MAX_GROUP_COVERAGE:
+            return grown
+        break
+
     gap = page.height * GROUP_GAP
     slack = page.width * GROUP_SLACK
     row_gap = page.width * ROW_GAP
@@ -1104,6 +1143,15 @@ def _is_backdrop(element, page: DocumentPage) -> bool:
     return (left and top) or (top and right) or (right and bottom) or (bottom and left)
 
 
+def _holds(box: BBox, inner: BBox) -> bool:
+    """Whether `box` already contains most of `inner` — one block, not two."""
+    overlap_w = min(box.x + box.w, inner.x + inner.w) - max(box.x, inner.x)
+    overlap_h = min(box.y + box.h, inner.y + inner.h) - max(box.y, inner.y)
+    if overlap_w <= 0 or overlap_h <= 0 or inner.w <= 0 or inner.h <= 0:
+        return False
+    return overlap_w * overlap_h >= 0.7 * inner.w * inner.h
+
+
 def _union(a: BBox, b: BBox) -> BBox:
     x, y = min(a.x, b.x), min(a.y, b.y)
     return BBox(
@@ -1345,7 +1393,7 @@ def _match(element_text: str, sentence: str) -> float:
 _NUMBERING = re.compile(r"^[\s(（\[【]*[一二三四五六七八九十\d①-⑩]+[)）\]】.、：:]*")
 
 
-def _walk_fractions(sentence: str, elements: list) -> list[float]:
+def _walk_fractions(sentence: str, elements: list) -> tuple[list[float], list[bool]]:
     """Where in the sentence each element's name is said, 0–1, in order.
 
     A walked list is timed by its own words: 「一是背景及技术牵头方，二是核心
@@ -1362,6 +1410,7 @@ def _walk_fractions(sentence: str, elements: list) -> list[float]:
     """
     total = max(len(sentence), 1)
     out: list[float] = []
+    found: list[bool] = []
     cursor = 0
     for index, element in enumerate(elements):
         text = _NUMBERING.sub("", (getattr(element, "text", "") or "").strip())
@@ -1373,10 +1422,12 @@ def _walk_fractions(sentence: str, elements: list) -> list[float]:
                     break
         if at < 0:
             out.append(index / max(len(elements), 1))
+            found.append(False)
             continue
         out.append(at / total)
+        found.append(True)
         cursor = at + 1
-    return out
+    return out, found
 
 
 def _mentioned(element_text: str, sentence: str) -> float:

@@ -241,6 +241,47 @@ def test_a_script_that_came_up_short_says_so(settings: Settings, store: ProjectS
     assert said, [d.reason for d in record.degradations]
 
 
+def test_a_page_that_will_not_fit_says_what_it_would_cost(
+    settings: Settings, store: ProjectStore
+):
+    """压不到目标，要说出来，而且要说清代价。
+
+    以前只有一行 log：「第 5 页压不动」。看片子的人什么也看不到，而那句话
+    也没讲再短一点要付出什么。真发生过的是第 5 页压两轮省下八个字，目标
+    136 字压完还是 191——够不着，但没人被告知。
+
+    再短就要整条少讲一处，那是用户的决定，不是这一步的。所以把选择摆到他
+    们面前，而不是自己挑一个。
+    """
+    from doc2video.core import telemetry
+    from doc2video.skills.narration import PageNarration
+
+    # 长度不是人要求的，就只许改写、不许剪（剪会让某一页丢掉它最后一条）。
+    # 而这里没有模型，改写也就无从谈起——正是「压不动」的那种页。
+    skill = _skill(settings, store, pages=4, duration=20.0)
+    skill.project.intent.duration_stated = False
+    pages = skill._pages()
+    budgets = skill._allocate_budget(pages)
+    fat = {
+        page.index: PageNarration(
+            index=page.index,
+            narration="这一页有很多内容要讲，一条都不能少。" * 12,
+            segments=[],
+        )
+        for page in pages
+    }
+
+    with telemetry.run("proj_stubborn") as recorder:
+        skill._fit_duration(pages, budgets, fat)
+        record = recorder.finish(status="succeeded")
+
+    said = [d for d in record.degradations if "压不到目标字数" in d.reason]
+    assert said, [d.reason for d in record.degradations]
+    why = said[0].reason
+    assert "目标" in why and "字" in why, why
+    assert "没有替你决定" in why, "要说清这是用户的选择，不是自己挑的"
+
+
 def test_adopting_a_script_does_not_throw_away_the_one_already_written(
     settings: Settings, store: ProjectStore
 ):

@@ -8,6 +8,7 @@ the point is that the pipeline stays runnable end to end without LibreOffice.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -61,21 +62,63 @@ def bundled_fonts_dir() -> Path | None:
 
 
 def font_candidates() -> list[str]:
-    """Every font to try, bundled first."""
+    """Every font to try: the configured one, then bundled, then system."""
+    from ...core.config import get_settings
+
+    chosen = get_settings().font_path
+    head = [chosen] if chosen else []
     bundled = bundled_fonts_dir()
     if bundled is None:
-        return FONT_CANDIDATES
+        return head + FONT_CANDIDATES
     packaged = sorted(
         str(path)
         for suffix in ("*.ttc", "*.ttf", "*.otf")
         for path in bundled.glob(suffix)
     )
-    return packaged + FONT_CANDIDATES
+    return head + packaged + FONT_CANDIDATES
+
+
+@lru_cache(maxsize=32)
+def draws_chinese(path: str) -> bool:
+    """Whether this font has real glyphs for Chinese, rather than tofu.
+
+    Asking "does the file exist" is not the same question, and getting them
+    confused is how a render ends up with a subtitle track of hollow boxes: a
+    slim Linux image often has DejaVu and nothing else, DejaVu has no CJK
+    coverage, and FreeType answers a missing character with `.notdef` — which
+    is a box, drawn at a sensible size, indistinguishable from a real glyph to
+    everything downstream.
+
+    So the test is not "did something get drawn" but "did something *different
+    from the missing-glyph box* get drawn": 中 is compared against a private-use
+    codepoint no font defines. Identical bitmaps mean both came from `.notdef`.
+    """
+    try:
+        font = ImageFont.truetype(path, 24)
+        drawn = font.getmask("中")
+        missing = font.getmask("\ue000")
+    except OSError:
+        return False
+    return not (drawn.size == missing.size and bytes(drawn) == bytes(missing))
+
+
+def chinese_font() -> str | None:
+    """The first candidate that exists *and* can draw Chinese."""
+    for candidate in font_candidates():
+        if Path(candidate).exists() and draws_chinese(candidate):
+            return candidate
+    return None
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
-    for candidate in font_candidates():
-        if Path(candidate).exists():
+    # Two passes: a font that can draw Chinese beats one that merely exists.
+    # The second pass keeps a latin-only deck rendering as it always did.
+    for require_chinese in (True, False):
+        for candidate in font_candidates():
+            if not Path(candidate).exists():
+                continue
+            if require_chinese and not draws_chinese(candidate):
+                continue
             try:
                 return ImageFont.truetype(candidate, size)
             except OSError:

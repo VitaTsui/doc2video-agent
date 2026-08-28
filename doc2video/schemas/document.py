@@ -160,6 +160,23 @@ class SlideElement(BaseModel):
     chart: ChartFacts | None = None
 
 
+class ElementGroup(BaseModel):
+    """Elements that read as one thing — a card, a label with its body, a row.
+
+    Written by the understanding step, which sees the rendered page; the
+    geometric grouping in the director (`_belongs`, `_labels`, `_names_the_
+    block`, `_same_row`) reconstructs the same answer shape by shape and has
+    been patched once per deck layout it had not met. Where a group exists it
+    is authoritative; where it does not, geometry still answers.
+    """
+
+    #: Element ids, in page order. Only ids that exist on the page survive
+    #: validation — an invented member would aim the camera at nothing.
+    members: list[str] = Field(default_factory=list)
+    #: The member that names the group ("" when none does).
+    label: str = ""
+
+
 class DocumentPage(BaseModel):
     index: int = Field(description="1-based page / slide number")
     page_type: PageType = PageType.CONTENT
@@ -170,6 +187,10 @@ class DocumentPage(BaseModel):
     # diagram" — an architecture drawn as a picture is still a picture, and
     # the honest thing to do with it is show it.
     diagram: DiagramFacts | None = None
+    # How the page's elements group into things — a card, a label with its
+    # body. From the understanding model; empty means nobody has said, and
+    # geometry decides alone.
+    groups: list[ElementGroup] = Field(default_factory=list)
     speaker_notes: str = ""
     # Rendered full-resolution page image, relative to the project directory.
     image_path: str | None = None

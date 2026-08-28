@@ -7,6 +7,8 @@ now it costs subtitles and nothing else.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from doc2video.tools import media_binaries
@@ -70,6 +72,57 @@ def test_caption_is_anchored_to_the_bottom_edge(monkeypatch: pytest.MonkeyPatch)
 
     # 0.05 * 1080 = 54px of frame, plus the border the box adds past the text.
     assert ":y=h-text_h-70:" in draw
+
+
+def test_subtitles_are_dropped_when_no_font_can_draw_chinese(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+):
+    """「字幕显示的都是方块」——一片方块比没有字幕更糟，所以宁可不烧。
+
+    真实场景：精简的 Linux 镜像里只有 DejaVu，它没有中文字形，drawtext 会把每个
+    汉字画成 .notdef 的方框。渲染成功、文件能播、字幕全是方块。
+    """
+    latin_only = tmp_path / "latin.ttf"
+    latin_only.write_bytes(b"not really a font")
+    monkeypatch.setattr(media_binaries, "has_filter", lambda name: True)
+    monkeypatch.setattr(
+        "doc2video.tools.renderer.ffmpeg_adapter.chinese_font", lambda: None
+    )
+    monkeypatch.setattr(
+        "doc2video.tools.renderer.ffmpeg_adapter.font_candidates",
+        lambda: [str(latin_only)],
+    )
+    filters = FFmpegAdapter()._build_filters(_plan())
+
+    assert not any(f.startswith("drawtext=") for f in filters)
+    assert any(f.startswith("scale=") for f in filters)
+
+
+def test_a_font_that_draws_chinese_is_preferred(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(media_binaries, "has_filter", lambda name: True)
+    monkeypatch.setattr(
+        "doc2video.tools.renderer.ffmpeg_adapter.chinese_font", lambda: "/tmp/cjk.ttc"
+    )
+    draw = next(
+        f for f in FFmpegAdapter()._build_filters(_plan()) if f.startswith("drawtext=")
+    )
+
+    assert "fontfile='/tmp/cjk.ttc'" in draw
+
+
+def test_draws_chinese_rejects_a_latin_only_font():
+    """判据不是「画出了东西」，而是「画出来的和缺字符的方框不一样」。"""
+    from doc2video.tools.parsers import slide_raster
+
+    latin_only = [
+        "/System/Library/Fonts/Helvetica.ttc",     # macOS
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
+        "C:/Windows/Fonts/arial.ttf",             # Windows
+    ]
+    found = [p for p in latin_only if Path(p).exists()]
+    if not found:
+        pytest.skip("这台机器上没有已知的纯拉丁字体可供对照")
+    assert slide_raster.draws_chinese(found[0]) is False
 
 
 def test_has_filter_reports_false_without_ffmpeg(monkeypatch: pytest.MonkeyPatch):

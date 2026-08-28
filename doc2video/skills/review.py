@@ -1,9 +1,15 @@
 """presentation-review — quality gate before the project is called ready.
 
 Two layers: deterministic checks that catch structural defects (missing assets,
-actions pointing at nothing, wildly-off duration), and an optional model review
-for the things only reading the script can catch — flat narration that merely
-reads the slide, broken transitions, factual drift.
+actions pointing at nothing, wildly-off duration), and — when a model is
+configured — a reading of the script for what no measurement reaches: narration
+that merely reads the slide, half-sentences, seams that do not join, jargon
+carried over from the page, and facts that drifted away from it.
+
+The reading is never asked for a score. A model scoring its own work scores it
+kindly, which is why this layer was taken out once; it is asked for defects
+instead, each with a page number and the sentence it is complaining about, and
+a quote that is not in the script is thrown away.
 """
 
 from __future__ import annotations
@@ -11,15 +17,16 @@ from __future__ import annotations
 import math
 import re
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..core import ledger, tuning
 from ..schemas import ElementKind, PageType, ReviewFinding
 from ..schemas.telemetry import QualityDimension, QualityReport
+from ..tools.llm import model_schema
 from ..tools.renderer.base import SUBTITLE_BOTTOM_MARGIN
 from ..tools.tts.providers import SilentProvider
 from . import render_review, speech_review
-from .base import ProgressFn, Skill
+from .base import ProgressFn, Skill, load_prompt
 
 # What a scene's recorded engine is when nothing spoke it.
 SILENT_PROVIDER = SilentProvider.name
@@ -350,6 +357,27 @@ class ReviewResult(BaseModel):
     findings: list[LLMFinding]
 
 
+#: How many pages one reading covers. The model has to hold the page text and
+#: the script for all of them at once, and it is looking for seams between
+#: neighbours — so the batch is a window, not a partition, and it overlaps by
+#: one page so no seam falls between two calls.
+REVIEW_BATCH = 8
+
+
+class ScriptFinding(BaseModel):
+    page: int = 0
+    kind: str = ""
+    severity: str = "warning"
+    #: The sentence complained about, in the script's own words. Asked for so
+    #: that a finding can be checked rather than believed.
+    quote: str = ""
+    message: str = ""
+
+
+class ScriptReview(BaseModel):
+    findings: list[ScriptFinding] = Field(default_factory=list)
+
+
 class ReviewSkill(Skill):
     name = "presentation-review"
     description = "检测事实、节奏、字幕、音画同步和视觉质量"
@@ -365,7 +393,7 @@ class ReviewSkill(Skill):
             nonlocal step
             step += 1
             if progress is not None:
-                progress("review", what, step, 4)
+                progress("review", what, step, 5)
 
         tick("结构与讲稿")
         # Each check is its own entry, with what it found. A single 「质检」 line
@@ -408,6 +436,18 @@ class ReviewSkill(Skill):
             with ledger.call("check:画面", "空画面、动作有没有画出来"):
                 findings.extend(render_review.check_frames(self.project, self.ctx.asset_path))
                 findings.extend(render_review.check_actions(self.project, self.ctx.asset_path))
+        # What no measurement reaches: whether the script says the page or
+        # merely reads it, and whether it says something the page does not.
+        #
+        # The known objection is that a model scoring its own work scores it
+        # kindly — which is why it is never asked for a score. It is asked for
+        # defects, with a page number and the sentence it is complaining about,
+        # and those are counted the same way every other check's are. A finding
+        # that quotes a line either matches the script or does not.
+        if self.llm.available and self.project.scenes:
+            tick("讲稿复核")
+            with ledger.call("check:讲稿复核", "念得平、讲错了、接不上"):
+                findings.extend(self._read_the_script())
         self.log.info("质检各项：结构 %d 条，其余 %d 条", found, len(findings) - found)
         self.project.review = findings
         self.project.quality = self._score(findings)
@@ -419,6 +459,88 @@ class ReviewSkill(Skill):
             errors,
             self.project.quality.score,
         )
+
+    # -- reading it -------------------------------------------------------
+    def _read_the_script(self) -> list[ReviewFinding]:
+        """Ask the model what is wrong with the script it is looking at.
+
+        Windowed rather than partitioned, overlapping by one page: two of the
+        five things it looks for live *between* pages — a seam that does not
+        join, three openings cut from the same template — and a partition puts
+        some of those seams on a boundary where nobody sees both sides.
+        """
+        pages = {page.index: page for page in self.project.document.pages}
+        scenes = [s for s in self.project.scenes if s.narration.strip()]
+        if not scenes:
+            return []
+
+        out: list[ReviewFinding] = []
+        seen: set[tuple[int, str, str]] = set()
+        step = max(REVIEW_BATCH - 1, 1)
+        for start in range(0, len(scenes), step):
+            window = scenes[start : start + REVIEW_BATCH]
+            if not window:
+                break
+            where = f"第 {window[0].source_page}-{window[-1].source_page} 页"
+            read = self.insist(
+                lambda w=window: ScriptReview.model_validate(
+                    self.llm.complete_json(
+                        self._script_prompt(w, pages),
+                        schema=model_schema(ScriptReview),
+                        system=load_prompt("script_review"),
+                        max_tokens=self.ctx.settings.llm_max_tokens,
+                    )
+                ),
+                what=f"{where}的讲稿复核",
+            )
+            for found in read.findings:
+                # The window overlaps, so the shared page is read twice and
+                # tends to be complained about twice in the same words.
+                key = (found.page, found.kind, found.quote[:40])
+                if key in seen:
+                    continue
+                seen.add(key)
+                scene = next(
+                    (s for s in scenes if s.source_page == found.page), None
+                )
+                # A quote that is not in the script is a finding about a script
+                # that does not exist. Dropped rather than reported: this is the
+                # one check whose author can invent its own evidence.
+                if scene is not None and found.quote and found.quote not in scene.narration:
+                    self.log.info(
+                        "第 %s 页的复核引了一句讲稿里没有的话，不采用：%s",
+                        found.page,
+                        found.quote[:40],
+                    )
+                    continue
+                out.append(
+                    ReviewFinding(
+                        severity="error" if found.severity == "error" else "warning",
+                        kind=f"script_{found.kind or 'other'}",
+                        scene_id=scene.scene_id if scene else None,
+                        message=f"第 {found.page} 页｜{found.message}",
+                    )
+                )
+            if start + REVIEW_BATCH >= len(scenes):
+                break
+        return out
+
+    def _script_prompt(self, window, pages) -> str:
+        parts = []
+        for scene in window:
+            page = pages.get(scene.source_page)
+            said = "\n".join(
+                f"  · {e.text.strip()}"
+                for e in (page.elements if page else [])
+                if (e.text or "").strip()
+            )
+            parts.append(
+                f"## 第 {scene.source_page} 页"
+                + (f"（{page.page_type.value}）" if page else "")
+                + f"\n\n页面上：\n{said or '  （没有文字）'}"
+                + f"\n\n讲稿：\n{scene.narration.strip()}"
+            )
+        return "\n\n".join(parts)
 
     # -- scoring ---------------------------------------------------------
     def _score(self, findings: list[ReviewFinding]) -> QualityReport:

@@ -11,7 +11,7 @@ from contextvars import copy_context
 
 from pydantic import BaseModel, Field
 
-from ..core import ledger, telemetry, tuning
+from ..core import ledger, tuning
 from ..schemas import DocumentPage, ElementKind, PageType, Section
 from ..tools.llm import model_schema
 from .base import ProgressFn, Skill, load_prompt
@@ -45,6 +45,13 @@ class ElementScore(BaseModel):
     importance: float = Field(description="0..1")
 
 
+class GroupRead(BaseModel):
+    """One thing on the page, as the model sees it — a card, a label + body."""
+
+    members: list[str] = Field(default_factory=list)
+    label: str = ""
+
+
 class PageUnderstanding(BaseModel):
     index: int
     page_type: PageType
@@ -52,6 +59,7 @@ class PageUnderstanding(BaseModel):
     summary: str
     key_points: list[str]
     elements: list[ElementScore]
+    groups: list[GroupRead] = Field(default_factory=list)
 
 
 class DeckUnderstanding(BaseModel):
@@ -155,7 +163,6 @@ class DocumentSkill(Skill):
         pages = document.pages
         by_index = {p.index: p for p in pages}
 
-        failures = 0
         batches = [
             (start, pages[start : start + BATCH_SIZE])
             for start in range(0, len(pages), BATCH_SIZE)
@@ -172,17 +179,21 @@ class DocumentSkill(Skill):
         for start, batch, result, exc in self._read_batches(batches, progress):
             where = f"第 {batch[0].index}-{batch[-1].index} 页"
             if exc is not None:
-                # One batch failing must not cost the others. It used to: the
-                # exception left the loop, and a single page whose title
-                # contained a quotation mark took the remaining batches with it
-                # — those pages fell back to heuristics for no reason of their
-                # own.
-                failures += 1
-                detail = f"{exc}"
-                self.log.warning("%s的理解失败，这几页改用启发式规则：%s", where, detail)
-                telemetry.record_degradation("文档理解", f"{where}：{detail}"[:300])
-                ledger.degradation("文档理解降级", f"{where} 改用启发式规则：{detail}"[:300])
-                continue
+                # It used to keep going: this batch's pages fell back to the
+                # heuristics, one line went into the record, and the film came
+                # out. On a real deck that was every batch of thirty pages —
+                # five identical lines in a panel most people never open, and a
+                # video made from rules that nobody was told about.
+                #
+                # The batch has already been retried inside `_read_batches`.
+                # Still failing means the model cannot answer for these pages,
+                # and a film built on rules instead is not the film that was
+                # asked for. Say which pages and why, and stop.
+                # Raised as it came: `insist` already names the pages and
+                # says how many times it asked. Wrapping it again said the
+                # same sentence twice.
+                self.log.error("%s的理解失败：%s", where, exc)
+                raise exc
             for read in result.pages:
                 page = by_index.get(read.index)
                 if page is not None:
@@ -215,11 +226,6 @@ class DocumentSkill(Skill):
                         and page.page_type is not PageType.CONTACT
                     ]
 
-        if failures and failures * BATCH_SIZE >= len(pages):
-            # Nothing came back at all — say so as one degradation about the
-            # stage rather than as a list of per-batch ones nobody reads.
-            raise RuntimeError(f"{failures} 批全部失败，文档理解没有任何模型结果")
-
     def _read_batches(self, batches, progress: ProgressFn | None = None):
         """Each batch's answer, in page order, whether it worked or not.
 
@@ -231,17 +237,24 @@ class DocumentSkill(Skill):
 
         def read(batch):
             where = f"第 {batch[0].index}-{batch[-1].index} 页"
-            with ledger.call(
-                self.llm.source, where, covers=[ledger.page_key(p.index) for p in batch]
-            ):
-                return DeckUnderstanding.model_validate(
-                    self.llm.complete_json(
-                        self._prompt(batch),
-                        schema=model_schema(DeckUnderstanding),
-                        system=load_prompt("document_understanding"),
-                        images=self._images_for(batch),
+
+            def once():
+                with ledger.call(
+                    self.llm.source, where, covers=[ledger.page_key(p.index) for p in batch]
+                ):
+                    return DeckUnderstanding.model_validate(
+                        self.llm.complete_json(
+                            self._prompt(batch),
+                            schema=model_schema(DeckUnderstanding),
+                            system=load_prompt("document_understanding"),
+                            images=self._images_for(batch),
+                        )
                     )
-                )
+
+            # Retried per batch rather than per stage: the batches are read in
+            # parallel and one of them stumbling is the common case, so asking
+            # again for those six pages is cheaper than asking again for thirty.
+            return self.insist(once, what=f"{where}的理解")
 
         # Said as each batch is reached and as each one lands. Not decoration:
         # a job is only asked whether it should stop when progress is reported,
@@ -298,6 +311,23 @@ class DocumentSkill(Skill):
             element = by_id.get(score.id)
             if element is not None:
                 element.importance = max(0.0, min(1.0, score.importance))
+        # Groups are matched the same way: an invented member would aim the
+        # camera at nothing, and a group of one groups nothing. A member may
+        # belong to one group only — the first claim wins, later groups keep
+        # their remaining members.
+        from ..schemas import ElementGroup
+
+        taken: set[str] = set()
+        groups: list[ElementGroup] = []
+        for read_group in read.groups:
+            members = [m for m in read_group.members if m in by_id and m not in taken]
+            if len(members) < 2:
+                continue
+            taken.update(members)
+            label = read_group.label if read_group.label in members else ""
+            groups.append(ElementGroup(members=members, label=label))
+        if groups:
+            page.groups = groups
 
     def _images_for(self, batch: list[DocumentPage]) -> list:
         """Page renders for the most visual pages in this batch."""
@@ -324,9 +354,14 @@ class DocumentSkill(Skill):
                 lines.append(f"演讲者备注：{_truncate(page.speaker_notes, 300)}")
             elements = [e for e in page.elements if e.text]
             if elements:
-                lines.append("元素：")
+                # Geometry rides along — the grouping question is 「这几个元素
+                # 是不是一张卡」, and without positions the model can only
+                # guess from the words. Integers keep it cheap.
+                lines.append("元素（id｜类型｜位置 x,y,宽×高｜文本）：")
                 lines.extend(
-                    f"  - {e.id}｜{e.kind.value}｜{_truncate(e.text, 150)}" for e in elements
+                    f"  - {e.id}｜{e.kind.value}｜{e.bbox.x:.0f},{e.bbox.y:.0f},"
+                    f"{e.bbox.w:.0f}×{e.bbox.h:.0f}｜{_truncate(e.text, 150)}"
+                    for e in elements
                 )
             else:
                 lines.append("（这一页没有可提取的文字，请看配图）")

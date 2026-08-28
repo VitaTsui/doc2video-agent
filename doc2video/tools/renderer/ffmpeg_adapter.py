@@ -15,7 +15,7 @@ from ...core.config import Settings
 from ...core.logging import get_logger
 from ...schemas import ActionType
 from .. import ffmpeg, media_binaries
-from ..parsers.slide_raster import font_candidates
+from ..parsers.slide_raster import chinese_font, font_candidates
 from .base import PlanAction, RendererAdapter, ScenePlan
 
 log = get_logger(__name__)
@@ -188,14 +188,30 @@ class FFmpegAdapter(RendererAdapter):
 
 
 def _find_font() -> str | None:
-    """The same list the rasteriser uses — including anything the runtime ships.
+    """The same list the rasteriser uses, minus the ones that would draw tofu.
 
-    Returning None here costs the subtitles and nothing else, which is why a
-    platform missing from the list went unnoticed for so long.
+    「字幕显示的都是方块」 came from taking the first font that *existed*: a slim
+    Linux image has DejaVu and nothing else, DejaVu has no CJK coverage, and
+    drawtext answers every Chinese character with the missing-glyph box. The
+    render succeeds, the file plays, and every caption is a row of squares.
+
+    Returning None costs the subtitles and nothing else — which is the better
+    of the two outcomes, and now it says so out loud instead of being the
+    silent branch it used to be.
     """
-    for candidate in font_candidates():
-        if Path(candidate).exists():
-            return candidate
+    font = chinese_font()
+    if font:
+        return font
+    existing = [c for c in font_candidates() if Path(c).exists()]
+    if existing:
+        ledger.degradation(
+            "没有中文字体",
+            f"这次不烧字幕——找到的字体画不出汉字（{Path(existing[0]).name} 等 "
+            f"{len(existing)} 个），烧上去会是一片方块。"
+            "装一个中文字体（Linux：apt install fonts-noto-cjk），"
+            "或用 D2V_FONT_PATH 指到一个 .ttf/.otf/.ttc。",
+        )
+        log.warning("找到的字体都画不出汉字，跳过烧录字幕：%s", existing[:3])
     return None
 
 

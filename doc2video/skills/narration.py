@@ -25,6 +25,7 @@ from contextvars import copy_context
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from ..core import ledger, telemetry, tuning
+from ..core.errors import SkillFailed
 from ..core.ids import scene_id
 from ..schemas import DocumentPage, NarrationSegment, PageType, Scene, SceneVisual, VisualType
 from ..tools.llm import model_schema
@@ -519,6 +520,12 @@ class NarrationSkill(Skill):
 
         by_index = {page.index: page for page in pages}
         trimmed = dict(drafts)
+        # Pages that were asked to fit and could not. Collected rather than
+        # logged one by one: a log line is not something the person watching
+        # sees, and 「压不动」 said nothing about what it would cost to try
+        # harder. Whether to spend an item to buy the seconds is theirs to
+        # decide, so the choice is put where they are.
+        stubborn: list[tuple[int, int, int]] = []
         for _, index, allowed in over:
             if total <= target * (1 + DURATION_TOLERANCE):
                 break
@@ -568,12 +575,32 @@ class NarrationSkill(Skill):
                         break
                 if current is draft:
                     self.log.info("第 %d 页压不动：剪会少讲内容，改写也没写短", index)
+                    stubborn.append((index, len(draft.narration), ceiling))
                     continue
                 total -= spoken(draft.narration) - spoken(current.narration)
                 trimmed[index] = current
+                if len(current.narration) > ceiling * KEEP_COMPRESSING:
+                    stubborn.append((index, len(current.narration), ceiling))
                 continue
             total -= spoken(draft.narration) - spoken(shorter)
             trimmed[index] = PageNarration(index=index, narration=shorter, segments=[])
+
+        if stubborn:
+            worst = max(stubborn, key=lambda row: row[1] / max(row[2], 1))
+            # In page order, not worst-first: this is read against the deck.
+            indexes = sorted(row[0] for row in stubborn)
+            shown = "、".join(str(index) for index in indexes[:6])
+            where = (
+                f"第 {shown} 页"
+                if len(indexes) <= 6
+                else f"第 {shown} 页等 {len(indexes)} 页"
+            )
+            telemetry.record_degradation(
+                "讲稿",
+                f"{where}压不到目标字数"
+                f"（第 {worst[0]} 页 {worst[1]} 字，目标 {worst[2]} 字）："
+                "再短就要整条少讲一处，这一步没有替你决定，这几页会比预算长",
+            )
         return trimmed
 
     def _compress_with_model(
@@ -1194,6 +1221,20 @@ class NarrationSkill(Skill):
         pages: list[DocumentPage],
     ) -> list[PageNarration]:
         """One batch, asked for and validated. Nothing here touches the project."""
+        return self.insist(
+            lambda: self._write_batch_once(start, batch, budgets, kept, pages),
+            what=f"第 {batch[0].index}-{batch[-1].index} 页的讲稿",
+        )
+
+    def _write_batch_once(
+        self,
+        start: int,
+        batch: list[DocumentPage],
+        budgets: dict[int, float],
+        kept: dict[int, str],
+        pages: list[DocumentPage],
+    ) -> list[PageNarration]:
+        """One attempt at one batch."""
         with ledger.call(
             self.llm.source,
             f"第 {batch[0].index}-{batch[-1].index} 页",
@@ -1228,10 +1269,15 @@ class NarrationSkill(Skill):
         wanted = {p.index for p in pages}
         missing = sorted(wanted - drafts.keys())
         if missing:
-            telemetry.record_degradation("讲稿", f"模型漏掉第 {missing} 页，改用占位文本")
-            self.log.warning("模型未覆盖 %s，这几页使用占位讲稿", missing)
-            drafts.update(
-                self._write_heuristically([p for p in pages if p.index in set(missing)], budgets)
+            # Filling these in with placeholder text used to let the run finish:
+            # a film came out, some of its pages read 「本页介绍……」, and one
+            # line in a panel said so. A page the model answered for and simply
+            # left out is the same failure as a batch that would not parse, and
+            # it gets the same answer — say which pages, and stop.
+            self.log.error("模型未覆盖 %s", missing)
+            raise SkillFailed(
+                f"第 {'、'.join(str(i) for i in missing)} 页没有讲稿：模型没有写它们",
+                detail={"pages": str(missing)},
             )
         return {index: drafts[index] for index in sorted(wanted)}
 

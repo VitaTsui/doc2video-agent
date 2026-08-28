@@ -93,6 +93,12 @@ class Settings(BaseSettings):
 
     # --- Renderer / encoding ---
     renderer: str = "auto"
+    # The font subtitles are burned with, and the fallback rasteriser draws
+    # with. Empty means "look through the known locations". Set it when the
+    # machine has a CJK font somewhere unusual — a sandbox with fonts unpacked
+    # into the work directory, say — because the alternative there is no
+    # subtitles at all.
+    font_path: str = ""
     # Explicit binary paths win over PATH and over the vendored wheel.
     ffmpeg_path: str = ""
     ffprobe_path: str = ""
