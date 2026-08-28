@@ -1,0 +1,78 @@
+# doc2video 讲解视频技能包 · 运行依赖
+#
+# 引擎本体在 vendor/ 里，是一个 wheel，先装它再装这一份：
+#
+#     pip install vendor/doc2video_agent-*.whl --no-deps
+#     pip install -r requirements.txt
+#
+# 装完自检（会真合成一句话试播音腔）：
+#
+#     python3 scripts/check_env.py
+#
+# --no-deps 是有意的。wheel 声明的依赖里有 fastapi / uvicorn / mcp /
+# python-multipart，那是 HTTP API 与 MCP 那一面的依赖——这个技能包直接调
+# Python 接口，一个都用不上，而它们加起来是几十 MB 和一串传递依赖。
+# 装了也不会错，只是白装。下面这些才是出片真正要用的。
+
+# ── 引擎本体的核心 ───────────────────────────────────────────
+# 工程模型（VideoProject / Document / Scene / Timeline）与配置读取。
+pydantic>=2.9
+pydantic-settings>=2.6
+
+# ── 文档解析 ────────────────────────────────────────────────
+# PDF 的文字块、图片、bbox，以及把页面渲染成高清位图——**PDF 这一路只靠它**，
+# 不需要 LibreOffice，也因此沙箱里 PDF 的保真度天然比 PPT 高。
+pymupdf>=1.24
+# PPTX 的形状、文字、表格、图表。旧版二进制 .ppt 它读不了，那种要先转成 pptx。
+python-pptx>=1.0
+pillow>=10.4
+
+# ── 只有回退到本地音色时才用得上 ────────────────────────────
+# jieba 定词边界、pypinyin 处理多音字，用在「引擎自己会念错」的那些引擎上。
+# **播音腔用不到它们**：edge 自己就把多音字和英文缩写念对了，代码里因此
+# 整层跳过（`reads_polyphones` / `spells_initialisms` 都是真）。实测把这两个
+# 卸掉，播音腔这条路照跑照出片。
+# 留在这里是为了 --allow-fallback-voice 那条路——加起来几 MB，纯 Python。
+jieba>=0.42
+pypinyin>=0.55.0
+
+# ── 播音腔 ─────────────────────────────────────────────────
+# zh-CN-YunyangNeural 走微软的 read-aloud 接口，**要外网**。
+# 这一项没有本地替代：沙箱里没有 macOS 的 `say`，Piper 要另外下 61MB 模型且
+# 音色是另一回事。连不通就只能是静音占位——时间轴和字幕仍然正确，但成片是哑的。
+# 所以 check_env.py 默认会真合成一句话，而不是只 import 一下。
+edge-tts>=6.1
+
+# ── 出片 ───────────────────────────────────────────────────
+# 静态 ffmpeg + ffprobe 装进 Python 环境，不依赖系统安装。
+# 两个 wheel 按平台二选一（pip 会自己按标记选）：
+#   ffmpeg-binaries  macOS / Linux x86_64 / Windows x64——带 ffprobe，带 drawtext（字幕）
+#   imageio-ffmpeg   Linux arm64——只有 ffmpeg，且该构建没有 drawtext，那一档没有字幕
+# 两个都是 GPL 构建，自用与内部部署没问题，随闭源产品分发要另换 LGPL 构建。
+ffmpeg-binaries>=1.1; platform_system == 'Darwin' or (platform_system == 'Linux' and platform_machine == 'x86_64') or (platform_system == 'Windows' and platform_machine == 'AMD64')
+imageio-ffmpeg>=0.6; platform_system == 'Linux' and platform_machine != 'x86_64'
+
+# ── 只有扫描件 / 图片 PDF 才要装 ────────────────────────────
+# `scripts/ocr_pdf.py` 用它给没有文字层的 PDF 补一层可提取的文字。
+# 带文字层的 PDF 和 PPTX 用不到它，所以**默认注释掉**——它连带 onnxruntime、
+# opencv、numpy，首次安装约 150MB。要用就解开这一行：
+#
+#     pip install rapidocr-onnxruntime
+#
+# 选它而不是别的：13MB 的 PP-OCRv3 模型随 wheel 打包，**识别时不联网**——
+# 材料不出域是硬要求，不是偏好。tesseract 同样本地推理，但中文表格数字明显更差；
+# paddleocr 与它上游同源、依赖重得多；任何要调远端 API 的 OCR 一概不用。
+# 实测：把这份 30 页方案里的三页转成纯图片，识回来的原文字符覆盖率 100%，
+# 三页 3.3 秒，还多识出图表里那些原文字层取不到的标签。
+# rapidocr-onnxruntime>=1.2
+
+# ── 装不了也能跑的 ──────────────────────────────────────────
+# 没有列在这里的两样，缺了只是降级，不用管：
+#   Node / Remotion —— 镜头表现力好一档；沙箱里装不动，自动回退到纯 ffmpeg 渲染
+#   LibreOffice     —— PPT 幻灯片保真度最高的一档；400MB+ 的系统套件，
+#                      pip 装不进来。它只影响 PPT，不影响 PDF。
+#
+# ── 实测通过的组合（2026-08-27，macOS 14 / Python 3.12.4）──
+#   doc2video-agent 0.10.30    pydantic 2.12    pymupdf 1.26
+#   python-pptx 1.0            edge-tts 7.2     ffmpeg-binaries 1.1（ffmpeg 6.0）
+#   9 页 pptx → 116 秒成片，播音腔全程，纯 ffmpeg 渲染器。

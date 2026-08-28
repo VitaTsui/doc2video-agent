@@ -122,6 +122,33 @@ DeepSeek Harness（dsh）接入见 [integrations/dsh](integrations/dsh/README.md
 
 其余部署注意：渲染吃 CPU（9 页 deck 出 84 秒视频约 250 秒）；一个工程约 28MB（页面渲染图 + 每场景音频 + 分镜 + 成片），工程是可重渲的资产不是临时文件，要规划清理。
 
+## 技能包：给没有 MCP 的沙箱用
+
+`skills/doc2video/` 是把这条链路打包成的**技能包**——一份 `SKILL.md`、四份
+参考文档、七个脚本，外加 `vendor/` 里的引擎 wheel 和一份中文字体
+（Noto Sans SC，SIL OFL）。给的是那种「有 Bash、能 `pip install`、但接不了 MCP」
+的智能体沙箱：整个目录拷过去就能用，字幕字体不用另外装。
+
+```bash
+pip install skills/doc2video/vendor/doc2video_agent-*.whl --no-deps
+pip install -r skills/doc2video/requirements.txt
+python3 skills/doc2video/scripts/check_env.py          # 会真合成一句话试播音腔
+
+python3 skills/doc2video/scripts/prepare.py --file deck.pdf --brief "8 分钟，面向企业客户" --out /tmp/work
+#   ↑ 出「页面.md + 预算.tsv + 讲稿模板」，模型逐页写进 讲稿/pNN.md
+python3 skills/doc2video/scripts/check_script.py --dir /tmp/work
+python3 skills/doc2video/scripts/make_video.py  --dir /tmp/work    # 后台跑
+python3 skills/doc2video/scripts/job_status.py  --dir /tmp/work
+```
+
+和 MCP 那一面的分工完全相同——**讲稿由调用方写**，引擎不持有模型——区别只在
+它走的是文件和 Python 接口，不是 HTTP。两处不同于默认值的地方是有意的：
+配音**固定播音腔 `zh-CN-YunyangNeural`**（讲稿的字数预算按它 4.45 字/秒算，
+换声音预算就不作数了，所以引擎不可用时脚本直接拒绝开工），
+渲染**默认后台跑**（工具调用普遍只有一两分钟预算，前台跑必被打断在中途）。
+
+引擎发版后要重打 wheel：`uv build --wheel -o dist && cp dist/*.whl skills/doc2video/vendor/`。
+
 ## 依赖内置
 
 系统级依赖里，**ffmpeg 已经内置，LibreOffice 不能内置**——两者性质不同。
@@ -296,6 +323,7 @@ doc2video-agent/
 │   ├── api/            # FastAPI 路由
 │   └── cli.py
 ├── renderer/           # Remotion 工程（Scene 镜头组合 + Slides 幻灯片栅格化）
+├── skills/doc2video/   # 技能包：SKILL.md + references + scripts + 引擎 wheel
 ├── docs/               # 架构说明与设计取舍
 └── tests/
 ```
