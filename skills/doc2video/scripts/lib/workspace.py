@@ -27,21 +27,18 @@ from pathlib import Path
 VOICE = "zh-CN-YunyangNeural"
 
 # 工作目录里的文件名。中文，因为这些文件是给人和模型读的，不是给程序认的。
-PAGES = "页面.md"
-BUDGET = "预算.tsv"
-SCRIPTS = "讲稿"
+#
+# 这里没有「页面.md」也没有「讲稿/」的位置：画面是生成的，不是文档页面，
+# 所以素材是内容、分镜是内容的重新组织，两者都不进画面。
+MATERIAL = "素材.md"
+STORYBOARD = "分镜.json"
+VOICEMAP = "配音.json"
+PROJECT = "项目"
 META = "工程.json"
 STATUS = "状态.json"
 LOG = "运行.log"
 VIDEO = "成片.mp4"
 STORE = "工程库"
-
-# 新链路的文件。画面是生成的，不是文档页面，所以这里没有「页面.md」的位置——
-# 素材是内容，分镜是内容的重新组织，两者都不进画面。
-MATERIAL = "素材.md"
-STORYBOARD = "分镜.json"
-VOICEMAP = "配音.json"
-PROJECT = "项目"
 
 
 def bootstrap(work: Path) -> Path:
@@ -51,8 +48,8 @@ def bootstrap(work: Path) -> Path:
     # 那会跟着当前目录跑——两个脚本在不同目录下启动就会写进两个工程库，
     # 第二步找不到第一步建的工程。
     os.environ["D2V_STORAGE_DIR"] = str(work / STORE)
-    # 播音腔是这个技能包的定义之一，不给覆盖的余地：换音色会连字数预算一起换
-    # （每个引擎的语速不同），而讲稿已经按上一个预算写好了。
+    # 播音腔是这个技能包的定义之一。改一场重配一场的时候，如果这里换了声音，
+    # 成片里就有一场是别人在讲——而听感上「还行」，没人会回头查。
     os.environ["D2V_TTS_PROVIDER"] = "edge"
     os.environ["D2V_TTS_VOICE"] = VOICE
     # 讲稿由模型写，引擎这边一个模型都不调。默认本来就是 mock，写死是防着
@@ -77,20 +74,81 @@ def _bundled_font() -> Path | None:
     return None
 
 
+def bundled_version() -> str | None:
+    """技能包自带的引擎是哪个版本，从 wheel 的文件名读。"""
+    folder = Path(__file__).resolve().parents[2] / "vendor"
+    for wheel in sorted(folder.glob("doc2video_agent-*.whl")):
+        parts = wheel.name.split("-")
+        if len(parts) >= 2:
+            return parts[1]
+    return None
+
+
+def version_tuple(version: str) -> tuple[int, ...]:
+    out = []
+    for piece in version.split("."):
+        digits = "".join(c for c in piece if c.isdigit())
+        out.append(int(digits) if digits else 0)
+    return tuple(out)
+
+
+def installed_version() -> str | None:
+    """环境里装着的引擎是哪个版本。问不出来就是 None——不为了检查本身挡住人。
+
+    `doc2video.__version__` 不能用，它常年停在 0.1.0；发行版本在包元数据里。
+    """
+    try:
+        from importlib.metadata import version
+
+        return version("doc2video-agent")
+    except Exception:  # noqa: BLE001
+        return None
+
 def require_engine() -> None:
-    """确认 doc2video 装上了，没装就说清楚怎么装，而不是抛 ImportError。"""
+    """确认 doc2video 装上了、而且是这一版脚本认识的那个。
+
+    版本要查，是因为「装过了」和「装的是对的那个」在这里是两件事。这些脚本按
+    技能包自带的那个 wheel 的 API 写，而机器上很可能已经有另一个 doc2video——
+    比如桌面 app 的运行时。那种情况下脚本会走到一半才炸在某个 ImportError 上，
+    报的是「cannot import name ...」，看起来像技能包坏了。
+    """
+    here = Path(__file__).resolve().parents[2]
+    install = (
+        f"    pip install {here / 'vendor'}/doc2video_agent-*.whl --no-deps\n"
+        f"    pip install -r {here / 'requirements.txt'}"
+    )
     try:
         import doc2video  # noqa: F401
-    except ImportError:
-        here = Path(__file__).resolve().parents[2]
+    except ImportError as exc:
         print(
-            "没有找到 doc2video 引擎。先装它，再跑这个脚本：\n"
-            f"    pip install {here / 'vendor'}/doc2video_agent-*.whl\n"
-            f"    pip install -r {here / 'requirements.txt'}\n"
+            f"没有找到 doc2video 引擎。先装它，再跑这个脚本：\n{install}\n"
             "装完用 python3 scripts/check_env.py 确认。",
             file=sys.stderr,
         )
-        raise SystemExit(1) from None
+        raise SystemExit(1) from exc
+
+    want = bundled_version()
+    if want is None:
+        return
+    have = installed_version()
+    if have is None:
+        return
+
+    if have == want:
+        return
+    if version_tuple(have) < version_tuple(want):
+        print(
+            f"引擎版本对不上：装着的是 {have}，这套脚本要 {want}。\n"
+            "低版本会在链路中间炸在某个 ImportError 上，先换成技能包自带的：\n"
+            f"    pip install --force-reinstall {here / 'vendor'}/doc2video_agent-*.whl --no-deps",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    print(
+        f"⚠️ 引擎是 {have}，比技能包自带的 {want} 新。多半没事，"
+        "出怪事就换回自带的那个。",
+        file=sys.stderr,
+    )
 
 
 @dataclass
@@ -115,36 +173,6 @@ class Meta:
         )
 
 
-def script_path(work: Path, page: int) -> Path:
-    return work / SCRIPTS / f"p{page:02d}.md"
-
-
-def read_scripts(work: Path) -> dict[int, str]:
-    """讲稿目录 → ``{页码: 讲稿}``。空文件不算写了，直接不收进来。
-
-    模板头（``<!-- … -->``）会被剥掉：它是写给写的人看的预算提示，念出来就成了
-    「小于号叹号减减第三页目标二十四点五秒」。
-    """
-    out: dict[int, str] = {}
-    folder = work / SCRIPTS
-    if not folder.exists():
-        return out
-    for path in sorted(folder.glob("p*.md")):
-        try:
-            page = int(path.stem[1:])
-        except ValueError:
-            continue
-        lines = [
-            line
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if not line.strip().startswith("<!--")
-        ]
-        text = "\n".join(lines).strip()
-        if text:
-            out[page] = text
-    return out
-
-
 def write_status(work: Path, **fields) -> None:
     """状态文件是后台任务与轮询之间唯一的接口，整份重写而不是追加。"""
     path = work / STATUS
@@ -167,9 +195,8 @@ def chars(text: str) -> int:
     """字数按引擎估时长的口径数：只数汉字。
 
     标点不占时间（它占的是停顿，另有账），英文按词算不按字母算——所以这里数出来
-    的数字和「文件有多少字符」不是一回事，和 ``预算.tsv`` 里的 ``目标字数``
-    才是同一把尺子。英文多的一页会显得字数偏少，以 ``check_script.py`` 报的
-    预计秒数为准。
+    的数字和「文件有多少字符」不是一回事。只用在 ``validate_storyboard.py`` 的
+    粗估和字幕断句上；真实时长以合成结果为准。
     """
     return sum(1 for ch in text if "一" <= ch <= "鿿")
 

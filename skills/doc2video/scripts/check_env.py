@@ -24,7 +24,13 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib.workspace import VOICE, bootstrap  # noqa: E402
+from lib.workspace import (  # noqa: E402
+    VOICE,
+    bootstrap,
+    bundled_version,
+    installed_version,
+    version_tuple,
+)
 
 OK, BAD, WARN = "✓", "✗", "!"
 
@@ -66,19 +72,37 @@ def main() -> int:
 
 
 def _engine(fatal: list[str]) -> bool:
+    """装没装，以及装的是不是这套脚本认识的那一版。
+
+    版本要报，是因为「装过了」和「装的是对的那个」是两件事。机器上很可能已经
+    有另一个 doc2video——比如某个桌面 app 的运行时——那种情况下体检会一路打勾，
+    然后崩在某个 `cannot import name` 上，报得像是技能包坏了。
+    """
+    here = Path(__file__).resolve().parent.parent
     try:
         import doc2video
-
-        where = Path(doc2video.__file__).parent
-        print(f"{OK} doc2video 引擎（{where}）")
-        return True
     except ImportError as exc:
-        here = Path(__file__).resolve().parent.parent
         print(f"{BAD} doc2video 引擎没装：{exc}")
-        print(f"    pip install {here / 'vendor'}/doc2video_agent-*.whl")
+        print(f"    pip install {here / 'vendor'}/doc2video_agent-*.whl --no-deps")
         print(f"    pip install -r {here / 'requirements.txt'}")
         fatal.append("引擎没装，其余检查都做不了")
         return False
+
+    where = Path(doc2video.__file__).parent
+    want = bundled_version()
+    have = installed_version()
+    if want and have and want != have:
+        older = version_tuple(have) < version_tuple(want)
+        mark = BAD if older else WARN
+        print(f"{mark} doc2video {have}，技能包自带的是 {want}（{where}）")
+        print(f"    pip install --force-reinstall {here / 'vendor'}/doc2video_agent-*.whl --no-deps")
+        if older:
+            fatal.append(f"引擎是 {have}，低于这套脚本要的 {want}")
+            return False
+        return True
+
+    print(f"{OK} doc2video 引擎 {have or ''}（{where}）".replace("  ", " "))
+    return True
 
 
 def _voice(fatal: list[str], *, probe: bool) -> None:
@@ -149,7 +173,13 @@ def _binaries(fatal: list[str]) -> None:
 
 def _subtitle_font(fatal: list[str]) -> None:
     """字幕字体。没有中文字形的字体会把每个汉字画成方块——比没有字幕更糟。"""
-    from doc2video.tools.parsers.slide_raster import chinese_font, font_candidates
+    try:
+        from doc2video.tools.parsers.slide_raster import chinese_font, font_candidates
+    except ImportError as exc:
+        # 体检的每一节都要能单独失败。这一节问的是引擎的内部 API，而引擎版本
+        # 不对时它会整个崩掉——那正是最需要看到后面几节的时候。
+        print(f"{WARN} 查不了字幕字体（引擎里没有这个接口：{exc}）")
+        return
 
     print("字幕字体：")
     font = chinese_font()
