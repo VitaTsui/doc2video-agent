@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -99,6 +100,9 @@ def main() -> int:
             {
                 "id": scene_id,
                 "audio": f"audio/{target.name}",
+                # 配的是哪段话。register_scenes.py 拿它比对分镜——改了讲稿
+                # 忘了重配的话，成片会是画面新、声音和字幕旧，而三者都「成功」了。
+                "narrationHash": narration_hash(narration),
                 "duration": round(result.duration, 3),
                 "timingSource": result.timing_source,
                 "segments": [
@@ -136,6 +140,11 @@ def main() -> int:
         + "\n接下来按 references/scene-creator.md 逐场写画面。每场多长在这份文件里。"
     )
     return 0
+
+
+def narration_hash(text: str) -> str:
+    """一段讲稿的身份。空白不算数——重排换行不该判成改了内容。"""
+    return hashlib.sha1("".join(text.split()).encode("utf-8")).hexdigest()[:12]
 
 
 def _sentences(text: str) -> list[str]:

@@ -4,12 +4,12 @@
 后台任务与这里之间只有一个接口：``状态.json``。它整份重写，所以读到的永远是
 一份完整的状态，不会读到写了一半的行。
 
-    python3 scripts/job_status.py --dir <工作目录>
-    python3 scripts/job_status.py --dir <工作目录> --wait 90   # 最多等 90 秒再返回
+    python3 scripts/job_status.py --out <工作目录>
+    python3 scripts/job_status.py --out <工作目录> --wait 90   # 最多等 90 秒再返回
 
 退出码是给脚本判断用的：**0 成功、1 失败、2 还在跑**。别用输出去 grep 状态。
 
-轮询间隔按阶段选：解析和配音是秒级到分钟级，渲染是分钟级。--wait 给的秒数
+渲染是这条链路上唯一的分钟级步骤，也是唯一会用到这个脚本的。--wait 给的秒数
 要留在工具预算之内——超时被打断的是这个轮询，不是渲染，渲染在自己的进程组里
 继续跑，再调一次就好。
 """
@@ -29,14 +29,14 @@ STATE_CODE = {"succeeded": 0, "failed": 1, "running": 2}
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="看渲染跑到哪儿了")
-    parser.add_argument("--dir", required=True, type=Path)
+    parser.add_argument("--out", required=True, type=Path, help="工作目录")
     parser.add_argument(
         "--wait", type=int, default=0, help="最多等多少秒（默认不等，看一眼就返回）"
     )
     parser.add_argument("--tail", type=int, default=6, help="附带日志最后几行")
     args = parser.parse_args()
 
-    work = bootstrap(args.dir)
+    work = bootstrap(args.out)
     deadline = time.time() + max(args.wait, 0)
     while True:
         status = read_status(work)

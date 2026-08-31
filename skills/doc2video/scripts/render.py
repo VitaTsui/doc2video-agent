@@ -66,12 +66,18 @@ def main() -> int:
     if args.concurrency > 0:
         command += ["--concurrency", str(args.concurrency)]
 
-    write_status(work, state="running", updated=time.time(), video="", error="")
     started = time.time()
+    # `write_status` 是合并写入，所以开跑时要把上一轮的结果字段一并清掉。不清
+    # 的话 job_status 会读到上次那次渲染的 elapsed，报出「已用 1138 秒」——这一
+    # 次才刚开始三秒。
+    write_status(
+        work, state="running", updated=started, started=started,
+        elapsed=0, video="", error="",
+    )
 
     if args.foreground:
         result = subprocess.run(command, cwd=project)  # noqa: S603
-        return _finish(work, target, started, result.returncode)
+        return _finish(work, target, started, result.returncode, voicemap)
 
     # 后台跑的是**这个脚本自己**，不是 remotion。直接 Popen remotion 的话没有
     # 人在它结束时写状态文件，job_status.py 会一直报 running——渲完了也一样。
@@ -93,14 +99,19 @@ def main() -> int:
     return 0
 
 
-def _finish(work: Path, target: Path, started: float, code: int) -> int:
+def _finish(work: Path, target: Path, started: float, code: int, voicemap: dict) -> int:
     elapsed = round(time.time() - started, 1)
     if code != 0 or not target.exists():
         write_status(work, state="failed", updated=time.time(), elapsed=elapsed,
                      error=f"remotion render 退出码 {code}")
         return 1
-    write_status(work, state="done", updated=time.time(), elapsed=elapsed,
-                 video=str(target), error="")
+    # 状态值是 job_status.py 的退出码契约的一半：succeeded=0 / failed=1 /
+    # running=2。写成别的（比如 "done"）它会落到 unknown 分支，报「失败」。
+    write_status(
+        work, state="succeeded", updated=time.time(), elapsed=elapsed,
+        video=str(target), error="",
+        duration_s=voicemap["total"], scene_count=len(voicemap["scenes"]),
+    )
     size = target.stat().st_size / 1024 / 1024
     print(f"\n成片 {target}（{size:.1f} MB，{elapsed:.0f} 秒）")
     return 0

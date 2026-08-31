@@ -28,6 +28,8 @@ from lib.workspace import (  # noqa: E402
     scenes_dir,
 )
 
+from make_voice import narration_hash  # noqa: E402
+
 REGISTRY = Path("src") / "compositions" / "generated-scenes.ts"
 
 
@@ -48,6 +50,16 @@ def main() -> int:
         voiced = timing.get(scene_id)
         if voiced is None:
             problems.append(f"{scene_id} 没有配音——跑一次 make_voice.py")
+            continue
+
+        # 讲稿改过、配音没跟上，是这条链路上最安静的一种错：三个步骤全都
+        # 「成功」，成片却是画面按新讲稿做的，声音和字幕还是旧的那段话。
+        stale = voiced.get("narrationHash")
+        if stale is not None and stale != narration_hash(scene.get("narration") or ""):
+            problems.append(
+                f"{scene_id} 的讲稿改过了，但配音还是旧的——"
+                f"跑 make_voice.py --scenes {board['scenes'].index(scene) + 1}"
+            )
             continue
 
         roll = scene.get("rollType", "a-roll")
@@ -85,18 +97,33 @@ def main() -> int:
 
 
 def _media_seconds(path: Path) -> float:
-    """B-roll 素材真正多长。量不出来就当 0——宿主会按槽位长度铺满。"""
+    """B-roll 素材真正多长。量不出来就当 0——宿主会让它停在最后一帧。
+
+    ffprobe 从引擎问，不用裸名字。引擎依次看配置、PATH、和它自己 vendored 的
+    那一份，而最后那种恰恰是 pip 装出来的常态：`shutil.which("ffprobe")` 找不到
+    它，于是每一段 B-roll 的时长都量成 0，短素材再也不会被放慢。
+    """
+    try:
+        from doc2video.tools.media_binaries import ffprobe
+
+        binary = ffprobe()
+    except ImportError:
+        binary = None
+
+    if binary is None or not binary.available:
+        print(f"⚠️ 没有 ffprobe，量不出 {path.name} 的时长——它会停在最后一帧", file=sys.stderr)
+        return 0.0
+
     try:
         out = subprocess.run(  # noqa: S603
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+            [binary.path, "-v", "error", "-show_entries", "format=duration",
              "-of", "default=nw=1:nk=1", str(path)],
             capture_output=True, text=True, timeout=30,
         )
         return round(float(out.stdout.strip()), 3)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        print(f"⚠️ 量不出 {path.name} 的时长，按槽位铺", file=sys.stderr)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"⚠️ 量不出 {path.name}（{str(exc)[:60]}），它会停在最后一帧", file=sys.stderr)
         return 0.0
-
 
 def _render(rows: list[dict], total: float) -> str:
     imports = [
