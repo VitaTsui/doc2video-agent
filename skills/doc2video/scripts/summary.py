@@ -1,85 +1,99 @@
 #!/usr/bin/env python3
-"""出片之后，这支视频到底是什么样。
+"""出片之后看一眼：几场、多长、每场讲了什么、渲成了没有。
 
-三块，按「要不要重做」的顺序排：
+上一版这里读的是引擎的 telemetry，因为整条链路都在引擎里跑。这一版引擎只管
+解析和配音，画面和渲染都在 Remotion 那边——所以摘要改成读工作目录自己的三份
+文件，它们才是这支片子的事实。
 
-1. **降级记录**——跑完了但打了折的地方。哪一页没讲稿用了占位、配音落到了别的
-   引擎、字幕没烧上……这些都不会让运行失败，所以不看就不知道。
-2. **时长**——实际对目标。差得多就是有几页写长了或写短了。
-3. **逐场景讲稿**——成片里真正念出来的那份文字。你自己读一遍，
-   要改哪页就改 ``讲稿/pNN.md``，再 ``make_video.py --pages N``。
-
-    python3 scripts/summary.py --dir <工作目录>
-    python3 scripts/summary.py --dir <工作目录> --full   # 讲稿打全文，不截断
+交给用户之前跑一次。它会说出你自己不一定会去查的两件事：实际时长和目标差多少，
+以及有没有哪一场长得离谱。
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib.workspace import VIDEO, Meta, bootstrap, read_status, require_engine  # noqa: E402
+
+from lib.workspace import (  # noqa: E402
+    VIDEO,
+    Meta,
+    bootstrap,
+    load_storyboard,
+    load_voicemap,
+    read_status,
+)
+
+# 超过这个长度的一场，多半是当初该拆没拆。不是错，是提醒。
+LONG_SCENE_SECONDS = 25.0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="看这支视频是什么样")
-    parser.add_argument("--dir", required=True, type=Path)
-    parser.add_argument("--full", action="store_true", help="讲稿打全文")
+    parser = argparse.ArgumentParser(description="成片摘要")
+    parser.add_argument("--out", required=True, type=Path, help="工作目录")
+    parser.add_argument("--full", action="store_true", help="连每场讲稿一起打印")
     args = parser.parse_args()
 
-    work = bootstrap(args.dir)
-    require_engine()
+    work = bootstrap(args.out)
     meta = Meta.load(work)
+    board = load_storyboard(work)
+    voicemap = load_voicemap(work)
 
-    from doc2video.agent import Doc2VideoAgent
+    scenes = board["scenes"]
+    timing = {row["id"]: row for row in voicemap["scenes"]}
+    total = voicemap["total"]
 
-    agent = Doc2VideoAgent()
-    project = agent.store.load(meta.project_id)
-    status = read_status(work)
+    print(f"《{board.get('title') or meta.source}》")
+    print(f"  来源 {meta.source}｜要求：{meta.brief}")
+    print(f"  {len(scenes)} 场，{total:.1f} 秒（{total / 60:.1f} 分钟）｜配音 {voicemap['voice']}")
 
-    print(
-        f"工程 {project.project_id}｜{project.document.title or meta.source}\n"
-        f"来源 {project.source.file}｜状态 {project.status.value}｜配音 {project.intent.voice}"
-    )
+    a_roll = sum(1 for s in scenes if s.get("rollType", "a-roll") == "a-roll")
+    if a_roll < len(scenes):
+        share = (total - sum(timing[s["id"]]["duration"] for s in scenes
+                             if s.get("rollType") == "a-roll")) / total if total else 0
+        print(f"  A-roll {a_roll} 场，B-roll {len(scenes) - a_roll} 场（占 {share:.0%}）")
 
-    telemetry = project.telemetry
-    if telemetry and telemetry.degradations:
-        print("\n降级（跑完了，但打了折）：")
-        for item in telemetry.degradations:
-            print(f"  ! {item.what}：{item.reason}")
-    elif telemetry:
-        print("\n降级：无")
-
-    actual = project.total_duration()
-    target = project.intent.duration
-    drift = (actual - target) / target * 100 if target else 0.0
-    print(
-        f"\n时长 {actual:.1f} 秒 / 目标 {target} 秒（{drift:+.0f}%）"
-        f"｜{len(project.scenes)} 个场景"
-    )
-    if telemetry:
-        print(f"上次运行 {telemetry.duration_s:.0f} 秒")
-
-    video = work / VIDEO
-    final = agent.store.resolve(project.project_id, project.render.output_path)
-    print(f"成片 {video}" if video.exists() else f"成片 {final or '（未生成）'}")
-    if status.get("state") == "running":
-        print("! 还有一个渲染在跑，下面这些是它跑完之前的状态")
-
-    print("\n逐场景：")
-    for scene in project.scenes:
-        text = scene.narration if args.full else scene.narration[:60] + (
-            "…" if len(scene.narration) > 60 else ""
+    print()
+    long_ones = []
+    for index, scene in enumerate(scenes, start=1):
+        row = timing.get(scene["id"])
+        if row is None:
+            print(f"  {index:>2}. {scene['id']} —— 没有配音")
+            continue
+        seconds = row["duration"]
+        mark = "！" if seconds > LONG_SCENE_SECONDS else " "
+        roll = "B" if scene.get("rollType") == "b-roll" else "A"
+        print(
+            f"  {index:>2}.{mark}[{roll}] {row['start']:>6.1f}s +{seconds:>5.1f}s  "
+            f"{scene.get('beat') or scene['id']}"
         )
-        print(f"  {scene.scene_id}  p{scene.source_page:<3} {scene.duration:6.1f}s  {text}")
+        if args.full:
+            print(f"        {scene.get('narration', '').strip()}")
+        if seconds > LONG_SCENE_SECONDS:
+            long_ones.append((index, seconds))
 
-    print(
-        "\n要改哪一页：改 讲稿/pNN.md，然后\n"
-        f"  python3 scripts/make_video.py --dir {work} --pages N\n"
-        "只有那一页会重新配音、重渲，其余片段原样复用。"
-    )
+    if long_ones:
+        print(f"\n！{len(long_ones)} 场超过 {LONG_SCENE_SECONDS:.0f} 秒：")
+        for index, seconds in long_ones:
+            print(f"    第 {index} 场 {seconds:.1f} 秒——一场里多半不止一件事")
+
+    status = read_status(work)
+    video = work / VIDEO
+    print()
+    if video.exists():
+        size = video.stat().st_size / 1024 / 1024
+        print(f"成片 {video}（{size:.1f} MB）")
+        if elapsed := status.get("elapsed"):
+            print(f"  渲染用了 {elapsed:.0f} 秒")
+    elif status.get("state") == "running":
+        print("还在渲——python3 scripts/job_status.py --out <工作目录>")
+    elif error := status.get("error"):
+        print(f"渲染失败：{error}")
+    else:
+        print("还没渲——python3 scripts/render.py --out <工作目录>")
     return 0
 
 

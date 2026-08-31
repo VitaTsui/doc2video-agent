@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,13 @@ STATUS = "状态.json"
 LOG = "运行.log"
 VIDEO = "成片.mp4"
 STORE = "工程库"
+
+# 新链路的文件。画面是生成的，不是文档页面，所以这里没有「页面.md」的位置——
+# 素材是内容，分镜是内容的重新组织，两者都不进画面。
+MATERIAL = "素材.md"
+STORYBOARD = "分镜.json"
+VOICEMAP = "配音.json"
+PROJECT = "项目"
 
 
 def bootstrap(work: Path) -> Path:
@@ -164,3 +172,62 @@ def chars(text: str) -> int:
     预计秒数为准。
     """
     return sum(1 for ch in text if "一" <= ch <= "鿿")
+
+
+def project_dir(work: Path) -> Path:
+    """Remotion 工程所在。音频、B-roll 素材都要落在它的 public/ 下才读得到。"""
+    return work / PROJECT
+
+
+def public_dir(work: Path) -> Path:
+    return project_dir(work) / "public"
+
+
+def scenes_dir(work: Path) -> Path:
+    """生成的场景组件放这里，一场一个文件。"""
+    return project_dir(work) / "src" / "scenes"
+
+
+def load_storyboard(work: Path) -> dict:
+    path = work / STORYBOARD
+    if not path.exists():
+        raise SystemExit(
+            f"{path} 不存在。分镜是你写的，不是脚本生成的——"
+            "读 素材.md，按 references/storyboard.md 的契约写出来。"
+        )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{path} 不是合法 JSON：{exc}") from None
+    if not isinstance(data, dict) or not isinstance(data.get("scenes"), list):
+        raise SystemExit(f"{path} 里没有 scenes 数组")
+    return data
+
+
+def load_voicemap(work: Path) -> dict:
+    path = work / VOICEMAP
+    if not path.exists():
+        raise SystemExit(f"{path} 不存在——先跑 make_voice.py，时间轴由配音定")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def scene_component(scene_id: str) -> str:
+    """scene-007 → Scene007。组件名和文件名都用它，注册表也认这个。"""
+    tail = scene_id.rsplit("-", 1)[-1]
+    return f"Scene{tail.zfill(3)}"
+
+
+def node_bin(name: str) -> str:
+    """npm / npx 的真实路径。
+
+    Windows 上它们是 npm.cmd / npx.cmd，而 subprocess 不走 PATHEXT——直接传
+    "npx" 会以 WinError 2「系统找不到指定的文件」失败，看起来像没装 Node。
+    沙箱是 Linux，这里主要是为了让本机排查时不撞上这一下。
+    """
+    found = shutil.which(name)
+    if found is None:
+        raise SystemExit(
+            f"没有找到 {name}。这条链路的画面是 Remotion 渲的，Node 是硬依赖——"
+            "装 Node 18+ 之后再跑。"
+        )
+    return found

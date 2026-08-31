@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -45,11 +46,11 @@ def main() -> int:
     print()
     _voice(fatal, probe=not args.no_probe)
     print()
+    _node(fatal)
+    print()
     _binaries(fatal)
     print()
     _subtitle_font(fatal)
-    print()
-    _renderer()
     print()
     _slides()
     print()
@@ -96,7 +97,7 @@ def _voice(fatal: list[str], *, probe: bool) -> None:
             fatal.append("当前会合成静音——成片是哑的，时间轴和字幕仍然正确")
         return
 
-    print(f"{OK} 播音腔 {VOICE}｜{provider.chars_per_second} 字/秒（预算按这个算）")
+    print(f"{OK} 播音腔 {VOICE}｜{provider.chars_per_second} 字/秒（分镜阶段的粗估按这个算，实际时长以合成结果为准）")
     if not probe:
         print(f"{WARN} 没试音：装上了不等于连得通，出片前至少试一次")
         return
@@ -164,17 +165,6 @@ def _subtitle_font(fatal: list[str]) -> None:
     print("      export D2V_FONT_PATH=/path/to/NotoSansSC-Regular.otf")
 
 
-def _renderer() -> None:
-    from doc2video.core.config import get_settings
-    from doc2video.tools.renderer import renderer_status
-
-    print("渲染器：")
-    for name, info in renderer_status(get_settings()).items():
-        mark = OK if info.get("available") else WARN
-        print(f"{mark} {name:9s} {info.get('reason') or '可用'}")
-    print("    remotion 不可用就走 ffmpeg：镜头表现力差一档，成片照出。")
-
-
 def _slides() -> None:
     """幻灯片渲染档位。这一档决定了 PPT 出来长什么样，PDF 不受影响。"""
     from doc2video.core.config import which
@@ -203,6 +193,42 @@ def _ocr() -> None:
         print("    pip install rapidocr-onnxruntime      # 约 150MB，之后识别不联网")
         return
     print(f"{OK} rapidocr-onnxruntime｜python3 scripts/ocr_pdf.py --in a.pdf --out b.pdf")
+
+
+def _node(fatal: list[str]) -> None:
+    """画面是 Remotion 渲的，Node 是硬依赖——这一版和上一版最大的环境差别。
+
+    上一版只要 Python 和 ffmpeg 就能出片。现在缺了 Node，前面每一步都会成功，
+    一直到 `init_project.py` 才失败——那时文档已经解析完、分镜可能都写好了。
+    """
+    print("画面（Remotion）：")
+    node = shutil.which("node")
+    if node is None:
+        print(f"{BAD} 没有 node。这一版的画面是 Remotion 渲的，不装就出不了片")
+        print("    装 Node 18+（沙箱里通常预装，没有就找平台方）")
+        fatal.append("Node 没装，无法渲染")
+        return
+
+    try:
+        raw = subprocess.run(  # noqa: S603
+            [node, "--version"], capture_output=True, text=True, timeout=20
+        ).stdout.strip()
+        major = int(raw.lstrip("v").split(".")[0])
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"{WARN} node 在（{node}），但问不出版本：{str(exc)[:80]}")
+        return
+
+    if major < 18:
+        print(f"{BAD} node {raw}——Remotion 4 要 18 以上")
+        fatal.append(f"node {raw} 太老，Remotion 4 要 18+")
+        return
+    print(f"{OK} node {raw}")
+
+    if shutil.which("npm") is None:
+        print(f"{BAD} 有 node 但没有 npm，装不了 Remotion 依赖")
+        fatal.append("npm 没装")
+        return
+    print(f"{OK} npm 在（init_project.py 用它装依赖，实测约一分钟）")
 
 
 if __name__ == "__main__":

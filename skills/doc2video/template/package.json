@@ -1,0 +1,22 @@
+{
+  "name": "doc2video-motion-template",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remotion host for doc2video: generated scenes, per-scene voice, on-canvas subtitles.",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Main out/final.mp4",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.242",
+    "@remotion/media-utils": "4.0.242",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.242"
+  },
+  "devDependencies": {
+    "@types/react": "19.0.0",
+    "typescript": "5.7.2"
+  }
+}

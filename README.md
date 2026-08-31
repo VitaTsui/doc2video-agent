@@ -124,28 +124,39 @@ DeepSeek Harness（dsh）接入见 [integrations/dsh](integrations/dsh/README.md
 
 ## 技能包：给没有 MCP 的沙箱用
 
-`skills/doc2video/` 是把这条链路打包成的**技能包**——一份 `SKILL.md`、四份
-参考文档、七个脚本，外加 `vendor/` 里的引擎 wheel 和一份中文字体
-（Noto Sans SC，SIL OFL）。给的是那种「有 Bash、能 `pip install`、但接不了 MCP」
-的智能体沙箱：整个目录拷过去就能用，字幕字体不用另外装。
+`skills/doc2video/` 是给那种「有 Bash、能 `pip install`、但接不了 MCP」的智能体
+沙箱用的**技能包**：`SKILL.md` + 五份参考文档 + 九个脚本 + 一套 Remotion 模板，
+外加 `vendor/` 里的引擎 wheel 和一份中文字体（Noto Sans SC，SIL OFL）。
+
+**它出的片子和主链路不是一种。** 主链路把每页渲成图，视频是那张图配镜头运动；
+技能包这一条读完材料**重新组织成分镜**，画面是为每一场生成的 Remotion 动画——
+成片里不出现文档原文，也不出现它的排版。
 
 ```bash
 pip install skills/doc2video/vendor/doc2video_agent-*.whl --no-deps
 pip install -r skills/doc2video/requirements.txt
-python3 skills/doc2video/scripts/check_env.py          # 会真合成一句话试播音腔
+python3 skills/doc2video/scripts/check_env.py           # 试播音腔，并查 Node
 
-python3 skills/doc2video/scripts/prepare.py --file deck.pdf --brief "8 分钟，面向企业客户" --out /tmp/work
-#   ↑ 出「页面.md + 预算.tsv + 讲稿模板」，模型逐页写进 讲稿/pNN.md
-python3 skills/doc2video/scripts/check_script.py --dir /tmp/work
-python3 skills/doc2video/scripts/make_video.py  --dir /tmp/work    # 后台跑
-python3 skills/doc2video/scripts/job_status.py  --dir /tmp/work
+python3 skills/doc2video/scripts/prepare.py      --file deck.pdf --brief "8 分钟，面向企业客户" --out /tmp/work
+python3 skills/doc2video/scripts/init_project.py --out /tmp/work    # 复制模板 + npm install
+#   ↑ 模型读 素材.md，重新组织成 分镜.json（讲稿写在里面）
+python3 skills/doc2video/scripts/validate_storyboard.py --out /tmp/work
+python3 skills/doc2video/scripts/make_voice.py   --out /tmp/work    # 配音，量出时间轴
+#   ↑ 模型按每场时长写 项目/src/scenes/SceneNNN.tsx
+python3 skills/doc2video/scripts/register_scenes.py     --out /tmp/work
+python3 skills/doc2video/scripts/render.py       --out /tmp/work    # 后台跑
+python3 skills/doc2video/scripts/job_status.py   --out /tmp/work
 ```
 
-和 MCP 那一面的分工完全相同——**讲稿由调用方写**，引擎不持有模型——区别只在
-它走的是文件和 Python 接口，不是 HTTP。两处不同于默认值的地方是有意的：
-配音**固定播音腔 `zh-CN-YunyangNeural`**（讲稿的字数预算按它 4.45 字/秒算，
-换声音预算就不作数了，所以引擎不可用时脚本直接拒绝开工），
-渲染**默认后台跑**（工具调用普遍只有一两分钟预算，前台跑必被打断在中途）。
+引擎在这条链路上只做两件事：解析文档、合成配音。**分镜和画面都由调用方的模型
+写**，渲染走技能包自带的 Remotion 工程——所以 Node 18+ 是硬依赖，这是它和主链路
+最大的环境差别。
+
+三处不同于默认值的地方是有意的：配音**固定播音腔 `zh-CN-YunyangNeural`**（换了
+声音，改一场重配一场时那一场就是别人在讲，而听感上「还行」）；
+**时间轴由配音量出来**，不按字数估，讲稿写多长都行；
+渲染**默认后台跑**，而且比主链路慢一个量级——每一帧都是浏览器画的，实测 36.7 秒
+的成片渲了 19 分钟。
 
 引擎发版后要重打 wheel：`uv build --wheel -o dist && cp dist/*.whl skills/doc2video/vendor/`。
 

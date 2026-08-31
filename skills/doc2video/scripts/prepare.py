@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
-"""解析文档，建工作目录，把「写讲稿要知道的一切」摊在磁盘上。
+"""解析文档，把里面的内容摊成一份素材，供你重新组织成分镜。
 
-秒级，不配音不渲染。产出三样：
+和这个技能包的上一版有一处根本不同：**页面不再是画面**。
 
-- ``页面.md``——逐页的标题、类型、页面上的文字与元素。**写讲稿只读这一份。**
-- ``预算.tsv``——每页多少秒、多少字。时长是按字数估的，超了成片就超时长，
-  而音频一旦生成，长度就改不动了——所以预算要在写之前拿到，不是写完再对。
-- ``讲稿/p01.md …``——一页一个空文件，头一行注释写着这页的预算。你往里写。
+上一版把每页渲成图，视频就是那张图配上镜头运动，讲稿逐页写。这一版的画面是
+生成的动画场景，页面只作为**内容来源**——所以这里产出的是「素材.md」而不是
+「页面.md」，页码留在里面只为了追溯出处，不代表成片会按页走。
 
-    python3 scripts/prepare.py --file <PDF/PPTX> --brief "一句话说清要什么" \\
-        --out /workspace/myspace/<工作目录>
-
-``--brief`` 里说时长和重点页是有用的：「8 分钟」「第 5 到 8 页重点讲」会被读进
-预算里，其余的话不影响预算，但会记进工程。
+也因此这里不再算逐页预算。一场讲多久由分镜决定，而分镜是按意思分的，不是按
+页分的：三页讲同一件事就并成一场，一页里有两件事就拆成两场。
 """
 
 from __future__ import annotations
@@ -22,22 +18,26 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from lib.workspace import (  # noqa: E402
-    BUDGET,
-    PAGES,
-    SCRIPTS,
+    MATERIAL,
+    STORYBOARD,
     VOICE,
     Meta,
     bootstrap,
     require_engine,
-    script_path,
 )
+
+# 一场的合理长度。短于下限的场景切得太碎——观众刚看懂画面就切走了；长于上限
+# 的一场里必然不止一件事，那是两场。分镜自己定场数，这两个数只是护栏。
+SCENE_SECONDS_MIN = 8
+SCENE_SECONDS_MAX = 25
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="解析文档并建出写讲稿要用的工作目录")
+    parser = argparse.ArgumentParser(description="解析文档，摊出写分镜要用的素材")
     parser.add_argument("--file", required=True, type=Path, help="PDF / PPT / PPTX")
-    parser.add_argument("--brief", required=True, help="一句话：多长、给谁看、哪几页重点")
+    parser.add_argument("--brief", required=True, help="一句话：多长、给谁看、重点是什么")
     parser.add_argument("--out", required=True, type=Path, help="工作目录（给目录，不是文件名）")
     args = parser.parse_args()
 
@@ -45,33 +45,34 @@ def main() -> int:
         raise SystemExit(f"--out 要给一个目录，{args.out} 是文件")
     source = args.file.expanduser().resolve()
     if not source.exists():
-        raise SystemExit(
-            f"找不到 {source}。\n"
-            "沙箱里材料必须在 /workspace/myspace/ 下——别处的路径子智能体也读不到。"
-        )
+        raise SystemExit(f"找不到 {source}")
 
     work = bootstrap(args.out)
     require_engine()
 
     from doc2video.agent import Doc2VideoAgent
-    from doc2video.skills import NarrationSkill
-    from doc2video.skills.base import SkillContext
 
     agent = Doc2VideoAgent()
     print(f"解析 {source.name} …", file=sys.stderr)
     project = agent.prepare(source, args.brief)
-
-    # 音色写进工程，而不是只留在环境变量里：这支视频是用哪个声音做的，应该由
-    # 它自己记着——将来在别的机器上重渲，声音不该跟着那台机器变。
     project.intent.voice = VOICE
     agent.store.save(project)
 
-    guide = NarrationSkill(SkillContext.build(project, store=agent.store)).guide()
-    budgets = {row["page"]: row for row in guide}
+    pages = project.document.pages
+    written = sum(len(p.raw_text().strip()) for p in pages)
+    if not written:
+        # 引擎自己也会拦，但那是在跑整条链路的时候。在这里说，省下后面所有步骤。
+        raise SystemExit(
+            f"这份文档 {len(pages)} 页，一个字都没解析出来——每页都是一整张图片"
+            "（扫描件，或把幻灯片导成图再拼的 PDF）。\n"
+            "先补一层文字：\n"
+            "    pip install rapidocr-onnxruntime\n"
+            f"    python3 scripts/ocr_pdf.py --in {source.name} --out 带文字层.pdf --augment\n"
+            "再拿 --out 出来的那份跑这一步。"
+        )
 
-    _write_pages(work, project, budgets)
-    _write_budget(work, guide)
-    made = _write_templates(work, project, budgets)
+    duration = project.intent.duration
+    _write_material(work, project, args.brief, duration)
 
     Meta(
         project_id=project.project_id,
@@ -80,89 +81,64 @@ def main() -> int:
         voice=VOICE,
     ).save(work)
 
-    spoken = sum(row["target_seconds"] for row in guide)
-    onscreen = sum(row["page_seconds"] for row in guide)
+    low = max(3, round(duration / SCENE_SECONDS_MAX))
+    high = max(low, round(duration / SCENE_SECONDS_MIN))
     print(
         f"\n工程 {project.project_id}｜{project.document.title or source.name}\n"
-        f"{len(guide)} 页可讲｜目标 {project.intent.duration} 秒"
-        f"（口播 {spoken:.0f} 秒 + 页面首尾留白，成片约 {onscreen:.0f} 秒）\n"
+        f"{len(pages)} 页素材，共 {written} 字｜目标时长 {duration} 秒\n"
         f"配音 {VOICE}（播音腔）\n\n"
-        f"读 {work / PAGES}，按 {work / BUDGET} 的字数上限，"
-        f"逐页写进 {work / SCRIPTS}/（新建 {made} 个空模板）。\n"
-        f"**先写 3 页就跑一次 check_script.py 校准手感**，再写剩下的——"
-        "一次写完再回头压是最贵的顺序。"
+        f"读 {work / MATERIAL}，按 references/storyboard.md 写出 {work / STORYBOARD}。\n"
+        f"这个长度大约 {low}–{high} 场——**场数由内容定，不要凑数**。\n\n"
+        "⚠️ 画面里不会出现文档原文。素材是你重新讲这件事的依据，不是要照搬的东西。"
     )
     return 0
 
 
-def _write_pages(work: Path, project, budgets: dict[int, dict]) -> None:
-    """页面内容。元素文字要全给——只给标题的话，写出来的是目录不是讲稿。"""
+def _write_material(work: Path, project, brief: str, duration: int) -> None:
+    """素材：文档说了什么，按页码留出处。
+
+    元素文字要给全。只给标题的话，总结出来的是目录——每场一句正确的废话。
+    """
+    document = project.document
     lines = [
-        f"# {project.document.title or project.source.file}",
+        f"# 素材：{document.title or '未命名'}",
         "",
-        f"主题：{project.document.topic or '（未识别）'}｜"
-        f"来源 {project.source.file}｜{len(project.document.pages)} 页",
+        f"- 来源 {project.source.file}，共 {len(document.pages)} 页",
+        f"- 要求：{brief}",
+        f"- 目标时长：{duration} 秒",
         "",
-        "> 每一页的讲稿写进 `讲稿/pNN.md`。**字数上限见每页的标题行**，超了成片就超时长。",
+        "> 这是**内容来源**，不是画面。成片里不会出现这些页面，也不会出现它们的排版。",
+        "> 页码只用来追溯出处：分镜里写 `sourcePages`，是为了让后面能查证某句话",
+        "> 从哪来的，不是说那一场要长得像那一页。",
         "",
     ]
-    for page in project.document.ordered_pages():
-        budget = budgets.get(page.index)
-        head = f"## 第 {page.index} 页｜{page.title or '（无标题）'}"
-        if budget:
-            head += (
-                f"｜{budget['page_type']}｜{budget['target_seconds']} 秒"
-                f" / {budget['target_chars']} 字"
-            )
-        else:
-            head += "｜（不讲这一页）"
-        lines.append(head)
+    if document.summary:
+        lines += ["## 整份材料在讲什么", "", document.summary, ""]
+    if document.key_concepts:
+        lines += ["## 关键概念", "", "、".join(document.key_concepts), ""]
+    if document.sections:
+        lines += ["## 原文的分块", ""]
+        for section in document.sections:
+            span = ", ".join(str(i) for i in section.page_indexes)
+            lines.append(f"- **{section.title}**（第 {span} 页）{section.summary or ''}")
+        lines.append("")
+
+    lines += ["## 逐页内容", ""]
+    for page in document.pages:
+        text = page.raw_text().strip()
+        if not text:
+            continue
+        kind = getattr(page.page_type, "value", page.page_type)
+        lines.append(f"### 第 {page.index} 页｜{page.title or '（无标题）'}｜{kind}")
         if page.summary:
-            lines.append(f"摘要：{page.summary}")
+            lines.append(f"_{page.summary}_")
         lines.append("")
-        texts = [e for e in page.elements if (e.text or "").strip()]
-        if not texts:
-            lines += ["（这一页没有可提取的文字）", ""]
-            continue
-        for element in texts:
-            # 元素内部的换行是一条一条的条目，不能并成一行。并了之后
-            # 「产品定位 系统架构 核心指标」看起来像一句话，而它是三处内容——
-            # 讲稿漏掉其中两处，画面上那两处仍在观众眼前。
-            rows = [" ".join(row.split()) for row in element.text.splitlines() if row.strip()]
-            lines.append(f"- [{element.kind.value}] {rows[0]}")
-            lines += [f"  - {row}" for row in rows[1:]]
+        for element in page.elements:
+            if body := (element.text or "").strip():
+                lines.append(f"- {body}")
         lines.append("")
-    (work / PAGES).write_text("\n".join(lines), encoding="utf-8")
 
-
-def _write_budget(work: Path, guide: list[dict]) -> None:
-    rows = ["页码\t标题\t页面类型\t口播秒数\t目标字数\t页面在屏秒数"]
-    for row in guide:
-        rows.append(
-            f"{row['page']}\t{row['title']}\t{row['page_type']}\t"
-            f"{row['target_seconds']}\t{row['target_chars']}\t{row['page_seconds']}"
-        )
-    (work / BUDGET).write_text("\n".join(rows) + "\n", encoding="utf-8")
-
-
-def _write_templates(work: Path, project, budgets: dict[int, dict]) -> int:
-    """一页一个空文件。已经写过的不动——重跑 prepare 不该抹掉写好的稿子。"""
-    (work / SCRIPTS).mkdir(exist_ok=True)
-    made = 0
-    for page in project.document.ordered_pages():
-        budget = budgets.get(page.index)
-        if budget is None:
-            continue
-        path = script_path(work, page.index)
-        if path.exists():
-            continue
-        path.write_text(
-            f"<!-- 第 {page.index} 页｜{budget['title'] or '（无标题）'}"
-            f"｜{budget['target_seconds']} 秒｜不超过 {budget['target_chars']} 字 -->\n",
-            encoding="utf-8",
-        )
-        made += 1
-    return made
+    (work / MATERIAL).write_text("\n".join(lines), encoding="utf-8")
 
 
 if __name__ == "__main__":
