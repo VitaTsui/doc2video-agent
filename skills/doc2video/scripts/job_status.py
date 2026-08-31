@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -50,10 +51,15 @@ def main() -> int:
         return 1
 
     state = status.get("state", "unknown")
-    elapsed = status.get("elapsed") or (time.time() - status.get("started", time.time()))
+    # `started` 缺失或是 0 的话，`time.time() - 0` 会报出「已用 1788163488 秒」——
+    # 一个把真实信息淹掉的数字。当不知道处理。
+    started = status.get("started") or 0
+    elapsed = status.get("elapsed") or (time.time() - started if started > 1e9 else 0)
     line = f"{state}｜{status.get('stage', '')} {status.get('detail', '')}".strip()
     if status.get("total"):
         line += f"｜{status.get('done', 0)}/{status['total']}"
+    if state == "running" and (detail := _render_progress(work)):
+        line += f"｜{detail}"
     print(f"{line}｜已用 {elapsed:.0f} 秒")
 
     if state == "succeeded":
@@ -69,6 +75,36 @@ def main() -> int:
             for row in tail:
                 print(f"  {row}")
     return STATE_CODE.get(state, 1)
+
+
+def _render_progress(work: Path) -> str:
+    """渲染跑到第几帧了，从 Remotion 自己的日志里读。
+
+    不报的话，调用方只知道「running」，然后就会去 `grep -o "Rendered [0-9]*/…"`
+    自己算百分比——线上真的每一轮都在这么干。渲染是这条链路上唯一以小时计的
+    步骤，「还剩多少」是这里唯一值得说的话。
+
+    区分得出下载和渲染两个阶段也是有用的：首次渲染要先拉 88MB 的 headless
+    浏览器，那段时间一帧都没有，看起来和卡死一模一样。
+    """
+    log = work / LOG
+    try:
+        tail = log.read_text(encoding="utf-8", errors="ignore").splitlines()[-300:]
+    except OSError:
+        return ""
+
+    for row in reversed(tail):
+        if match := re.search(r"Rendered (\d+)/(\d+)", row):
+            done, total = int(match.group(1)), int(match.group(2))
+            share = f"{done / total:.0%}" if total else "?"
+            return f"渲染 {done}/{total} 帧（{share}）"
+        if match := re.search(r"Stitched (\d+)/(\d+)", row):
+            return f"合成 {match.group(1)}/{match.group(2)}"
+        if "Bundling" in row or "Bundled" in row:
+            return "打包工程中"
+        if re.search(r"[Dd]ownload", row):
+            return "正在下载 headless 浏览器（首次渲染，约 88MB，可能要几分钟）"
+    return ""
 
 
 if __name__ == "__main__":

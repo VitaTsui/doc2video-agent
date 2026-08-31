@@ -75,13 +75,48 @@ def _bundled_font() -> Path | None:
 
 
 def bundled_version() -> str | None:
-    """技能包自带的引擎是哪个版本，从 wheel 的文件名读。"""
+    """技能包自带的引擎是哪个版本。"""
+    wheel = bundled_wheel()
+    return wheel.name.split("-")[1] if wheel else None
+
+
+def bundled_wheels() -> list[Path]:
+    """vendor 里所有的引擎 wheel，新的在前。
+
+    **按版本排，不按文件名排。** 字典序里 "0.10.30" 排在 "0.10.31" 前面是对的，
+    但 "0.10.9" 会排到 "0.10.30" 后面——升到两位数小版本的那天就错了。线上真
+    撞到过一次同类的：目录里躺着 0.10.30 和 0.10.31 两个 wheel，取到旧的那个，
+    于是版本闸拿一个不存在的「自带版本」去比对。
+    """
     folder = Path(__file__).resolve().parents[2] / "vendor"
-    for wheel in sorted(folder.glob("doc2video_agent-*.whl")):
-        parts = wheel.name.split("-")
-        if len(parts) >= 2:
-            return parts[1]
-    return None
+    wheels = [w for w in folder.glob("doc2video_agent-*.whl") if len(w.name.split("-")) >= 2]
+    return sorted(wheels, key=lambda w: version_tuple(w.name.split("-")[1]), reverse=True)
+
+
+def bundled_wheel() -> Path | None:
+    """该装的那一个 wheel。"""
+    wheels = bundled_wheels()
+    return wheels[0] if wheels else None
+
+
+def install_command(*, force: bool = False) -> str:
+    """装引擎的那条命令，指名到具体文件。
+
+    不能用 `doc2video_agent-*.whl`：vendor 里只要留着两个版本的 wheel，通配符
+    就展开成两个文件，pip 试图同时安装两个版本，报的是
+
+        ERROR: Cannot install doc2video-agent 0.10.30 and doc2video-agent 0.10.31
+        because these package versions have conflicting dependencies.
+        ERROR: ResolutionImpossible
+
+    看起来像依赖冲突，其实是命令写错了。线上真的被它拦下过一次。
+    """
+    wheel = bundled_wheel()
+    target = str(wheel) if wheel else str(
+        Path(__file__).resolve().parents[2] / "vendor" / "doc2video_agent-<版本>-py3-none-any.whl"
+    )
+    flag = "--force-reinstall " if force else ""
+    return f"pip install {flag}{target} --no-deps"
 
 
 def version_tuple(version: str) -> tuple[int, ...]:
@@ -113,10 +148,7 @@ def require_engine() -> None:
     报的是「cannot import name ...」，看起来像技能包坏了。
     """
     here = Path(__file__).resolve().parents[2]
-    install = (
-        f"    pip install {here / 'vendor'}/doc2video_agent-*.whl --no-deps\n"
-        f"    pip install -r {here / 'requirements.txt'}"
-    )
+    install = f"    {install_command()}\n    pip install -r {here / 'requirements.txt'}"
     try:
         import doc2video  # noqa: F401
     except ImportError as exc:
@@ -140,7 +172,7 @@ def require_engine() -> None:
         print(
             f"引擎版本对不上：装着的是 {have}，这套脚本要 {want}。\n"
             "低版本会在链路中间炸在某个 ImportError 上，先换成技能包自带的：\n"
-            f"    pip install --force-reinstall {here / 'vendor'}/doc2video_agent-*.whl --no-deps",
+            f"    {install_command(force=True)}",
             file=sys.stderr,
         )
         raise SystemExit(1)

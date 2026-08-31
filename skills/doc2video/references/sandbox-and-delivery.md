@@ -45,7 +45,8 @@ ubuntu 运行，`mkdir` 直接 Permission denied。这件事上**不要耗时间
 ## 装依赖：一条命令串，不要拆两次
 
 ```bash
-pip install /path/to/skill/vendor/doc2video_agent-*.whl --no-deps \
+# 指名到具体文件：通配符 + vendor 里两个 wheel = ResolutionImpossible，实测踩过
+pip install /path/to/skill/vendor/doc2video_agent-0.10.31-py3-none-any.whl --no-deps \
   && pip install -r /path/to/skill/requirements.txt \
   && python3 /path/to/skill/scripts/check_env.py
 ```
@@ -112,20 +113,29 @@ python3 scripts/check_env.py        # 「字幕字体」那一节报的就是这
 | --- | --- |
 | `ocr_pdf.py`（只有图片 PDF 要跑） | 一页约 1 秒（200 dpi，实测 3 页 3.3 秒），30 页按半分钟估 |
 | `prepare.py` | 秒级（30 页 pdf 实测 4 秒） |
-| `init_project.py` | **分钟级**：npm install 实测 43 秒，和写分镜并行做 |
+| `init_project.py` | **分钟级**：npm install 实测 43 秒，外加拉 88MB 的 headless 浏览器；和写分镜并行做 |
 | 写分镜 | 看你。这一步决定整片好不好 |
 | `validate_storyboard.py` | 秒级 |
 | `make_voice.py` | 一场约 3–5 秒，30 场按两分钟估 |
 | 写场景组件 | 看你，是这条链路上最花时间的一步 |
 | `register_scenes.py` | 秒级 |
-| `render.py` | **十分钟级**。Remotion 逐帧渲染，实测 1102 帧（36.7 秒成片）在一台普通开发机上 19 分钟 |
+| `render.py` | **小时级**。Remotion 逐帧渲染，约 **1 秒 1 帧**：36.7 秒的片子（1102 帧）19 分钟，5.8 分钟的片子（10509 帧）**约 3 小时** |
 
-⚠️ **渲染比上一版慢一个量级。** 上一版是 ffmpeg 拼页面图，9 页 117 秒的片子
-19 秒渲完；这一版每一帧都是浏览器画出来的。一支 5 分钟的片子按半小时到一小时
-估，`--concurrency` 调高能快一些，但换不来数量级。
+⚠️ **渲染比上一版慢一个量级，而且是按帧算的。** 上一版是 ffmpeg 拼页面图，
+9 页 117 秒的片子 19 秒渲完；这一版每一帧都是浏览器画出来的，速度稳定在**约
+1 秒 1 帧**，两台不同的机器上都是这个数。于是渲染时间和片长成正比：
 
-**第一次最慢。** 同一份工程实测：首渲 19 分钟，改完再渲 88 秒——Remotion 缓存了
-bundle 和 headless 浏览器。估时间按首渲估，别拿第二次的数字答应人。
+| 成片 | 帧数（30fps） | 渲染 |
+| --- | --- | --- |
+| 36.7 秒 | 1102 | 19 分钟 |
+| 5.8 分钟 | 10509 | **约 3 小时** |
+
+**答应时长之前先把这笔账算给用户听。** 「8 分钟的讲解视频」意味着一万四千帧、
+四个多小时——这往往超出对方的预期，也超出多数智能体会话的耐心。想快就得减帧：
+缩短片长、`--concurrency` 调高（有限）、或者把 fps 降到 24（省 20%）。
+
+**第二次快得多。** 同一份工程改完再渲 88 秒——Remotion 缓存了 bundle 和 headless
+浏览器。但估时间要按首渲估，别拿第二次的数字答应人。
 
 所以 `render.py` **默认后台跑**，立刻返回。轮询用 `job_status.py`，
 它的 `--wait` 别超过工具预算——超时被打断的是轮询，渲染在自己的进程组里

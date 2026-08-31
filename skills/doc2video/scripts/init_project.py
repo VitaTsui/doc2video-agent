@@ -80,7 +80,36 @@ def main() -> int:
         tail = (result.stderr or result.stdout)[-1500:]
         raise SystemExit(f"npm install 失败：\n{tail}")
 
+    _ensure_browser(target)
+
     return _report(work, target, installed=True)
+
+
+def _ensure_browser(project: Path) -> None:
+    """把 Remotion 那 88MB 的 headless 浏览器现在下下来。
+
+    不下的话它会在第一次渲染时下——那是最坏的时机：渲染已经丢到后台，调用方
+    在轮询，而日志里十几分钟只有一句「正在下载 Chrome Headless Shell」。线上
+    实测就是这样，连调用它的智能体都开始怀疑进程是不是死了，去查了两次 ps。
+
+    放在这里是因为这一步本来就在装依赖，调用方预期它是分钟级的。失败不致命：
+    渲染时会自己再下一次，只是慢在那时候。
+    """
+    print("下载 Remotion 的 headless 浏览器（约 88MB，首次渲染前必须有）…", file=sys.stderr)
+    result = subprocess.run(  # noqa: S603
+        [node_bin("npx"), "remotion", "browser", "ensure"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        print("浏览器就绪")
+        return
+    print(
+        f"⚠️ 预下载没成功（{(result.stderr or result.stdout)[-200:].strip()}）\n"
+        "   不致命：渲染时会自己再下一次，但那时候日志里会安静十几分钟。",
+        file=sys.stderr,
+    )
 
 
 def _report(work: Path, target: Path, *, installed: bool) -> int:

@@ -54,14 +54,18 @@ description: 把 PDF / PPT 变成动画讲解视频。读完材料重新组织�
 Python 引擎负责解析和配音，Node 负责画面。**两个都要有。**
 
 ```bash
-pip install <技能包>/vendor/doc2video_agent-*.whl --no-deps \
+# 指名到具体文件。vendor 里留着两个版本的 wheel 时，通配符会展开成两个，
+# pip 试图同时装两个版本并报 ResolutionImpossible——线上真被它拦下过一次
+pip install <技能包>/vendor/doc2video_agent-0.10.31-py3-none-any.whl --no-deps \
   && pip install -r <技能包>/requirements.txt \
   && python3 <技能包>/scripts/check_env.py
 node --version   # 18+
 ```
 
 `check_env.py` 会**真合成一句话**试播音腔——装得上和连得通是两件事，而连不通
-会在配音那一步才炸，那时材料已经解析完了。
+会在配音那一步才炸，那时材料已经解析完了。它也会把该装的那个 wheel 的完整路径
+打出来，照抄即可：它按版本号挑最新的一个，不受文件名字典序影响（那会让
+`0.10.9` 排到 `0.10.30` 后面）。
 
 ### 2 · 工作目录
 

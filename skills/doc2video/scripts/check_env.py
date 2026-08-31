@@ -28,6 +28,8 @@ from lib.workspace import (  # noqa: E402
     VOICE,
     bootstrap,
     bundled_version,
+    bundled_wheels,
+    install_command,
     installed_version,
     version_tuple,
 )
@@ -79,11 +81,20 @@ def _engine(fatal: list[str]) -> bool:
     然后崩在某个 `cannot import name` 上，报得像是技能包坏了。
     """
     here = Path(__file__).resolve().parent.parent
+    extra = bundled_wheels()[1:]
+    if extra:
+        # 通配符安装会把它们全展开，pip 于是试图同时装两个版本并报
+        # ResolutionImpossible——看起来像依赖冲突，其实是 vendor 里没清干净。
+        print(f"{WARN} vendor 里有 {len(extra) + 1} 个 wheel，只该留一个")
+        for wheel in extra:
+            print(f"    多余：{wheel.name}")
+        print("    脚本只认最新的那个；用通配符装会 ResolutionImpossible")
+
     try:
         import doc2video
     except ImportError as exc:
         print(f"{BAD} doc2video 引擎没装：{exc}")
-        print(f"    pip install {here / 'vendor'}/doc2video_agent-*.whl --no-deps")
+        print(f"    {install_command()}")
         print(f"    pip install -r {here / 'requirements.txt'}")
         fatal.append("引擎没装，其余检查都做不了")
         return False
@@ -95,7 +106,7 @@ def _engine(fatal: list[str]) -> bool:
         older = version_tuple(have) < version_tuple(want)
         mark = BAD if older else WARN
         print(f"{mark} doc2video {have}，技能包自带的是 {want}（{where}）")
-        print(f"    pip install --force-reinstall {here / 'vendor'}/doc2video_agent-*.whl --no-deps")
+        print(f"    {install_command(force=True)}")
         if older:
             fatal.append(f"引擎是 {have}，低于这套脚本要的 {want}")
             return False

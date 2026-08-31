@@ -133,7 +133,7 @@ DeepSeek Harness（dsh）接入见 [integrations/dsh](integrations/dsh/README.md
 成片里不出现文档原文，也不出现它的排版。
 
 ```bash
-pip install skills/doc2video/vendor/doc2video_agent-*.whl --no-deps
+pip install skills/doc2video/vendor/doc2video_agent-0.10.31-py3-none-any.whl --no-deps
 pip install -r skills/doc2video/requirements.txt
 python3 skills/doc2video/scripts/check_env.py           # 试播音腔，并查 Node
 
